@@ -3,14 +3,14 @@
 
 import * as React from 'react';
 import { useState, useEffect, useMemo } from 'react';
-import { useForm, type SubmitHandler } from 'react-hook-form';
+import { useForm, type SubmitHandler, Controller } from 'react-hook-form'; // Added Controller
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from '@/components/ui/button';
-import { PlusCircle, Edit, Trash2, Loader2, Save, X } from 'lucide-react'; // Added Save, X
+import { PlusCircle, Edit, Trash2, Loader2, Save, X, MinusCircle } from 'lucide-react'; // Added Save, X, MinusCircle
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger, DialogClose } from "@/components/ui/dialog"; // Added DialogClose
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog"; // Added AlertDialog
 import { Input } from '@/components/ui/input';
@@ -19,8 +19,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
+import { Separator } from '@/components/ui/separator'; // Added Separator
 import { useToast } from '@/hooks/use-toast';
 import Image from 'next/image';
+import { cn } from '@/lib/utils'; // Added cn
 
 // Import services
 import {
@@ -28,9 +30,9 @@ import {
     getProductsByCategory, addProduct, updateProduct, deleteProduct,
     getPackagesByCategory, // Using getProductsByCategory with type 'paquete' or getPackagesByCategory
     getProductById, // Needed for fetching packages/products
-    getModifierSlotsForProduct, addModifierSlot, // updateModifierSlot, deleteModifierSlot,
-    getItemsForPackage, addPackageItem, // updatePackageItem, deletePackageItem,
-    getOverridesForPackageItem, setPackageItemOverride, // deletePackageItemOverride
+    getModifierSlotsForProduct, addModifierSlot, deleteModifierSlot, // Added deleteModifierSlot
+    getItemsForPackage, addPackageItem, deletePackageItem, // Added deletePackageItem
+    getOverridesForPackageItem, setPackageItemOverride, deletePackageItemOverride // Added deletePackageItemOverride
 } from '@/services/product-service';
 import { getInventoryItems } from '@/services/inventory-service';
 
@@ -51,7 +53,7 @@ const productSchema = z.object({
     categoryId: z.string().min(1, "Categoría es requerida"),
     imageUrl: z.string().url("Debe ser una URL válida").optional().or(z.literal('')),
     // Use `null` as the default for optional string to avoid Zod issues with empty strings
-    inventory_item_id: z.string().optional().nullable(),
+    inventory_item_id: z.string().nullable().optional(), // Make optional here to handle empty string case
     inventory_consumed_per_unit: z.coerce.number().min(0, "Consumo debe ser positivo").optional().nullable(),
 }).refine(data => !data.inventory_item_id || (data.inventory_item_id && data.inventory_consumed_per_unit !== undefined && data.inventory_consumed_per_unit !== null), {
     message: "El consumo por unidad es requerido si se vincula un item de inventario.",
@@ -69,6 +71,12 @@ const packageSchema = z.object({
     // Packages generally don't have direct inventory links, items inside do
 });
 type PackageFormValues = z.infer<typeof packageSchema>;
+
+const addPackageItemSchema = z.object({
+    product_id: z.string().min(1, "Selecciona un producto"),
+    quantity: z.coerce.number().int().min(1, "La cantidad debe ser al menos 1"),
+});
+type AddPackageItemFormValues = z.infer<typeof addPackageItemSchema>;
 
 // --- Components ---
 
@@ -182,13 +190,13 @@ const ManageCategories = () => {
                                                 )}
                                             </TableCell>
                                             <TableCell className="text-right">
-                                                 <Button variant="ghost" size="icon" className="h-7 w-7 mr-1" onClick={() => handleOpenForm(cat)}>
+                                                 <Button variant="ghost" size="icon" className="h-7 w-7 mr-1" onClick={() => handleOpenForm(cat)} title="Editar Categoría">
                                                     <Edit className="h-4 w-4" />
                                                  </Button>
 
                                                 <AlertDialog>
                                                     <AlertDialogTrigger asChild>
-                                                        <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" disabled={isDeleting === cat.id}>
+                                                        <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" disabled={isDeleting === cat.id} title="Eliminar Categoría">
                                                             {isDeleting === cat.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
                                                         </Button>
                                                     </AlertDialogTrigger>
@@ -265,7 +273,7 @@ const ManageCategories = () => {
                                 render={({ field }) => (
                                     <FormItem>
                                         <FormLabel>URL de Imagen (Opcional)</FormLabel>
-                                        <FormControl><Input type="url" placeholder="https://i.pinimg.com/..." {...field} /></FormControl>
+                                        <FormControl><Input type="url" placeholder="https://picsum.photos/..." {...field} /></FormControl>
                                         <FormMessage />
                                     </FormItem>
                                 )}
@@ -367,12 +375,11 @@ const ManageProducts = () => {
     };
 
      const handleFormSubmit: SubmitHandler<ProductFormValues> = async (values) => {
+        // Ensure inventory_item_id is handled correctly (null vs undefined)
         const dataToSave = {
             ...values,
-            // Ensure null is sent if inventory_item_id is not selected or empty
-            inventory_item_id: values.inventory_item_id || undefined, // Service might expect undefined if null
-            // Only send consumption if inventory item is linked
-            inventory_consumed_per_unit: values.inventory_item_id ? (values.inventory_consumed_per_unit ?? 1) : undefined,
+            inventory_item_id: values.inventory_item_id === '' ? null : values.inventory_item_id,
+            inventory_consumed_per_unit: values.inventory_item_id === '' ? null : (values.inventory_consumed_per_unit ?? 1),
         };
 
         // console.log("Saving product:", dataToSave); // Log data being sent
@@ -454,12 +461,12 @@ const ManageProducts = () => {
                                                 <TableCell>{invItem?.name || <span className="text-xs text-muted-foreground">N/A</span>}</TableCell>
                                                 <TableCell className="text-right">{invItem ? `${prod.inventory_consumed_per_unit ?? 1} ${invItem.unit}`: '-'}</TableCell>
                                                 <TableCell className="text-right">
-                                                     <Button variant="ghost" size="icon" className="h-7 w-7 mr-1" onClick={() => handleOpenForm(prod)}>
+                                                     <Button variant="ghost" size="icon" className="h-7 w-7 mr-1" onClick={() => handleOpenForm(prod)} title="Editar Producto">
                                                         <Edit className="h-4 w-4" />
                                                      </Button>
                                                      <AlertDialog>
                                                         <AlertDialogTrigger asChild>
-                                                            <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" disabled={isDeleting === prod.id}>
+                                                            <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" disabled={isDeleting === prod.id} title="Eliminar Producto">
                                                                {isDeleting === prod.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
                                                             </Button>
                                                         </AlertDialogTrigger>
@@ -520,21 +527,37 @@ const ManageProducts = () => {
                                 )}/>
                             </div>
                             <FormField control={form.control} name="imageUrl" render={({ field }) => (
-                                <FormItem><FormLabel>URL de Imagen (Opcional)</FormLabel><FormControl><Input type="url" placeholder="https://i.pinimg.com/..." {...field} value={field.value ?? ''} /></FormControl><FormMessage /></FormItem>
+                                <FormItem><FormLabel>URL de Imagen (Opcional)</FormLabel><FormControl><Input type="url" placeholder="https://picsum.photos/..." {...field} value={field.value ?? ''} /></FormControl><FormMessage /></FormItem>
                             )}/>
                              <div className="grid grid-cols-2 gap-4">
-                                <FormField control={form.control} name="inventory_item_id" render={({ field }) => (
-                                    <FormItem><FormLabel>Item de Inventario (Opcional)</FormLabel>
-                                        <Select onValueChange={field.onChange} value={field.value ?? ''}> {/* Ensure value is string for Select */}
-                                             <FormControl><SelectTrigger><SelectValue placeholder="Vincular inventario..." /></SelectTrigger></FormControl>
-                                             <SelectContent>
-                                                <SelectItem value="">-- Ninguno --</SelectItem> {/* Use empty string value */}
-                                                {inventoryItems.map(item => (
-                                                    <SelectItem key={item.id} value={item.id}>{item.name} ({item.unit})</SelectItem>
-                                                ))}
-                                             </SelectContent>
-                                        </Select><FormMessage /></FormItem>
-                                )}/>
+                                <FormField
+                                   control={form.control}
+                                   name="inventory_item_id"
+                                   render={({ field }) => (
+                                       <FormItem>
+                                           <FormLabel>Item de Inventario (Opcional)</FormLabel>
+                                            <Select
+                                                onValueChange={(value) => field.onChange(value === "__NONE__" ? null : value)}
+                                                value={field.value ?? "__NONE__"} // Handle null for select
+                                            >
+                                               <FormControl>
+                                                   <SelectTrigger>
+                                                       <SelectValue placeholder="Vincular inventario..." />
+                                                   </SelectTrigger>
+                                               </FormControl>
+                                               <SelectContent>
+                                                   <SelectItem value="__NONE__">-- Ninguno --</SelectItem>
+                                                   {inventoryItems.map(item => (
+                                                       <SelectItem key={item.id} value={item.id}>
+                                                           {item.name} ({item.unit})
+                                                       </SelectItem>
+                                                   ))}
+                                               </SelectContent>
+                                           </Select>
+                                           <FormMessage />
+                                       </FormItem>
+                                   )}
+                                />
                                 {/* Only show consumption field if inventory item is selected */}
                                 {form.watch('inventory_item_id') && (
                                     <FormField control={form.control} name="inventory_consumed_per_unit" render={({ field }) => (
@@ -583,9 +606,18 @@ const ManagePackages = () => {
      const [isDeleting, setIsDeleting] = useState<string | null>(null);
      const { toast } = useToast();
 
-     const form = useForm<PackageFormValues>({
+     // State for managing items within the currently editing package
+     const [currentPackageItems, setCurrentPackageItems] = useState<PackageItem[]>([]);
+     const [isPackageItemsLoading, setIsPackageItemsLoading] = useState(false);
+
+     const packageForm = useForm<PackageFormValues>({
         resolver: zodResolver(packageSchema),
         defaultValues: { name: '', price: 0, categoryId: '', imageUrl: '' },
+    });
+
+    const addItemForm = useForm<AddPackageItemFormValues>({
+        resolver: zodResolver(addPackageItemSchema),
+        defaultValues: { product_id: '', quantity: 1 },
     });
 
       const fetchPackageData = async () => {
@@ -609,8 +641,7 @@ const ManagePackages = () => {
                  const prods = await getProductsByCategory(cat.id);
                  allProds = [...allProds, ...prods];
              }
-             setAllProducts(allProds);
-
+             setAllProducts(allProds); // Keep only products and modifiers
 
         } catch (error) {
             toast({ title: "Error", description: "No se pudieron cargar paquetes o productos.", variant: "destructive" });
@@ -623,35 +654,72 @@ const ManagePackages = () => {
         fetchPackageData();
     }, [toast]); // Added toast dependency
 
+     // Fetch items for the package when editing
+     useEffect(() => {
+        if (editingPackage && isFormOpen) {
+            const fetchItems = async () => {
+                setIsPackageItemsLoading(true);
+                try {
+                    const items = await getItemsForPackage(editingPackage.id);
+                    setCurrentPackageItems(items);
+                } catch (error) {
+                    toast({ title: "Error", description: `No se pudieron cargar los items para ${editingPackage.name}.`, variant: "destructive" });
+                    setCurrentPackageItems([]);
+                } finally {
+                    setIsPackageItemsLoading(false);
+                }
+            };
+            fetchItems();
+        } else {
+            setCurrentPackageItems([]); // Clear items when dialog closes or it's a new package
+        }
+     }, [editingPackage, isFormOpen, toast]);
+
+
     const handleOpenForm = (pkg: Product | null = null) => {
         setEditingPackage(pkg);
         if (pkg) {
-            form.reset({
+            packageForm.reset({
                 name: pkg.name,
                 price: pkg.price,
                 categoryId: pkg.categoryId,
                 imageUrl: pkg.imageUrl || '',
             });
+            // Items will be fetched by the useEffect
         } else {
-            form.reset({ name: '', price: 0, categoryId: '', imageUrl: '' });
+            packageForm.reset({ name: '', price: 0, categoryId: '', imageUrl: '' });
+            setCurrentPackageItems([]); // Ensure items are clear for new package
         }
+        addItemForm.reset(); // Reset add item form as well
         setIsFormOpen(true);
     };
 
-    const handleFormSubmit: SubmitHandler<PackageFormValues> = async (values) => {
+    const handlePackageFormSubmit: SubmitHandler<PackageFormValues> = async (values) => {
         // The form ensures categoryId belongs to a 'paquete' type category implicitly
-        const dataToSave: Omit<Product, 'id' | 'inventory_item_id' | 'inventory_consumed_per_unit'> = values;
+        const dataToSave: Partial<Product> = values; // Omit<Product, 'id' | 'inventory_item_id' | 'inventory_consumed_per_unit'>
+
+        let savedPackageId: string | undefined = editingPackage?.id;
 
         try {
             if (editingPackage) {
                 await updateProduct(editingPackage.id, dataToSave); // Use updateProduct for packages too
                  toast({ title: "Éxito", description: "Paquete actualizado." });
             } else {
-                 await addProduct(dataToSave); // Use addProduct service function
-                 toast({ title: "Éxito", description: "Paquete añadido." });
+                 const newPackage = await addProduct(dataToSave as Omit<Product, 'id'>); // Use addProduct service function
+                 savedPackageId = newPackage.id;
+                 setEditingPackage(newPackage); // Start editing the newly created package to add items
+                 toast({ title: "Éxito", description: "Paquete añadido. Ahora puedes añadirle productos." });
+                 // Keep dialog open
+                 await fetchPackageData(); // Refresh list in background
+                 return; // Don't close dialog yet
             }
-            setIsFormOpen(false);
-            fetchPackageData(); // Refresh list
+
+            // If editing, potentially close dialog or stay open based on UX preference
+            // For now, let's close it after saving basic package info
+            // Item management happens separately within the open dialog
+            // setIsFormOpen(false); // Decide if closing here is right
+            await fetchPackageData(); // Refresh list
+
         } catch (error) {
             const action = editingPackage ? 'actualizar' : 'añadir';
             toast({ title: "Error", description: `No se pudo ${action} el paquete: ${error instanceof Error ? error.message : 'Error desconocido'}`, variant: "destructive" });
@@ -664,6 +732,9 @@ const ManagePackages = () => {
             await deleteProduct(id); // Use deleteProduct for packages too
             toast({ title: "Éxito", description: "Paquete eliminado.", variant: "destructive" });
             fetchPackageData(); // Refresh list
+             if (editingPackage?.id === id) { // Close dialog if deleted package was being edited
+                 setIsFormOpen(false);
+             }
         } catch (error) {
             toast({ title: "Error", description: `No se pudo eliminar el paquete: ${error instanceof Error ? error.message : 'Error desconocido'}`, variant: "destructive" });
         } finally {
@@ -671,7 +742,48 @@ const ManagePackages = () => {
         }
     };
 
-     // TODO: Implement Package Item management (add/remove products within package) in Edit Dialog
+     const handleAddPackageItemSubmit: SubmitHandler<AddPackageItemFormValues> = async (values) => {
+         if (!editingPackage) return;
+
+         const newItemData: Omit<PackageItem, 'id' | 'display_order'> = {
+             package_id: editingPackage.id,
+             product_id: values.product_id,
+             quantity: values.quantity,
+         };
+
+         setIsPackageItemsLoading(true);
+         try {
+             const addedItem = await addPackageItem({
+                 ...newItemData,
+                 display_order: currentPackageItems.length, // Simple order append
+             });
+             // Update local state optimistically or refetch
+              setCurrentPackageItems(prev => [...prev, { ...addedItem, product_name: allProducts.find(p => p.id === addedItem.product_id)?.name || 'Unknown' }]);
+             addItemForm.reset(); // Clear the add item form
+             toast({ title: "Éxito", description: "Producto añadido al paquete." });
+         } catch (error) {
+             toast({ title: "Error", description: `No se pudo añadir el producto: ${error instanceof Error ? error.message : 'Error desconocido'}`, variant: "destructive" });
+         } finally {
+             setIsPackageItemsLoading(false);
+         }
+     };
+
+     const handleDeletePackageItem = async (packageItemId: string) => {
+         if (!editingPackage) return;
+
+         setIsPackageItemsLoading(true);
+         try {
+             await deletePackageItem(packageItemId);
+             // Update local state
+             setCurrentPackageItems(prev => prev.filter(item => item.id !== packageItemId));
+             toast({ title: "Éxito", description: "Producto eliminado del paquete.", variant: 'destructive' });
+         } catch (error) {
+             toast({ title: "Error", description: `No se pudo eliminar el producto: ${error instanceof Error ? error.message : 'Error desconocido'}`, variant: "destructive" });
+         } finally {
+             setIsPackageItemsLoading(false);
+         }
+     };
+
      // TODO: Implement Modifier Override management for package items in Edit Dialog
 
      return (
@@ -717,12 +829,12 @@ const ManagePackages = () => {
                                                  <TableCell>{category?.name || 'N/A'}</TableCell>
                                                 <TableCell className="text-right">${pkg.price.toFixed(2)}</TableCell>
                                                 <TableCell className="text-right">
-                                                     <Button variant="ghost" size="icon" className="h-7 w-7 mr-1" onClick={() => handleOpenForm(pkg)}>
+                                                     <Button variant="ghost" size="icon" className="h-7 w-7 mr-1" onClick={() => handleOpenForm(pkg)} title="Editar Paquete">
                                                          <Edit className="h-4 w-4" />
                                                      </Button>
                                                      <AlertDialog>
                                                         <AlertDialogTrigger asChild>
-                                                             <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" disabled={isDeleting === pkg.id}>
+                                                             <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" disabled={isDeleting === pkg.id} title="Eliminar Paquete">
                                                                  {isDeleting === pkg.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
                                                              </Button>
                                                         </AlertDialogTrigger>
@@ -754,23 +866,24 @@ const ManagePackages = () => {
 
                {/* Add/Edit Dialog */}
               <Dialog open={isFormOpen} onOpenChange={setIsFormOpen}>
-                 <DialogContent>
+                 <DialogContent className="sm:max-w-[700px]"> {/* Wider dialog for package items */}
                      <DialogHeader>
                          <DialogTitle>{editingPackage ? 'Editar Paquete' : 'Añadir Nuevo Paquete'}</DialogTitle>
                          <DialogDescription>
                             {editingPackage ? `Modifica los detalles de "${editingPackage.name}".` : 'Crea un nuevo combo o paquete.'}
                         </DialogDescription>
                      </DialogHeader>
-                      <Form {...form}>
-                        <form onSubmit={form.handleSubmit(handleFormSubmit)} className="space-y-4">
-                            <FormField control={form.control} name="name" render={({ field }) => (
+                      {/* Package Base Info Form */}
+                      <Form {...packageForm}>
+                        <form onSubmit={packageForm.handleSubmit(handlePackageFormSubmit)} className="space-y-4 border-b pb-6 mb-6">
+                            <FormField control={packageForm.control} name="name" render={({ field }) => (
                                 <FormItem><FormLabel>Nombre del Paquete</FormLabel><FormControl><Input placeholder="e.g., Combo Pareja" {...field} /></FormControl><FormMessage /></FormItem>
                             )}/>
                             <div className="grid grid-cols-2 gap-4">
-                                <FormField control={form.control} name="price" render={({ field }) => (
+                                <FormField control={packageForm.control} name="price" render={({ field }) => (
                                     <FormItem><FormLabel>Precio del Paquete</FormLabel><FormControl><Input type="number" step="0.01" placeholder="0.00" {...field} /></FormControl><FormMessage /></FormItem>
                                 )}/>
-                                <FormField control={form.control} name="categoryId" render={({ field }) => (
+                                <FormField control={packageForm.control} name="categoryId" render={({ field }) => (
                                     <FormItem><FormLabel>Categoría (de Paquetes)</FormLabel>
                                         <Select onValueChange={field.onChange} value={field.value}>
                                             <FormControl><SelectTrigger><SelectValue placeholder="Selecciona categoría" /></SelectTrigger></FormControl>
@@ -783,29 +896,113 @@ const ManagePackages = () => {
                                         </Select><FormMessage /></FormItem>
                                 )}/>
                             </div>
-                            <FormField control={form.control} name="imageUrl" render={({ field }) => (
-                                <FormItem><FormLabel>URL de Imagen (Opcional)</FormLabel><FormControl><Input type="url" placeholder="https://i.pinimg.com/..." {...field} value={field.value ?? ''} /></FormControl><FormMessage /></FormItem>
+                            <FormField control={packageForm.control} name="imageUrl" render={({ field }) => (
+                                <FormItem><FormLabel>URL de Imagen (Opcional)</FormLabel><FormControl><Input type="url" placeholder="https://picsum.photos/..." {...field} value={field.value ?? ''} /></FormControl><FormMessage /></FormItem>
                             )}/>
-
-                             {/* TODO: Add Package Item Management & Overrides Here */}
-                             {editingPackage && (
-                                <Card className="mt-4">
-                                    <CardHeader><CardTitle className="text-base">Gestionar Contenido (Próximamente)</CardTitle></CardHeader>
-                                    <CardContent><p className="text-sm text-muted-foreground">Aquí podrás añadir/eliminar productos y ajustar los modificadores para el paquete "{editingPackage.name}".</p></CardContent>
-                                </Card>
-                             )}
-
-                            <DialogFooter>
-                                <DialogClose asChild>
-                                    <Button type="button" variant="outline">Cancelar</Button>
-                                </DialogClose>
-                                <Button type="submit" disabled={form.formState.isSubmitting || packageCategories.length === 0}>
-                                    {form.formState.isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4"/>}
-                                    Guardar Cambios
+                             <div className="flex justify-end">
+                                <Button type="submit" size="sm" disabled={packageForm.formState.isSubmitting || packageCategories.length === 0}>
+                                    {packageForm.formState.isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4"/>}
+                                    {editingPackage ? 'Guardar Cambios del Paquete' : 'Crear Paquete'}
                                 </Button>
-                            </DialogFooter>
+                             </div>
                         </form>
                      </Form>
+
+                     {/* Package Items Management (Only visible when editing a package) */}
+                     {editingPackage && (
+                        <div className="space-y-4">
+                            <h4 className="text-lg font-semibold">Contenido del Paquete</h4>
+
+                            {/* Add Item Form */}
+                            <Form {...addItemForm}>
+                                <form onSubmit={addItemForm.handleSubmit(handleAddPackageItemSubmit)} className="flex items-end gap-2 border p-3 rounded-md bg-muted/50">
+                                    <FormField
+                                        control={addItemForm.control}
+                                        name="product_id"
+                                        render={({ field }) => (
+                                            <FormItem className="flex-grow">
+                                                <FormLabel className="text-xs">Producto a Añadir</FormLabel>
+                                                <Select onValueChange={field.onChange} value={field.value}>
+                                                    <FormControl><SelectTrigger><SelectValue placeholder="Selecciona producto" /></SelectTrigger></FormControl>
+                                                    <SelectContent>
+                                                        {allProducts.map(prod => (
+                                                            <SelectItem key={prod.id} value={prod.id}>{prod.name}</SelectItem>
+                                                        ))}
+                                                    </SelectContent>
+                                                </Select>
+                                                <FormMessage />
+                                            </FormItem>
+                                        )}
+                                    />
+                                     <FormField
+                                        control={addItemForm.control}
+                                        name="quantity"
+                                        render={({ field }) => (
+                                            <FormItem className="w-20">
+                                                <FormLabel className="text-xs">Cantidad</FormLabel>
+                                                <FormControl><Input type="number" min="1" {...field} /></FormControl>
+                                                <FormMessage />
+                                            </FormItem>
+                                        )}
+                                    />
+                                    <Button type="submit" size="sm" disabled={isPackageItemsLoading}>
+                                        <PlusCircle className="h-4 w-4" />
+                                    </Button>
+                                </form>
+                            </Form>
+
+                            {/* Items List */}
+                             <ScrollArea className="h-[200px] border rounded-md">
+                                 {isPackageItemsLoading && <div className="p-4 text-center"><Loader2 className="h-5 w-5 animate-spin inline-block" /></div>}
+                                 {!isPackageItemsLoading && currentPackageItems.length === 0 && (
+                                     <p className="p-4 text-center text-sm text-muted-foreground">Este paquete está vacío.</p>
+                                 )}
+                                 {!isPackageItemsLoading && currentPackageItems.length > 0 && (
+                                    <Table className="text-sm">
+                                        <TableHeader>
+                                            <TableRow>
+                                                <TableHead>Producto</TableHead>
+                                                <TableHead className="w-[80px] text-right">Cantidad</TableHead>
+                                                <TableHead className="w-[120px] text-right">Acciones</TableHead>
+                                            </TableRow>
+                                        </TableHeader>
+                                        <TableBody>
+                                            {currentPackageItems.map(item => (
+                                                <TableRow key={item.id}>
+                                                    <TableCell>{item.product_name || item.product_id}</TableCell>
+                                                    <TableCell className="text-right">{item.quantity}</TableCell>
+                                                    <TableCell className="text-right">
+                                                        {/* TODO: Edit button for quantity/overrides */}
+                                                         {/* <Button variant="ghost" size="icon" className="h-6 w-6 mr-1" title="Editar Item (Próximamente)">
+                                                             <Edit className="h-3 w-3" />
+                                                         </Button> */}
+                                                         <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive hover:text-destructive" onClick={() => handleDeletePackageItem(item.id)} title="Eliminar del Paquete" disabled={isPackageItemsLoading}>
+                                                            <MinusCircle className="h-3 w-3" />
+                                                         </Button>
+                                                    </TableCell>
+                                                </TableRow>
+                                            ))}
+                                        </TableBody>
+                                    </Table>
+                                 )}
+                             </ScrollArea>
+
+                              {/* TODO: Add Modifier Override Management Here */}
+                              <Card className="mt-4 bg-muted/30">
+                                    <CardHeader className="p-3"><CardTitle className="text-sm">Gestionar Modificadores del Paquete (Próximamente)</CardTitle></CardHeader>
+                                    <CardContent className="p-3"><p className="text-xs text-muted-foreground">Aquí podrás ajustar los modificadores permitidos para cada producto dentro del paquete "{editingPackage.name}".</p></CardContent>
+                                </Card>
+
+                        </div>
+                     )}
+
+
+                    <DialogFooter className="mt-6 pt-4 border-t">
+                        <DialogClose asChild>
+                            <Button type="button" variant="outline">Cerrar</Button>
+                        </DialogClose>
+                        {/* Optionally add a main save button if needed, but maybe handled per section */}
+                    </DialogFooter>
                 </DialogContent>
               </Dialog>
 

@@ -216,9 +216,9 @@ export async function updateProduct(id: string, updates: Partial<Omit<Product, '
    Object.entries(updates).forEach(([key, value]) => {
      // Handle optional fields that might come as empty strings from forms
      if (key === 'imageUrl' && value === '') {
-       validUpdates[key] = null; // Store null in DB if image URL is cleared
-     } else if (key === 'inventory_item_id' && value === '') {
-        validUpdates[key] = null; // Unlink inventory item
+       validUpdates[key as keyof Product] = null; // Store null in DB if image URL is cleared
+     } else if (key === 'inventory_item_id' && (value === '' || value === null)) { // Check for null as well
+        validUpdates[key as keyof Product] = null; // Unlink inventory item
         // Also nullify consumption if inventory is unlinked
         validUpdates['inventory_consumed_per_unit'] = null;
      } else if (value !== undefined) {
@@ -226,10 +226,15 @@ export async function updateProduct(id: string, updates: Partial<Omit<Product, '
      }
    });
 
-    // If inventory is linked, ensure consumption is set (default to 1 if not provided)
+    // If inventory is linked, ensure consumption is set (default to 1 if not provided and not explicitly set to null)
    if (validUpdates.inventory_item_id && validUpdates.inventory_consumed_per_unit === undefined) {
         validUpdates.inventory_consumed_per_unit = 1;
    }
+   // If inventory is unlinked, ensure consumption is null
+   if (validUpdates.inventory_item_id === null) {
+        validUpdates.inventory_consumed_per_unit = null;
+   }
+
 
    const fields = Object.keys(validUpdates);
    if (fields.length === 0) return; // No valid updates provided
@@ -261,7 +266,6 @@ export async function addModifierSlot(slot: Omit<ProductModifierSlot, 'id'>): Pr
 }
 
 // TODO: Implement updateModifierSlot
-// TODO: Implement deleteModifierSlot
 
 
 // --- Package Item CRUD ---
@@ -274,7 +278,6 @@ export async function addPackageItem(item: Omit<PackageItem, 'id'>): Promise<Pac
 }
 
 // TODO: Implement updatePackageItem
-// TODO: Implement deletePackageItem
 
 
 // --- Package Override CRUD ---
