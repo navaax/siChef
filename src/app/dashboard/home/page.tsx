@@ -135,7 +135,7 @@ export default function HomePage() {
           </CardHeader>
           <CardContent>
             <ScrollArea className="h-[60vh] md:h-[70vh]">
-              <Table>
+              <Table>{/* Ensure no whitespace before TableHeader */}
                 <TableHeader>
                   <TableRow>
                     <TableHead>Pedido #</TableHead>

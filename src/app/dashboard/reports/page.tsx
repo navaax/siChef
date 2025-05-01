@@ -178,8 +178,8 @@ export default function ReportsPage() {
         </CardHeader>
         <CardContent className="flex-grow overflow-hidden p-0"> {/* Remove padding for full height scroll */}
           <ScrollArea className="h-full"> {/* Make ScrollArea take full height */}
-             <Table className="relative"> {/* Add relative positioning */}
-                <TableHeader className="sticky top-0 bg-background z-10"> {/* Make header sticky */}
+             <Table className="relative">{/* Ensure no whitespace before TableHeader */}
+               <TableHeader className="sticky top-0 bg-background z-10"> {/* Make header sticky */}
                 <TableRow>
                   <TableHead>Pedido #</TableHead>
                   <TableHead>ID</TableHead>
