@@ -11,6 +11,10 @@ let db: Database | null = null;
 export async function getDb(): Promise<Database> {
   if (!db) {
     try {
+      // Ensure the directory exists (though process.cwd() should exist)
+      // This is more relevant if dbPath were in a subdirectory like 'data/'
+      // await fs.mkdir(path.dirname(dbPath), { recursive: true });
+
       const newDb = await open({
         filename: dbPath,
         driver: sqlite3.Database
@@ -34,6 +38,7 @@ async function initializeDb(dbInstance: Database): Promise<void> {
     CREATE TABLE IF NOT EXISTS categories (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
+      type TEXT NOT NULL CHECK(type IN ('producto', 'modificador', 'paquete')) DEFAULT 'producto', -- Added type
       imageUrl TEXT
     );
 

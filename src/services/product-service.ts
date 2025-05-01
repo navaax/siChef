@@ -1,3 +1,4 @@
+// src/services/product-service.ts
 'use server';
 
 import { getDb } from '@/lib/db';
@@ -5,15 +6,22 @@ import type {
     Category,
     Product,
     ProductModifierSlot,
-    Package,
+    // Package, // Package is now just a Product with type 'paquete'
     PackageItem,
     PackageItemModifierSlotOverride
 } from '@/types/product-types';
 
-export async function getCategories(): Promise<Category[]> {
+export async function getCategories(type?: Category['type']): Promise<Category[]> {
   const db = await getDb();
   try {
-    const categories = await db.all<Category[]>('SELECT * FROM categories ORDER BY name ASC');
+    let query = 'SELECT * FROM categories';
+    const params: any[] = [];
+    if (type) {
+        query += ' WHERE type = ?';
+        params.push(type);
+    }
+    query += ' ORDER BY name ASC';
+    const categories = await db.all<Category[]>(query, ...params);
     return categories;
   } catch (error) {
     console.error('Error fetching categories:', error);
@@ -21,10 +29,20 @@ export async function getCategories(): Promise<Category[]> {
   }
 }
 
+// Fetches products that are NOT packages
 export async function getProductsByCategory(categoryId: string): Promise<Product[]> {
   const db = await getDb();
   try {
-    const products = await db.all<Product[]>('SELECT * FROM products WHERE categoryId = ? ORDER BY name ASC', categoryId);
+    // Explicitly filter out packages by joining with categories table or checking category type if reliable
+    // Assuming products in 'paquete' type categories are packages
+     const products = await db.all<Product[]>(`
+        SELECT p.*
+        FROM products p
+        JOIN categories c ON p.categoryId = c.id
+        WHERE p.categoryId = ? AND c.type != 'paquete'
+        ORDER BY p.name ASC
+     `, categoryId);
+    // If category type isn't strictly enforced for packages, maybe filter by product name conventions or a flag if added
     return products;
   } catch (error) {
     console.error(`Error fetching products for category ${categoryId}:`, error);
@@ -32,9 +50,30 @@ export async function getProductsByCategory(categoryId: string): Promise<Product
   }
 }
 
+// Fetches ONLY packages within a specific category (usually the 'paquete' category)
+export async function getPackagesByCategory(categoryId: string): Promise<Product[]> {
+    const db = await getDb();
+    try {
+        // Fetch products that BELONG to a category of type 'paquete'
+         const packages = await db.all<Product[]>(`
+            SELECT p.*
+            FROM products p
+            JOIN categories c ON p.categoryId = c.id
+            WHERE p.categoryId = ? AND c.type = 'paquete'
+            ORDER BY p.name ASC
+        `, categoryId);
+        return packages;
+    } catch (error) {
+        console.error(`Error fetching packages for category ${categoryId}:`, error);
+        throw new Error(`Failed to fetch packages for category ${categoryId}.`);
+    }
+}
+
+
 export async function getProductById(productId: string): Promise<Product | null> {
     const db = await getDb();
     try {
+        // This function works for both regular products and packages now
         const product = await db.get<Product>(
             'SELECT * FROM products WHERE id = ?',
              productId
@@ -62,26 +101,9 @@ export async function getModifierSlotsForProduct(productId: string): Promise<Pro
   }
 }
 
-export async function getPackagesByCategory(categoryId: string): Promise<Package[]> {
-    const db = await getDb();
-    try {
-        const packages = await db.all<Package[]>('SELECT * FROM packages WHERE category_id = ? ORDER BY name ASC', categoryId);
-        return packages;
-    } catch (error) {
-        console.error(`Error fetching packages for category ${categoryId}:`, error);
-        throw new Error(`Failed to fetch packages for category ${categoryId}.`);
-    }
-}
-
-export async function getPackageById(packageId: string): Promise<Package | null> {
-    const db = await getDb();
-    try {
-        const pkg = await db.get<Package>('SELECT * FROM packages WHERE id = ?', packageId);
-        return pkg || null;
-    } catch (error) {
-        console.error(`Error fetching package ${packageId}:`, error);
-        throw new Error(`Failed to fetch package ${packageId}.`);
-    }
+// getPackageById is now equivalent to getProductById
+export async function getPackageById(packageId: string): Promise<Product | null> {
+    return getProductById(packageId);
 }
 
 
@@ -125,7 +147,7 @@ export async function getOverridesForPackageItem(packageItemId: string): Promise
 // export async function addProduct(...) { ... }
 // export async function updateProduct(...) { ... }
 // export async function addCategory(...) { ... }
-// export async function addPackage(...) { ... }
-// export async function updatePackage(...) { ... }
+// export async function addPackage(...) { ... } // Now part of addProduct
+// export async function updatePackage(...) { ... } // Now part of updateProduct
 // export async function addInventoryItem(...) { ... }
 // export async function updateInventory(...) { ... }

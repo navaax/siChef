@@ -5,6 +5,7 @@
 export interface Category {
   id: string;
   name: string;
+  type: 'producto' | 'modificador' | 'paquete'; // Added type
   imageUrl?: string; // Optional in DB
 }
 
