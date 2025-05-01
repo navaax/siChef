@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from 'react';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -10,86 +10,11 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { PlusCircle, MinusCircle, ChevronLeft, Save, Printer, Trash2 } from 'lucide-react'; // Icons
+import { PlusCircle, MinusCircle, ChevronLeft, Save, Printer, Trash2, Loader2 } from 'lucide-react'; // Icons
 import { useToast } from "@/hooks/use-toast";
 import Image from 'next/image'; // For product images
-
-// --- Types ---
-interface Modifier {
-  id: string;
-  name: string;
-  priceModifier?: number; // Optional price adjustment
-  selected?: boolean; // For checkbox selection
-  isApart?: boolean; // For 'aparte' selection
-}
-
-interface Product {
-  id: string;
-  name: string;
-  price: number;
-  categoryId: string;
-  imageUrl: string; // Added image URL
-  modifiers?: Modifier[]; // Modifiers specific to this product
-}
-
-interface Category {
-  id: string;
-  name: string;
-  imageUrl: string; // Added image URL for category
-}
-
-interface OrderItem {
-  productId: string;
-  name: string;
-  quantity: number;
-  basePrice: number;
-  selectedModifiers: Modifier[]; // Modifiers chosen for this specific item instance
-  totalPrice: number; // Calculated price with modifiers
-  uniqueId: string; // Unique ID for each item added to the cart (e.g., using timestamp or uuid)
-}
-
-interface CurrentOrder {
-  id: string; // e.g., siChef-005
-  customerName: string;
-  items: OrderItem[];
-  subtotal: number;
-  total: number;
-  paymentMethod: 'cash' | 'card';
-  paidAmount?: number;
-  changeDue?: number;
-}
-
-
-// --- Mock Data ---
-const categories: Category[] = [
-  { id: 'cat-burgers', name: 'Burgers', imageUrl: 'https://picsum.photos/200/150?random=1' },
-  { id: 'cat-salads', name: 'Salads', imageUrl: 'https://picsum.photos/200/150?random=2' },
-  { id: 'cat-drinks', name: 'Drinks', imageUrl: 'https://picsum.photos/200/150?random=3' },
-  { id: 'cat-sides', name: 'Sides', imageUrl: 'https://picsum.photos/200/150?random=4' },
-];
-
-const products: Product[] = [
-  // Burgers
-  {
-    id: 'prod-101', name: 'Cheeseburger', price: 8.50, categoryId: 'cat-burgers', imageUrl: 'https://picsum.photos/200/150?random=11',
-    modifiers: [
-      { id: 'mod-pickle', name: 'Extra Pickles' },
-      { id: 'mod-bacon', name: 'Add Bacon', priceModifier: 1.50 },
-      { id: 'mod-cheese', name: 'Extra Cheese', priceModifier: 1.00 },
-      { id: 'mod-onion', name: 'No Onions' },
-    ]
-  },
-  { id: 'prod-102', name: 'Veggie Burger', price: 7.50, categoryId: 'cat-burgers', imageUrl: 'https://picsum.photos/200/150?random=12', modifiers: [ { id: 'mod-lettuce', name: 'Lettuce Wrap' }, { id: 'mod-avocado', name: 'Add Avocado', priceModifier: 1.25 } ] },
-  // Salads
-  { id: 'prod-305', name: 'Chicken Salad', price: 9.75, categoryId: 'cat-salads', imageUrl: 'https://picsum.photos/200/150?random=21', modifiers: [{ id: 'mod-dressing', name: 'Ranch Dressing'}, { id: 'mod-dressing-vinaigrette', name: 'Vinaigrette'}] },
-  { id: 'prod-306', name: 'Caesar Salad', price: 9.00, categoryId: 'cat-salads', imageUrl: 'https://picsum.photos/200/150?random=22', modifiers: [{ id: 'mod-anchovies', name: 'Add Anchovies', priceModifier: 1.00 }] },
-  // Drinks
-  { id: 'prod-401', name: 'Iced Tea', price: 2.50, categoryId: 'cat-drinks', imageUrl: 'https://picsum.photos/200/150?random=31' },
-  { id: 'prod-402', name: 'Cola', price: 2.00, categoryId: 'cat-drinks', imageUrl: 'https://picsum.photos/200/150?random=32' },
-  // Sides
-  { id: 'prod-203', name: 'Fries', price: 3.00, categoryId: 'cat-sides', imageUrl: 'https://picsum.photos/200/150?random=41' },
-  { id: 'prod-204', name: 'Onion Rings', price: 4.00, categoryId: 'cat-sides', imageUrl: 'https://picsum.photos/200/150?random=42' },
-];
+import { getCategories, getProductsByCategory, getModifiersForProduct, getProductById } from '@/services/product-service'; // Import DB service functions
+import type { Category, Product, Modifier, OrderItem, CurrentOrder, ModifierSelection, SavedOrder } from '@/types/product-types'; // Import shared types
 
 
 // --- Helper Functions ---
@@ -107,8 +32,8 @@ const generateOrderId = (existingOrdersCount: number): string => {
 export default function CreateOrderPage() {
   const [view, setView] = useState<'categories' | 'products' | 'modifiers'>('categories');
   const [selectedCategory, setSelectedCategory] = useState<Category | null>(null);
-  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
-  const [currentModifiers, setCurrentModifiers] = useState<Modifier[]>([]);
+  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null); // Store full product
+  const [currentModifiers, setCurrentModifiers] = useState<ModifierSelection[]>([]);
   const [customerName, setCustomerName] = useState('');
   const [isRegisteringCustomer, setIsRegisteringCustomer] = useState(false);
   const [currentOrder, setCurrentOrder] = useState<CurrentOrder>({
@@ -121,60 +46,97 @@ export default function CreateOrderPage() {
   });
   const [paidAmountInput, setPaidAmountInput] = useState('');
 
+  // State for fetched data
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [products, setProducts] = useState<Product[]>([]); // Products for the selected category
+  const [isLoading, setIsLoading] = useState({ categories: true, products: false, modifiers: false });
+
   const { toast } = useToast();
 
-  // Effect to calculate totals whenever order items change
+  // --- Data Fetching Effects ---
   useEffect(() => {
-    const subtotal = currentOrder.items.reduce((sum, item) => sum + item.totalPrice, 0);
-    setCurrentOrder(prev => ({ ...prev, subtotal: subtotal, total: subtotal })); // Add tax/fees later if needed
-  }, [currentOrder.items]);
-
-  // Effect to calculate change due when paid amount or total changes (for cash)
-  useEffect(() => {
-    if (currentOrder.paymentMethod === 'cash') {
-      const paid = parseFloat(paidAmountInput) || 0;
-      const change = paid - currentOrder.total;
-      setCurrentOrder(prev => ({
-        ...prev,
-        paidAmount: paid,
-        changeDue: change >= 0 ? change : undefined // Only show non-negative change
-      }));
-    } else {
-      // Reset cash-specific fields if switching away from cash
-      setCurrentOrder(prev => ({ ...prev, paidAmount: undefined, changeDue: undefined }));
-      setPaidAmountInput('');
+    async function fetchCategories() {
+      setIsLoading(prev => ({ ...prev, categories: true }));
+      try {
+        const fetchedCategories = await getCategories();
+        setCategories(fetchedCategories);
+      } catch (error) {
+        toast({ title: "Error", description: "Failed to load categories.", variant: "destructive" });
+      } finally {
+        setIsLoading(prev => ({ ...prev, categories: false }));
+      }
     }
-  }, [paidAmountInput, currentOrder.total, currentOrder.paymentMethod]);
+    fetchCategories();
+  }, [toast]);
 
+  const fetchProducts = useCallback(async (categoryId: string) => {
+    setIsLoading(prev => ({ ...prev, products: true }));
+    try {
+      const fetchedProducts = await getProductsByCategory(categoryId);
+      setProducts(fetchedProducts);
+    } catch (error) {
+      toast({ title: "Error", description: "Failed to load products.", variant: "destructive" });
+    } finally {
+      setIsLoading(prev => ({ ...prev, products: false }));
+    }
+  }, [toast]);
+
+  const fetchModifiers = useCallback(async (productId: string) => {
+    if (!selectedProduct) return; // Should have selected product by now
+    setIsLoading(prev => ({ ...prev, modifiers: true }));
+    try {
+      const fetchedModifiers = await getModifiersForProduct(productId);
+      // Initialize UI state for modifiers
+      setCurrentModifiers(fetchedModifiers.map(m => ({ ...m, selected: false, isApart: false })));
+    } catch (error) {
+      toast({ title: "Error", description: "Failed to load modifiers.", variant: "destructive" });
+    } finally {
+      setIsLoading(prev => ({ ...prev, modifiers: false }));
+    }
+  }, [toast, selectedProduct]); // Depend on selectedProduct
+
+
+  // --- UI Interaction Handlers ---
 
   const handleCategoryClick = (category: Category) => {
     setSelectedCategory(category);
+    fetchProducts(category.id); // Fetch products for this category
     setView('products');
   };
 
-  const handleProductClick = (product: Product) => {
-    setSelectedProduct(product);
-    if (product.modifiers && product.modifiers.length > 0) {
-      // Initialize modifiers state for the selected product
-      setCurrentModifiers(product.modifiers.map(m => ({ ...m, selected: false, isApart: false })));
-      setView('modifiers');
-    } else {
-      // Add product directly if no modifiers
-      addProductToOrder(product, []);
-      setView('products'); // Stay on products view
+  const handleProductClick = async (product: Product) => {
+    setSelectedProduct(product); // Store the full product object
+    // Fetch modifiers *before* deciding view
+    setIsLoading(prev => ({ ...prev, modifiers: true })); // Indicate loading
+    try {
+        const fetchedModifiers = await getModifiersForProduct(product.id);
+        if (fetchedModifiers && fetchedModifiers.length > 0) {
+            setCurrentModifiers(fetchedModifiers.map(m => ({ ...m, selected: false, isApart: false })));
+            setView('modifiers');
+        } else {
+            // No modifiers, add directly
+            addProductToOrder(product, []);
+            setView('products'); // Stay on products view
+        }
+    } catch (error) {
+        toast({ title: "Error", description: "Failed to load modifiers.", variant: "destructive" });
+        // Decide how to handle failure - maybe stay on products view?
+        setView('products');
+    } finally {
+        setIsLoading(prev => ({ ...prev, modifiers: false })); // Stop loading indicator
     }
-  };
+};
 
   const handleModifierChange = (modifierId: string, type: 'select' | 'apart') => {
     setCurrentModifiers(prev =>
       prev.map(mod => {
         if (mod.id === modifierId) {
           if (type === 'select') {
-            return { ...mod, selected: !mod.selected };
+            return { ...mod, selected: !mod.selected, isApart: !mod.selected ? false : mod.isApart }; // Reset 'apart' if deselected
           } else if (type === 'apart') {
-            // Ensure 'aparte' can only be true if the modifier is selected
+            // Toggle 'aparte', ensure 'selected' is true if 'apart' becomes true
             const newApartState = !mod.isApart;
-            return { ...mod, isApart: newApartState, selected: newApartState ? true : mod.selected };
+            return { ...mod, isApart: newApartState, selected: newApartState || mod.selected };
           }
         }
         return mod;
@@ -182,7 +144,7 @@ export default function CreateOrderPage() {
     );
   };
 
-    const handleAddProductWithModifiers = () => {
+  const handleAddProductWithModifiers = () => {
     if (!selectedProduct) return;
 
     const chosenModifiers = currentModifiers.filter(m => m.selected);
@@ -194,7 +156,7 @@ export default function CreateOrderPage() {
     setView('products');
   };
 
-   const addProductToOrder = (product: Product, modifiers: Modifier[]) => {
+   const addProductToOrder = (product: Product, modifiers: ModifierSelection[]) => {
     const modifierPrice = modifiers.reduce((sum, mod) => sum + (mod.priceModifier || 0), 0);
     const itemPrice = product.price + modifierPrice;
 
@@ -204,7 +166,7 @@ export default function CreateOrderPage() {
       quantity: 1, // Start with quantity 1
       basePrice: product.price,
       selectedModifiers: modifiers,
-      totalPrice: itemPrice,
+      totalPrice: itemPrice, // Price for quantity 1 initially
       uniqueId: Date.now().toString() + Math.random().toString(), // Simple unique ID
     };
 
@@ -219,22 +181,29 @@ export default function CreateOrderPage() {
     })
   };
 
-  const handleQuantityChange = (uniqueId: string, delta: number) => {
+   // Effect to calculate totals whenever order items change
+  useEffect(() => {
+    const subtotal = currentOrder.items.reduce((sum, item) => sum + item.totalPrice, 0);
+    // Assuming total is same as subtotal for now (no tax/discounts)
+    setCurrentOrder(prev => ({ ...prev, subtotal: subtotal, total: subtotal }));
+  }, [currentOrder.items]);
+
+    const handleQuantityChange = (uniqueId: string, delta: number) => {
      setCurrentOrder(prev => {
-      const updatedItems = prev.items.map(item => {
+      let updatedItems = prev.items.map(item => {
         if (item.uniqueId === uniqueId) {
-          const newQuantity = Math.max(1, item.quantity + delta); // Ensure quantity doesn't go below 1
-          const pricePerItem = item.totalPrice / item.quantity; // Recalculate price based on base + modifiers
+          const newQuantity = Math.max(0, item.quantity + delta); // Allow quantity to become 0
+          const pricePerUnit = item.basePrice + item.selectedModifiers.reduce((sum, mod) => sum + (mod.priceModifier || 0), 0);
           return {
             ...item,
             quantity: newQuantity,
-            totalPrice: pricePerItem * newQuantity,
+            totalPrice: pricePerUnit * newQuantity,
           };
         }
         return item;
       });
-       // Optionally remove item if quantity becomes 0 (if delta can be -1 and quantity is 1)
-        // updatedItems = updatedItems.filter(item => item.quantity > 0);
+      // Remove item if quantity is 0
+      updatedItems = updatedItems.filter(item => item.quantity > 0);
 
       return { ...prev, items: updatedItems };
     });
@@ -259,8 +228,27 @@ export default function CreateOrderPage() {
     } else if (view === 'products') {
       setView('categories');
       setSelectedCategory(null);
+      setProducts([]); // Clear products when going back to categories
     }
   };
+
+    // Effect to calculate change due when paid amount or total changes (for cash)
+  useEffect(() => {
+    if (currentOrder.paymentMethod === 'cash') {
+      const paid = parseFloat(paidAmountInput) || 0;
+      const change = paid - currentOrder.total;
+      setCurrentOrder(prev => ({
+        ...prev,
+        paidAmount: paid,
+        changeDue: change >= 0 ? change : undefined // Only show non-negative change
+      }));
+    } else {
+      // Reset cash-specific fields if switching away from cash
+      setCurrentOrder(prev => ({ ...prev, paidAmount: undefined, changeDue: undefined }));
+      setPaidAmountInput('');
+    }
+  }, [paidAmountInput, currentOrder.total, currentOrder.paymentMethod]);
+
 
   const handleSaveCustomer = () => {
       if(customerName.trim()){
@@ -285,53 +273,72 @@ export default function CreateOrderPage() {
 
      // 1. Get existing orders to determine the next ID
      const storedOrdersString = localStorage.getItem('siChefOrders') || '[]';
-     const existingOrders: any[] = JSON.parse(storedOrdersString); // Use 'any' carefully or define a proper type
+     let existingOrders: SavedOrder[] = [];
+     try {
+         existingOrders = JSON.parse(storedOrdersString).map((order: any) => ({
+             ...order,
+             createdAt: new Date(order.createdAt) // Ensure date is parsed correctly
+         }));
+     } catch (e) {
+        console.error("Error parsing existing orders from localStorage", e);
+        // Handle error, maybe reset localStorage or notify user
+     }
+
      const newOrderId = generateOrderId(existingOrders.length);
+     const newOrderNumber = existingOrders.length + 1;
 
 
-    // 2. Format the new order object to match the structure in home/page.tsx
-     const finalizedOrder = {
+    // 2. Format the new order object to match the SavedOrder structure
+     const finalizedOrder: SavedOrder = {
       id: newOrderId,
-      orderNumber: existingOrders.length + 1,
+      orderNumber: newOrderNumber,
       customerName: currentOrder.customerName,
-      items: currentOrder.items.map(item => ({ // Map to the structure expected in home/page.tsx
-          id: item.productId, // Use productId as the item's ID in the final order
+      items: currentOrder.items.map(item => ({ // Map to SavedOrderItem
+          id: item.productId,
           name: item.name,
           quantity: item.quantity,
-          price: item.basePrice, // Store base price, total might be derived or stored separately if needed
+          price: item.basePrice, // Store base price per unit
           components: item.selectedModifiers.map(m => m.name),
-          isApart: item.selectedModifiers.some(m => m.isApart) // Check if any modifier has isApart
+          // Simplify: mark true if *any* modifier had isApart
+          isApart: item.selectedModifiers.some(m => m.isApart)
       })),
       paymentMethod: currentOrder.paymentMethod,
+      subtotal: currentOrder.subtotal, // Store calculated subtotal
       total: currentOrder.total,
-      status: 'pending' as const, // Default status
+      status: 'pending', // Default status
       createdAt: new Date(),
       paidAmount: currentOrder.paidAmount,
-      changeGiven: currentOrder.changeDue, // Renamed from changeDue
+      changeGiven: currentOrder.changeDue,
     };
 
     // 3. Save to localStorage (Simulating backend)
     const updatedOrders = [...existingOrders, finalizedOrder];
     localStorage.setItem('siChefOrders', JSON.stringify(updatedOrders));
 
-    // 4. Trigger Print (Simulated)
+    // 4. Trigger Print (Simulated - Keep console log for now)
     console.log('--- Printing Kitchen Comanda ---');
     console.log(`Pedido #: ${finalizedOrder.orderNumber} (${finalizedOrder.id})`);
     console.log(`Cliente: ${finalizedOrder.customerName}`);
     console.log('-----------------------------');
     finalizedOrder.items.forEach(item => {
-      console.log(`${item.quantity}x ${item.name}`);
+      console.log(`${item.quantity}x ${item.name} (${formatCurrency(item.price)} each)`);
       if (item.components && item.components.length > 0) {
-        item.components.forEach(comp => {
-             // Need to find the original modifier to check isApart
-             const originalModifier = currentOrder.items
-                .find(ci => ci.productId === item.id)
-                ?.selectedModifiers.find(sm => sm.name === comp);
-          console.log(`  - ${comp} ${originalModifier?.isApart ? '(Aparte)' : ''}`);
+        // Find the original OrderItem to check individual modifier 'isApart' status
+        const originalOrderItem = currentOrder.items.find(ci => ci.productId === item.id);
+        item.components.forEach(compName => {
+            const originalModifier = originalOrderItem?.selectedModifiers.find(sm => sm.name === compName);
+            console.log(`  - ${compName} ${originalModifier?.isApart ? '(Aparte)' : ''}`);
         });
       }
     });
     console.log('-----------------------------');
+    console.log(`Total: ${formatCurrency(finalizedOrder.total)}`);
+    console.log(`Payment: ${finalizedOrder.paymentMethod}`);
+    if(finalizedOrder.paymentMethod === 'cash') {
+        console.log(`Paid: ${formatCurrency(finalizedOrder.paidAmount || 0)}`);
+        console.log(`Change: ${formatCurrency(finalizedOrder.changeGiven || 0)}`);
+    }
+     console.log('-----------------------------');
 
 
     // 5. Reset state for a new order
@@ -345,6 +352,7 @@ export default function CreateOrderPage() {
     setSelectedCategory(null);
     setSelectedProduct(null);
     setCurrentModifiers([]);
+    setProducts([]); // Clear product list
 
 
     toast({ title: "Order Finalized", description: `${finalizedOrder.id} created and sent to kitchen.` });
@@ -356,12 +364,16 @@ export default function CreateOrderPage() {
   const renderContent = () => {
     switch (view) {
       case 'categories':
+        if (isLoading.categories) {
+          return <div className="flex justify-center items-center h-full"><Loader2 className="h-8 w-8 animate-spin text-muted-foreground" /></div>;
+        }
         return (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
             {categories.map(cat => (
               <Card key={cat.id} onClick={() => handleCategoryClick(cat)} className="cursor-pointer hover:shadow-md transition-shadow group overflow-hidden">
-                 <div className="relative w-full h-32">
-                  <Image src={cat.imageUrl} alt={cat.name} layout="fill" objectFit="cover" className="group-hover:scale-105 transition-transform duration-300" data-ai-hint="food category" />
+                 <div className="relative w-full h-32 bg-secondary">
+                  {cat.imageUrl && <Image src={cat.imageUrl} alt={cat.name} layout="fill" objectFit="cover" className="group-hover:scale-105 transition-transform duration-300" data-ai-hint="food category" />}
+                   {!cat.imageUrl && <div className="absolute inset-0 flex items-center justify-center text-muted-foreground">No Image</div>}
                  </div>
                  <CardHeader className="p-3">
                   <CardTitle className="text-center text-sm md:text-base">{cat.name}</CardTitle>
@@ -371,7 +383,9 @@ export default function CreateOrderPage() {
           </div>
         );
       case 'products':
-        const categoryProducts = products.filter(p => p.categoryId === selectedCategory?.id);
+        if (isLoading.products) {
+          return <div className="flex justify-center items-center h-full"><Loader2 className="h-8 w-8 animate-spin text-muted-foreground" /></div>;
+        }
         return (
           <>
             <Button variant="ghost" size="sm" onClick={handleBack} className="mb-4">
@@ -379,10 +393,11 @@ export default function CreateOrderPage() {
             </Button>
             <h2 className="text-xl font-semibold mb-4"> {selectedCategory?.name}</h2>
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-              {categoryProducts.map(prod => (
+              {products.map(prod => (
                 <Card key={prod.id} onClick={() => handleProductClick(prod)} className="cursor-pointer hover:shadow-md transition-shadow group overflow-hidden">
-                    <div className="relative w-full h-32">
-                      <Image src={prod.imageUrl} alt={prod.name} layout="fill" objectFit="cover" className="group-hover:scale-105 transition-transform duration-300" data-ai-hint="menu item food" />
+                    <div className="relative w-full h-32 bg-secondary">
+                      {prod.imageUrl && <Image src={prod.imageUrl} alt={prod.name} layout="fill" objectFit="cover" className="group-hover:scale-105 transition-transform duration-300" data-ai-hint="menu item food" />}
+                       {!prod.imageUrl && <div className="absolute inset-0 flex items-center justify-center text-muted-foreground">No Image</div>}
                      </div>
                   <CardHeader className="p-3">
                     <CardTitle className="text-sm md:text-base">{prod.name}</CardTitle>
@@ -390,11 +405,14 @@ export default function CreateOrderPage() {
                   </CardHeader>
                 </Card>
               ))}
-               {categoryProducts.length === 0 && <p>No products in this category.</p>}
+               {products.length === 0 && <p className="col-span-full text-center text-muted-foreground">No products in this category.</p>}
             </div>
           </>
         );
       case 'modifiers':
+         if (isLoading.modifiers) {
+            return <div className="flex justify-center items-center h-full"><Loader2 className="h-8 w-8 animate-spin text-muted-foreground" /></div>;
+         }
         return (
           <>
             <Button variant="ghost" size="sm" onClick={handleBack} className="mb-4">
@@ -409,7 +427,7 @@ export default function CreateOrderPage() {
                              <input
                                 type="checkbox"
                                 id={`mod-select-${mod.id}`}
-                                checked={mod.selected}
+                                checked={!!mod.selected} // Ensure boolean
                                 onChange={() => handleModifierChange(mod.id, 'select')}
                                 className="h-4 w-4 rounded border-gray-300 text-accent focus:ring-accent"
                              />
@@ -419,26 +437,29 @@ export default function CreateOrderPage() {
                         </div>
                          <label
                            htmlFor={`mod-apart-${mod.id}`}
-                           className="flex items-center gap-2 text-sm cursor-pointer select-none hover:text-accent transition-colors"
-                           onDoubleClick={(e) => {
-                               e.preventDefault(); // Prevent text selection on double click
-                               handleModifierChange(mod.id, 'apart');
+                           className={`flex items-center gap-2 text-sm cursor-pointer select-none transition-colors ${mod.selected ? 'hover:text-accent' : 'text-muted-foreground cursor-not-allowed opacity-50'}`}
+                           onClick={(e) => { // Use onClick for label to handle disabled state
+                                if (!mod.selected) {
+                                    e.preventDefault(); // Prevent toggling if parent not selected
+                                    return;
+                                }
+                                handleModifierChange(mod.id, 'apart');
                             }}
-                            title="Double-click to toggle 'Aparte'"
+                            title={mod.selected ? "Toggle 'Aparte'" : "'Aparte' requires selecting the item first"}
                            >
                            Aparte
                             <input
                                 type="checkbox"
                                 id={`mod-apart-${mod.id}`}
-                                checked={mod.isApart}
-                                onChange={() => handleModifierChange(mod.id, 'apart')} // Also allow single click change
+                                checked={!!mod.isApart} // Ensure boolean
+                                onChange={() => handleModifierChange(mod.id, 'apart')} // Will be handled by label's onClick
                                 className="h-4 w-4 rounded border-gray-300 text-accent focus:ring-accent"
-                                disabled={!mod.selected && !mod.isApart} // Disable if not selected initially, unless already 'apart'
+                                disabled={!mod.selected} // Disable checkbox directly if parent not selected
                             />
                         </label>
                     </div>
                 ))}
-                {currentModifiers.length === 0 && <p>No complements available for this product.</p>}
+                {currentModifiers.length === 0 && <p className="text-muted-foreground">No complements available for this product.</p>}
             </div>
             <Button onClick={handleAddProductWithModifiers} className="w-full">
               <PlusCircle className="mr-2 h-4 w-4" /> Agregar al Pedido
@@ -452,10 +473,10 @@ export default function CreateOrderPage() {
 
 
  return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[calc(100vh-theme(spacing.24))]"> {/* Adjust height based on layout */}
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[calc(100vh-theme(spacing.16))]"> {/* Adjusted height */}
       {/* Main Content (Categories/Products/Modifiers) */}
       <div className="lg:col-span-2 h-full">
-         <Card className="h-full flex flex-col">
+         <Card className="h-full flex flex-col shadow-md">
             <CardHeader>
                 <CardTitle>Crear Pedido</CardTitle>
                 <CardDescription>Seleccione categorías, productos y complementos.</CardDescription>
@@ -470,7 +491,7 @@ export default function CreateOrderPage() {
 
       {/* Right Sidebar (Order Summary) */}
        <div className="lg:col-span-1 h-full">
-         <Card className="h-full flex flex-col">
+         <Card className="h-full flex flex-col shadow-md">
            <CardHeader>
              <CardTitle>Resumen del Pedido</CardTitle>
              <CardDescription>{currentOrder.id || 'Nuevo Pedido'}</CardDescription>
@@ -510,25 +531,25 @@ export default function CreateOrderPage() {
                 ) : (
                  <div className="space-y-3">
                  {currentOrder.items.map((item) => (
-                     <div key={item.uniqueId} className="text-sm border-b pb-2">
-                         <div className="flex justify-between items-center font-medium mb-1">
-                             <span>{item.name}</span>
+                     <div key={item.uniqueId} className="text-sm border-b pb-2 last:border-b-0">
+                         <div className="flex justify-between items-start font-medium mb-1">
+                             <span className="flex-1 mr-2">{item.name}</span>
                              <span>{formatCurrency(item.totalPrice)}</span>
                          </div>
                           <div className="flex justify-between items-center text-xs">
                             <div className="flex items-center gap-2 text-muted-foreground">
-                                <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => handleQuantityChange(item.uniqueId, -1)}><MinusCircle className="h-4 w-4"/></Button>
+                                <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => handleQuantityChange(item.uniqueId, -1)} disabled={item.quantity <= 1}><MinusCircle className="h-4 w-4"/></Button>
                                 <span>{item.quantity}</span>
                                 <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => handleQuantityChange(item.uniqueId, 1)}><PlusCircle className="h-4 w-4"/></Button>
                             </div>
-                             <Button variant="ghost" size="icon" className="h-5 w-5 text-destructive" onClick={() => handleRemoveItem(item.uniqueId)}><Trash2 className="h-4 w-4"/></Button>
+                             <Button variant="ghost" size="icon" className="h-5 w-5 text-destructive hover:text-destructive" onClick={() => handleRemoveItem(item.uniqueId)}><Trash2 className="h-4 w-4"/></Button>
                          </div>
                          {item.selectedModifiers.length > 0 && (
-                         <ul className="list-disc list-inside text-xs text-muted-foreground ml-4 mt-1">
+                         <ul className="list-disc list-inside text-xs text-muted-foreground ml-4 mt-1 space-y-0.5">
                              {item.selectedModifiers.map(mod => (
                              <li key={mod.id}>
                                  {mod.name} {mod.priceModifier ? `(${formatCurrency(mod.priceModifier)})` : ''}
-                                  {mod.isApart ? <Badge variant="outline" className="ml-1 text-xs">Aparte</Badge> : ''}
+                                  {mod.isApart ? <Badge variant="outline" className="ml-1 text-xs px-1 py-0">Aparte</Badge> : ''}
                              </li>
                              ))}
                          </ul>
@@ -542,10 +563,10 @@ export default function CreateOrderPage() {
              {/* Totals and Payment */}
              <Separator className="my-2" />
              <div className="space-y-2 text-sm pt-2">
-               {/* <div className="flex justify-between">
+               <div className="flex justify-between">
                  <span className="text-muted-foreground">Subtotal</span>
                  <span>{formatCurrency(currentOrder.subtotal)}</span>
-               </div> */}
+               </div>
                  {/* Add Tax/Fees here if needed */}
                <div className="flex justify-between font-bold text-base">
                  <span>Total</span>
@@ -597,7 +618,7 @@ export default function CreateOrderPage() {
 
              </div>
            </CardContent>
-            <div className="p-4 border-t mt-auto">
+            <div className="p-4 border-t mt-auto bg-muted/30">
                  <Button className="w-full" onClick={handleFinalizeOrder} disabled={currentOrder.items.length === 0}>
                     <Printer className="mr-2 h-4 w-4" /> Finalizar y Imprimir Comanda
                  </Button>

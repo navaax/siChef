@@ -11,56 +11,7 @@ import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { format } from 'date-fns';
 import { Pencil, XCircle } from 'lucide-react'; // Icons for edit and cancel
-
-// Define types for Order and OrderItem
-interface OrderItem {
-  id: string;
-  name: string;
-  quantity: number;
-  price: number;
-  components?: string[]; // e.g., ["Extra Cheese", "No Onions"]
-  isApart?: boolean; // If the component is separate
-}
-
-interface Order {
-  id: string; // e.g., siChef-001
-  orderNumber: number; // e.g., 1
-  customerName: string;
-  items: OrderItem[];
-  paymentMethod: 'cash' | 'card';
-  total: number;
-  status: 'pending' | 'completed' | 'cancelled';
-  createdAt: Date;
-  paidAmount?: number; // Only relevant for cash payments
-  changeGiven?: number; // Only relevant for cash payments
-}
-
-
-// Mock data for orders
-const initialOrders: Order[] = [
-  {
-    id: 'siChef-001', orderNumber: 1, customerName: 'Alice Smith', items: [
-      { id: 'prod-101', name: 'Cheeseburger', quantity: 1, price: 8.50, components: ['Extra Pickles'], isApart: false },
-      { id: 'prod-203', name: 'Fries', quantity: 1, price: 3.00 },
-    ], paymentMethod: 'card', total: 11.50, status: 'pending', createdAt: new Date(Date.now() - 3600 * 1000 * 1) // 1 hour ago
-  },
-  {
-    id: 'siChef-002', orderNumber: 2, customerName: 'Bob Johnson', items: [
-      { id: 'prod-305', name: 'Chicken Salad', quantity: 1, price: 9.75 },
-    ], paymentMethod: 'cash', total: 9.75, status: 'completed', createdAt: new Date(Date.now() - 3600 * 1000 * 2), paidAmount: 10.00, changeGiven: 0.25 // 2 hours ago
-  },
-   {
-    id: 'siChef-003', orderNumber: 3, customerName: 'Charlie Brown', items: [
-      { id: 'prod-102', name: 'Veggie Burger', quantity: 2, price: 7.50, components: ['Lettuce Wrap', 'Avocado'], isApart: true },
-      { id: 'prod-401', name: 'Iced Tea', quantity: 1, price: 2.50 },
-    ], paymentMethod: 'card', total: 17.50, status: 'pending', createdAt: new Date(Date.now() - 3600 * 1000 * 0.5) // 30 mins ago
-  },
-   {
-    id: 'siChef-004', orderNumber: 4, customerName: 'Diana Prince', items: [
-      { id: 'prod-501', name: 'Espresso', quantity: 1, price: 3.50 },
-    ], paymentMethod: 'cash', total: 3.50, status: 'cancelled', createdAt: new Date(Date.now() - 3600 * 1000 * 3), paidAmount: 5.00, changeGiven: 1.50 // 3 hours ago
-  },
-];
+import type { SavedOrder, SavedOrderItem } from '@/types/product-types'; // Import shared types
 
 // Helper to format currency
 const formatCurrency = (amount: number) => {
@@ -68,7 +19,7 @@ const formatCurrency = (amount: number) => {
 };
 
 // Helper to get status badge variant
-const getStatusVariant = (status: Order['status']): "default" | "secondary" | "destructive" | "outline" | null | undefined => {
+const getStatusVariant = (status: SavedOrder['status']): "default" | "secondary" | "destructive" | "outline" | null | undefined => {
   switch (status) {
     case 'completed': return 'secondary';
     case 'cancelled': return 'destructive';
@@ -78,40 +29,49 @@ const getStatusVariant = (status: Order['status']): "default" | "secondary" | "d
 };
 
 export default function HomePage() {
-  const [orders, setOrders] = useState<Order[]>([]);
-  const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
+  const [orders, setOrders] = useState<SavedOrder[]>([]);
+  const [selectedOrder, setSelectedOrder] = useState<SavedOrder | null>(null);
   const [isSheetOpen, setIsSheetOpen] = useState(false);
 
-   // Load orders from localStorage on mount, or use initial mock data
+   // Load orders from localStorage on mount
   useEffect(() => {
     const storedOrders = localStorage.getItem('siChefOrders');
     if (storedOrders) {
-      // Need to parse dates correctly
-      const parsedOrders = JSON.parse(storedOrders).map((order: any) => ({
-        ...order,
-        createdAt: new Date(order.createdAt),
-      }));
-      setOrders(parsedOrders);
-    } else {
-      setOrders(initialOrders);
-      localStorage.setItem('siChefOrders', JSON.stringify(initialOrders)); // Save initial data
+      try {
+         // Parse dates correctly
+        const parsedOrders: SavedOrder[] = JSON.parse(storedOrders).map((order: any) => ({
+            ...order,
+            createdAt: new Date(order.createdAt),
+        }));
+        setOrders(parsedOrders);
+      } catch (error) {
+         console.error("Failed to parse orders from localStorage:", error);
+         // Optionally clear corrupted data or show an error
+         // localStorage.removeItem('siChefOrders');
+      }
     }
+    // No initial mock data insertion here; rely on create-order to add orders
   }, []);
 
-  const handleRowClick = (order: Order) => {
+  const handleRowClick = (order: SavedOrder) => {
     setSelectedOrder(order);
     setIsSheetOpen(true);
   };
 
   const handleEditOrder = (orderId: string) => {
-    // Navigate to create order page with orderId for editing
+    // TODO: Implement actual order editing logic
+    // This might involve:
+    // 1. Loading the order data into the create-order page state.
+    // 2. Allowing modification.
+    // 3. Updating the order in localStorage (or backend).
     console.log(`Editing order: ${orderId}`);
-    // router.push(`/dashboard/create-order?edit=${orderId}`); // Example navigation
-    alert(`Editing order ${orderId} - Functionality to be implemented.`);
+    alert(`Editing order ${orderId} - Functionality not yet fully implemented.`);
+    // Example navigation (if needed): router.push(`/dashboard/create-order?edit=${orderId}`);
     setIsSheetOpen(false); // Close sheet after initiating edit
   };
 
   const handleCancelOrder = (orderId: string) => {
+    // Update order status in state and localStorage
     setOrders(prevOrders => {
       const updatedOrders = prevOrders.map(order =>
         order.id === orderId ? { ...order, status: 'cancelled' } : order
@@ -119,26 +79,33 @@ export default function HomePage() {
       localStorage.setItem('siChefOrders', JSON.stringify(updatedOrders)); // Update localStorage
       return updatedOrders;
     });
+
+     // Update selected order if it's the one being cancelled
+     if (selectedOrder && selectedOrder.id === orderId) {
+        setSelectedOrder(prev => prev ? { ...prev, status: 'cancelled' } : null);
+     }
+
     alert(`Order ${orderId} cancelled.`);
-    setIsSheetOpen(false); // Close sheet after cancelling
+    // Keep sheet open to show updated status, or close if preferred:
+    // setIsSheetOpen(false);
   };
 
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
       {/* Main Content - Order List */}
-      <div className="md:col-span-3"> {/* Takes full width initially, sidebar will appear */}
-        <Card>
+      <div className="md:col-span-3"> {/* Takes full width */}
+        <Card className="shadow-md">
           <CardHeader>
             <CardTitle>Pedidos Recientes</CardTitle>
-            <CardDescription>Lista de los pedidos actuales.</CardDescription>
+            <CardDescription>Lista de los pedidos actuales y pasados.</CardDescription>
           </CardHeader>
           <CardContent>
             <ScrollArea className="h-[60vh] md:h-[70vh]">
-              <Table>{/* Ensure no whitespace before TableHeader */}
+              <Table>{/* No whitespace */}
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Pedido #</TableHead>
+                    <TableHead>Pedido ID</TableHead>
                     <TableHead>Cliente</TableHead>
                     <TableHead>Total</TableHead>
                     <TableHead>Forma de Pago</TableHead>
@@ -166,7 +133,7 @@ export default function HomePage() {
                     ))
                   ) : (
                     <TableRow>
-                      <TableCell colSpan={6} className="text-center">No hay pedidos aún.</TableCell>
+                      <TableCell colSpan={6} className="text-center h-24 text-muted-foreground">No hay pedidos aún.</TableCell>
                     </TableRow>
                   )}
                 </TableBody>
@@ -178,9 +145,10 @@ export default function HomePage() {
 
       {/* Right Sidebar - Order Details */}
        <Sheet open={isSheetOpen} onOpenChange={setIsSheetOpen}>
-        <SheetContent className="sm:max-w-lg w-[90vw] md:w-[400px] p-0">
+        <SheetContent className="sm:max-w-lg w-[90vw] md:w-[400px] p-0 flex flex-col">
            {selectedOrder && (
-            <ScrollArea className="h-full">
+            <>
+            <ScrollArea className="flex-grow">
               <div className="p-6">
                 <SheetHeader className="mb-4">
                   <SheetTitle>Detalles del Pedido: {selectedOrder.id}</SheetTitle>
@@ -191,27 +159,34 @@ export default function HomePage() {
                 <Separator className="my-4" />
                 <div className="space-y-4">
                   <h4 className="text-md font-semibold mb-2">Productos Ordenados</h4>
-                  {selectedOrder.items.map((item) => (
-                    <div key={item.id} className="text-sm">
+                  {selectedOrder.items.map((item, index) => ( // Use index if item.id is not unique enough for keys within an order
+                    <div key={`${item.id}-${index}`} className="text-sm border-b pb-2 last:border-b-0">
                       <div className="flex justify-between">
-                        <span>{item.quantity}x {item.name}</span>
+                        <span className="font-medium">{item.quantity}x {item.name}</span>
                         <span>{formatCurrency(item.price * item.quantity)}</span>
                       </div>
                       {item.components && item.components.length > 0 && (
-                        <ul className="list-disc list-inside text-xs text-muted-foreground ml-4">
-                          {item.components.map((comp, idx) => (
-                            <li key={idx}>
-                              {comp} {item.isApart ? <Badge variant="outline" className="ml-1 text-xs">Aparte</Badge> : ''}
+                        <ul className="list-disc list-inside text-xs text-muted-foreground ml-4 mt-1 space-y-0.5">
+                          {item.components.map((comp, compIdx) => (
+                            <li key={compIdx}>
+                              {comp} {item.isApart ? <Badge variant="outline" className="ml-1 text-xs px-1 py-0">Aparte</Badge> : ''}
                             </li>
                           ))}
                         </ul>
                       )}
+                       <div className="text-xs text-muted-foreground mt-0.5">
+                           Precio Unitario: {formatCurrency(item.price)}
+                       </div>
                     </div>
                   ))}
                 </div>
                 <Separator className="my-4" />
                 <div>
-                  <div className="flex justify-between font-semibold">
+                   <div className="flex justify-between text-sm mt-1">
+                    <span>Subtotal:</span>
+                    <span>{formatCurrency(selectedOrder.subtotal)}</span>
+                  </div>
+                  <div className="flex justify-between font-semibold mt-1 text-base">
                     <span>Total:</span>
                     <span>{formatCurrency(selectedOrder.total)}</span>
                   </div>
@@ -219,7 +194,7 @@ export default function HomePage() {
                     <span>Forma de Pago:</span>
                     <span className="capitalize">{selectedOrder.paymentMethod}</span>
                   </div>
-                  {selectedOrder.paymentMethod === 'cash' && selectedOrder.paidAmount && (
+                  {selectedOrder.paymentMethod === 'cash' && selectedOrder.paidAmount != null && ( // Check for null/undefined
                      <>
                        <div className="flex justify-between text-sm mt-1">
                          <span>Pagado con:</span>
@@ -231,30 +206,34 @@ export default function HomePage() {
                        </div>
                      </>
                    )}
-                   <div className="flex justify-between text-sm mt-1">
+                   <div className="flex justify-between text-sm mt-1 items-center">
                       <span>Status:</span>
                       <Badge variant={getStatusVariant(selectedOrder.status)} className="capitalize">
                         {selectedOrder.status}
                       </Badge>
                     </div>
                 </div>
-
-                {/* Action buttons only if order is pending */}
-                {selectedOrder.status === 'pending' && (
-                  <>
-                   <Separator className="my-4" />
-                   <div className="flex justify-end gap-2 mt-4">
-                     <Button variant="outline" size="sm" onClick={() => handleEditOrder(selectedOrder.id)}>
-                       <Pencil className="mr-2 h-4 w-4" /> Editar
-                     </Button>
-                     <Button variant="destructive" size="sm" onClick={() => handleCancelOrder(selectedOrder.id)}>
-                       <XCircle className="mr-2 h-4 w-4" /> Cancelar
-                     </Button>
-                   </div>
-                 </>
-                )}
               </div>
             </ScrollArea>
+
+             {/* Action buttons only if order is pending */}
+            {selectedOrder.status === 'pending' && (
+               <div className="p-6 border-t mt-auto bg-muted/30">
+                 <div className="flex justify-end gap-2">
+                    {/* Edit Button - Placeholder */}
+                    {/* <Button variant="outline" size="sm" onClick={() => handleEditOrder(selectedOrder.id)}>
+                        <Pencil className="mr-2 h-4 w-4" /> Editar
+                    </Button> */}
+                    <Button variant="destructive" size="sm" onClick={() => handleCancelOrder(selectedOrder.id)}>
+                        <XCircle className="mr-2 h-4 w-4" /> Cancelar Pedido
+                    </Button>
+                 </div>
+                </div>
+            )}
+            </>
+           )}
+           {!selectedOrder && (
+                <div className="p-6 text-center text-muted-foreground">Selecciona un pedido para ver los detalles.</div>
            )}
         </SheetContent>
       </Sheet>

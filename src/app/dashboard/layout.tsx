@@ -60,15 +60,15 @@ export default function DashboardLayout({
     <TooltipProvider>
       <div className="flex min-h-screen w-full bg-muted/40">
         {/* Vertical Navbar */}
-        <aside className="fixed inset-y-0 left-0 z-10 flex w-16 flex-col border-r bg-background sm:flex">
+        <aside className="fixed inset-y-0 left-0 z-10 flex w-14 flex-col border-r bg-background sm:flex"> {/* Reduced width */}
           <nav className="flex flex-col items-center gap-4 px-2 py-4 flex-grow">
             {/* Placeholder for Logo/Brand */}
              <Link
               href="/dashboard/home"
-              className="group flex h-10 w-10 shrink-0 items-center justify-center gap-2 rounded-full bg-primary text-lg font-semibold text-primary-foreground md:h-12 md:w-12 md:text-base mb-4"
+              className="group flex h-9 w-9 shrink-0 items-center justify-center gap-2 rounded-full bg-primary text-lg font-semibold text-primary-foreground md:h-10 md:w-10 md:text-base mb-4" /* Adjusted size */
             >
                {/* You can add an SVG logo here */}
-              <span className="text-xl font-bold">SC</span>
+              <span className="text-lg font-bold">SC</span> {/* Adjusted size */}
               <span className="sr-only">siChef POS</span>
             </Link>
             {navItems.map((item) => (
@@ -129,10 +129,8 @@ export default function DashboardLayout({
         </aside>
 
         {/* Main Content Area */}
-        <div className="flex flex-col flex-1 pl-16"> {/* Add pl-16 for navbar width */}
+        <div className="flex flex-col flex-1 pl-14"> {/* Adjusted pl for navbar width */}
            {/* Header can be added here if needed */}
-           {/* <header className="sticky top-0 z-30 flex h-14 items-center gap-4 border-b bg-background px-4 sm:static sm:h-auto sm:border-0 sm:bg-transparent sm:px-6">
-            </header> */}
           <main className="flex-1 p-4 md:p-6">
             {children}
           </main>

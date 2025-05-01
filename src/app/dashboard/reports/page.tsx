@@ -12,38 +12,20 @@ import { Download, FileText } from 'lucide-react'; // Icons
 import { format } from 'date-fns';
 import { useAuth } from '@/contexts/auth-context';
 import { generateSalesReport, type SalesReport, type SalesHistoryItem } from '@/services/pdf-generator'; // Assuming service exists
-
-// --- Types (assuming similar Order type as in home) ---
-interface OrderItem {
-  id: string;
-  name: string;
-  quantity: number;
-  price: number; // Base price per unit
-  components?: string[];
-  isApart?: boolean;
-}
-
-interface Order {
-  id: string; // e.g., siChef-001
-  orderNumber: number;
-  customerName: string;
-  items: OrderItem[];
-  paymentMethod: 'cash' | 'card';
-  total: number; // Final total including modifiers, taxes etc.
-  status: 'pending' | 'completed' | 'cancelled';
-  createdAt: Date;
-  paidAmount?: number;
-  changeGiven?: number;
-  subtotal?: number; // Adding subtotal for reporting
-}
+import type { SavedOrder } from '@/types/product-types'; // Import SavedOrder type
 
 // Helper to format currency
-const formatCurrency = (amount: number) => {
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount);
+const formatCurrency = (amount: number): string => {
+    // Handle potential null/undefined or non-numeric values gracefully
+    if (typeof amount !== 'number' || isNaN(amount)) {
+        return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(0);
+    }
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount);
 };
 
+
 // Helper to get status badge variant
-const getStatusVariant = (status: Order['status']): "default" | "secondary" | "destructive" | "outline" | null | undefined => {
+const getStatusVariant = (status: SavedOrder['status']): "default" | "secondary" | "destructive" | "outline" | null | undefined => {
   switch (status) {
     case 'completed': return 'secondary';
     case 'cancelled': return 'destructive';
@@ -56,29 +38,35 @@ const getStatusVariant = (status: Order['status']): "default" | "secondary" | "d
 export default function ReportsPage() {
   const { username } = useAuth();
   const { toast } = useToast();
-  const [orders, setOrders] = useState<Order[]>([]);
+  const [orders, setOrders] = useState<SavedOrder[]>([]);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const [startingCash, setStartingCash] = useState<number>(0); // Example starting cash
 
-  // Load orders from localStorage on mount
+  // Load orders and starting cash from localStorage on mount
   useEffect(() => {
     const storedOrders = localStorage.getItem('siChefOrders');
     if (storedOrders) {
-       const parsedOrders = JSON.parse(storedOrders).map((order: any) => ({
-        ...order,
-        createdAt: new Date(order.createdAt),
-         // Calculate subtotal if not stored (simple sum of item base prices * quantity)
-         subtotal: order.subtotal ?? order.items.reduce((sum: number, item: OrderItem) => sum + (item.price * item.quantity), 0)
-      }));
-      setOrders(parsedOrders);
+        try {
+             const parsedOrders: SavedOrder[] = JSON.parse(storedOrders).map((order: any) => ({
+                ...order,
+                createdAt: new Date(order.createdAt),
+                 // Ensure subtotal is a number, default to 0 if missing or invalid
+                subtotal: typeof order.subtotal === 'number' ? order.subtotal : 0,
+                total: typeof order.total === 'number' ? order.total : 0,
+             }));
+             setOrders(parsedOrders);
+        } catch (error) {
+            console.error("Failed to parse orders from localStorage:", error);
+            toast({ title: "Error Loading Orders", description: "Could not load previous sales data.", variant: "destructive" });
+        }
     }
-     // Load starting cash (example, replace with actual logic if needed)
-     const storedStartingCash = localStorage.getItem('siChefStartingCash');
-     setStartingCash(storedStartingCash ? parseFloat(storedStartingCash) : 100.00); // Default 100
 
-  }, []);
+    const storedStartingCash = localStorage.getItem('siChefStartingCash');
+    setStartingCash(storedStartingCash ? parseFloat(storedStartingCash) : 100.00); // Default 100
 
-  // Calculate totals for the report summary
+  }, [toast]);
+
+  // Calculate totals for the report summary (only completed orders)
   const completedOrders = orders.filter(o => o.status === 'completed');
   const totalSales = completedOrders.reduce((sum, order) => sum + order.total, 0);
   const cashSales = completedOrders.filter(o => o.paymentMethod === 'cash').reduce((sum, order) => sum + order.total, 0);
@@ -97,7 +85,7 @@ export default function ReportsPage() {
 
         try {
             const reportData: SalesReport = {
-                businessName: "siChef Restaurant", // Replace with dynamic name
+                businessName: "siChef Restaurant", // Replace with dynamic name from settings?
                 logo: "https://picsum.photos/100/50?random=99", // Replace with actual logo URL or base64
                 reportDate: format(new Date(), 'Pp'),
                 user: username || 'Unknown User',
@@ -110,7 +98,7 @@ export default function ReportsPage() {
                     orderNumber: String(order.orderNumber),
                     orderId: order.id,
                     customer: order.customerName,
-                    subtotal: order.subtotal || 0, // Use calculated/stored subtotal
+                    subtotal: order.subtotal, // Use the stored subtotal
                     total: order.total,
                     paymentMethod: order.paymentMethod,
                     status: order.status,
@@ -119,37 +107,47 @@ export default function ReportsPage() {
 
             const pdfBytes = await generateSalesReport(reportData);
 
-            // Trigger download
-            const blob = new Blob([pdfBytes], { type: 'application/pdf' });
-            const link = document.createElement('a');
-            link.href = URL.createObjectURL(blob);
-            const timestamp = format(new Date(), 'yyyyMMdd_HHmmss');
-            link.download = `siChef_SalesReport_${timestamp}.pdf`;
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-            URL.revokeObjectURL(link.href); // Clean up blob URL
+             // Check if PDF generation actually returned data (placeholder returns empty)
+            if (pdfBytes && pdfBytes.length > 0) {
+                // Trigger download
+                const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+                const link = document.createElement('a');
+                link.href = URL.createObjectURL(blob);
+                const timestamp = format(new Date(), 'yyyyMMdd_HHmmss');
+                link.download = `siChef_SalesReport_${timestamp}.pdf`;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                URL.revokeObjectURL(link.href); // Clean up blob URL
 
-            toast({ title: "Report Generated", description: "PDF download started." });
+                toast({ title: "Report Generated", description: "PDF download started." });
+            } else {
+                 toast({ title: "Report Generation Skipped", description: "PDF generation is currently simulated.", variant: "default" });
+            }
+
 
             // --- Resetting for the new day ---
-            // 1. Clear completed orders (or move them to an archive - depends on requirements)
-            //    For this example, we'll just clear all orders from localStorage.
-            //    In a real app, you might want to archive instead of delete.
+            // Option 1: Clear all orders
              localStorage.removeItem('siChefOrders');
-             setOrders([]); // Clear orders in state
+             setOrders([]);
 
-            // 2. Reset starting cash (optional, maybe prompt user for new starting cash)
+            // Option 2: Archive completed/cancelled (More complex, requires separate storage/logic)
+            // const activeOrders = orders.filter(o => o.status === 'pending');
+            // localStorage.setItem('siChefOrders', JSON.stringify(activeOrders));
+            // setOrders(activeOrders);
+            // Archive completedOrders to another key or send to backend
+
+            // Reset starting cash (or prompt user)
              const newStartingCash = 100.00; // Example reset value
              localStorage.setItem('siChefStartingCash', String(newStartingCash));
              setStartingCash(newStartingCash);
 
-             toast({ title: "Day Finalized", description: "Sales data cleared, ready for a new day." });
+             toast({ title: "Day Finalized", description: "Sales data cleared/archived, ready for a new day." });
 
 
         } catch (error) {
-            console.error("Error generating PDF:", error);
-            toast({ title: "PDF Generation Failed", description: "Could not generate the sales report.", variant: "destructive" });
+            console.error("Error finalizing day / generating PDF:", error);
+            toast({ title: "Operation Failed", description: "Could not finalize the day or generate the report.", variant: "destructive" });
         } finally {
             setIsGeneratingPdf(false);
         }
@@ -158,101 +156,110 @@ export default function ReportsPage() {
 
   return (
     <div className="flex flex-col h-full">
-      <Card className="flex-grow flex flex-col">
-        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+      <Card className="flex-grow flex flex-col shadow-md">
+        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 border-b">
           <div>
              <CardTitle>Reporte de Ventas</CardTitle>
-             <CardDescription>Historial de todos los pedidos.</CardDescription>
+             <CardDescription>Historial de todos los pedidos del día.</CardDescription>
            </div>
-             <Button onClick={handleFinalizeDay} disabled={isGeneratingPdf || completedOrders.length === 0}>
+             <Button onClick={handleFinalizeDay} disabled={isGeneratingPdf || completedOrders.length === 0} size="sm">
                  {isGeneratingPdf ? (
                      <>
                         <FileText className="mr-2 h-4 w-4 animate-pulse" /> Generando...
                      </>
                  ) : (
                      <>
-                        <Download className="mr-2 h-4 w-4" /> Finalizar Día y Exportar PDF
+                        <Download className="mr-2 h-4 w-4" /> Finalizar Día y Exportar
                      </>
                  )}
              </Button>
         </CardHeader>
         <CardContent className="flex-grow overflow-hidden p-0"> {/* Remove padding for full height scroll */}
-          <ScrollArea className="h-full"> {/* Make ScrollArea take full height */}
-             <Table className="relative">{/* Ensure no whitespace before TableHeader */}
-               <TableHeader className="sticky top-0 bg-background z-10"> {/* Make header sticky */}
-                <TableRow>
-                  <TableHead>Pedido #</TableHead>
-                  <TableHead>ID</TableHead>
-                  <TableHead>Cliente</TableHead>
-                  <TableHead>Subtotal</TableHead>
-                  <TableHead>Total</TableHead>
-                  <TableHead>Forma Pago</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Fecha</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {orders.length > 0 ? (
-                  orders
-                     .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()) // Sort by most recent
-                    .map((order) => (
-                    <TableRow key={order.id}>
-                      <TableCell className="font-medium">{order.orderNumber}</TableCell>
-                      <TableCell>{order.id}</TableCell>
-                      <TableCell>{order.customerName}</TableCell>
-                      <TableCell>{formatCurrency(order.subtotal || 0)}</TableCell> {/* Display subtotal */}
-                      <TableCell>{formatCurrency(order.total)}</TableCell>
-                      <TableCell className="capitalize">{order.paymentMethod}</TableCell>
-                      <TableCell>
-                        <Badge variant={getStatusVariant(order.status)} className="capitalize">
-                          {order.status}
-                        </Badge>
-                      </TableCell>
-                       <TableCell>{format(order.createdAt, 'Pp')}</TableCell>
-                    </TableRow>
-                  ))
-                ) : (
-                  <TableRow>
-                    <TableCell colSpan={8} className="text-center h-24">No hay historial de ventas aún.</TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-               {/* Footer with Summary (Only if there are completed orders) */}
-               {completedOrders.length > 0 && (
-                <TableFooter className="sticky bottom-0 bg-background z-10"> {/* Make footer sticky */}
-                    <TableRow className="font-semibold">
-                        <TableCell colSpan={3}>Resumen del Día (Pedidos Completados)</TableCell>
-                        <TableCell colSpan={5} className="text-right"></TableCell> {/* Placeholder cells */}
-                    </TableRow>
+           <div className="relative h-full">
+             <ScrollArea className="absolute inset-0"> {/* Make ScrollArea fill CardContent */}
+                 <Table className="min-w-full">{/* Ensure table takes at least full width */}
+                   <TableHeader className="sticky top-0 bg-background z-10 shadow-sm"> {/* Make header sticky */}
                     <TableRow>
-                        <TableCell colSpan={3}>Inicio de Caja:</TableCell>
-                        <TableCell className="text-right">{formatCurrency(startingCash)}</TableCell>
-                        <TableCell colSpan={4}></TableCell>
+                      <TableHead className="w-[100px]">Pedido #</TableHead>
+                      <TableHead className="w-[150px]">ID</TableHead>
+                      <TableHead>Cliente</TableHead>
+                      <TableHead className="text-right w-[100px]">Subtotal</TableHead>
+                      <TableHead className="text-right w-[100px]">Total</TableHead>
+                      <TableHead className="w-[100px]">Forma Pago</TableHead>
+                      <TableHead className="w-[100px]">Status</TableHead>
+                      <TableHead className="w-[180px]">Fecha</TableHead>
                     </TableRow>
-                    <TableRow>
-                        <TableCell colSpan={3}>Venta Total:</TableCell>
-                        <TableCell className="text-right">{formatCurrency(totalSales)}</TableCell>
-                         <TableCell colSpan={4}></TableCell>
-                    </TableRow>
-                     <TableRow>
-                        <TableCell colSpan={3}>Ventas en Efectivo:</TableCell>
-                        <TableCell className="text-right">{formatCurrency(cashSales)}</TableCell>
-                         <TableCell colSpan={4}></TableCell>
-                    </TableRow>
-                     <TableRow>
-                        <TableCell colSpan={3}>Ventas con Tarjeta:</TableCell>
-                        <TableCell className="text-right">{formatCurrency(cardSales)}</TableCell>
-                         <TableCell colSpan={4}></TableCell>
-                    </TableRow>
-                    <TableRow className="font-bold text-lg">
-                        <TableCell colSpan={3}>Efectivo Esperado en Caja:</TableCell>
-                        <TableCell className="text-right">{formatCurrency(expectedCashInRegister)}</TableCell>
-                         <TableCell colSpan={4}></TableCell>
-                    </TableRow>
-                </TableFooter>
-                )}
-            </Table>
-          </ScrollArea>
+                  </TableHeader>
+                  <TableBody>
+                    {orders.length > 0 ? (
+                      orders
+                         .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()) // Sort by most recent
+                        .map((order) => (
+                        <TableRow key={order.id}>
+                          <TableCell className="font-medium">{order.orderNumber}</TableCell>
+                          <TableCell className="text-xs">{order.id}</TableCell>
+                          <TableCell>{order.customerName}</TableCell>
+                          <TableCell className="text-right">{formatCurrency(order.subtotal)}</TableCell>
+                          <TableCell className="text-right font-medium">{formatCurrency(order.total)}</TableCell>
+                          <TableCell className="capitalize">{order.paymentMethod}</TableCell>
+                          <TableCell>
+                            <Badge variant={getStatusVariant(order.status)} className="capitalize">
+                              {order.status}
+                            </Badge>
+                          </TableCell>
+                           <TableCell>{format(order.createdAt, 'Pp')}</TableCell>
+                        </TableRow>
+                      ))
+                    ) : (
+                      <TableRow>
+                        <TableCell colSpan={8} className="text-center h-24 text-muted-foreground">No hay historial de ventas aún.</TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                   {/* Footer with Summary (Only if there are completed orders) */}
+                   {completedOrders.length > 0 && (
+                    <TableFooter className="sticky bottom-0 bg-background z-10 border-t font-semibold">
+                        <TableRow>
+                            <TableCell colSpan={3}>Resumen del Día (Pedidos Completados)</TableCell>
+                            <TableCell className="text-right">Subtotal</TableCell>
+                             <TableCell className="text-right">Total</TableCell>
+                             <TableCell colSpan={3}></TableCell> {/* Placeholder cells */}
+                        </TableRow>
+                         <TableRow>
+                            <TableCell colSpan={3}>Inicio de Caja:</TableCell>
+                            <TableCell className="text-right"></TableCell>
+                             <TableCell className="text-right">{formatCurrency(startingCash)}</TableCell>
+                             <TableCell colSpan={3}></TableCell>
+                         </TableRow>
+                        <TableRow>
+                            <TableCell colSpan={3}>Ventas en Efectivo:</TableCell>
+                             <TableCell className="text-right"></TableCell>
+                             <TableCell className="text-right">{formatCurrency(cashSales)}</TableCell>
+                            <TableCell colSpan={3}></TableCell>
+                        </TableRow>
+                         <TableRow>
+                            <TableCell colSpan={3}>Ventas con Tarjeta:</TableCell>
+                             <TableCell className="text-right"></TableCell>
+                             <TableCell className="text-right">{formatCurrency(cardSales)}</TableCell>
+                             <TableCell colSpan={3}></TableCell>
+                         </TableRow>
+                         <TableRow>
+                            <TableCell colSpan={3}>Venta Total (Completados):</TableCell>
+                             <TableCell className="text-right"></TableCell>
+                             <TableCell className="text-right text-base font-bold">{formatCurrency(totalSales)}</TableCell>
+                             <TableCell colSpan={3}></TableCell>
+                         </TableRow>
+                         <TableRow className="text-lg font-bold border-t-2">
+                            <TableCell colSpan={3}>Efectivo Esperado en Caja:</TableCell>
+                             <TableCell className="text-right"></TableCell>
+                             <TableCell className="text-right">{formatCurrency(expectedCashInRegister)}</TableCell>
+                            <TableCell colSpan={3}></TableCell>
+                        </TableRow>
+                    </TableFooter>
+                    )}
+                </Table>
+              </ScrollArea>
+            </div>
         </CardContent>
       </Card>
     </div>
