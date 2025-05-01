@@ -171,17 +171,33 @@ export async function getOverridesForPackageItem(packageItemId: string): Promise
 
 // --- Functions for Product Settings Page ---
 
-// Example: Add Category
+// --- Category CRUD ---
 export async function addCategory(category: Omit<Category, 'id'>): Promise<Category> {
   const db = await getDb();
   const newCategory = { ...category, id: randomUUID() };
-  // Ensure 'type' is included in the INSERT statement
   await db.run('INSERT INTO categories (id, name, type, imageUrl) VALUES (?, ?, ?, ?)',
     newCategory.id, newCategory.name, newCategory.type, newCategory.imageUrl);
   return newCategory;
 }
 
-// Example: Add Product (Handles both regular and package products based on category type)
+export async function updateCategory(id: string, updates: Partial<Omit<Category, 'id'>>): Promise<void> {
+  const db = await getDb();
+  const fields = Object.keys(updates).map(key => `${key} = ?`).join(', ');
+  const values = Object.values(updates);
+  if (fields.length === 0) return; // No updates provided
+  const result = await db.run(`UPDATE categories SET ${fields} WHERE id = ?`, [...values, id]);
+  if (result.changes === 0) throw new Error(`Category with id ${id} not found.`);
+}
+
+export async function deleteCategory(id: string): Promise<void> {
+    const db = await getDb();
+    // CASCADE delete should handle related products, slots etc. if configured correctly in DB schema
+    // Verify if products using this category exist before deleting? Or let cascade handle it.
+    const result = await db.run('DELETE FROM categories WHERE id = ?', id);
+    if (result.changes === 0) throw new Error(`Category with id ${id} not found.`);
+}
+
+// --- Product CRUD (also used for Packages) ---
 export async function addProduct(product: Omit<Product, 'id'>): Promise<Product> {
   const db = await getDb();
   const newProduct = { ...product, id: randomUUID() };
@@ -190,7 +206,52 @@ export async function addProduct(product: Omit<Product, 'id'>): Promise<Product>
   return newProduct;
 }
 
-// Example: Add Modifier Slot to Product
+export async function updateProduct(id: string, updates: Partial<Omit<Product, 'id'>>): Promise<void> {
+  const db = await getDb();
+   // Prepare updates, ensuring potential undefined values from form are handled
+   const validUpdates: Partial<Product> = {};
+   let query = 'UPDATE products SET ';
+   const params: any[] = [];
+
+   Object.entries(updates).forEach(([key, value]) => {
+     // Handle optional fields that might come as empty strings from forms
+     if (key === 'imageUrl' && value === '') {
+       validUpdates[key] = null; // Store null in DB if image URL is cleared
+     } else if (key === 'inventory_item_id' && value === '') {
+        validUpdates[key] = null; // Unlink inventory item
+        // Also nullify consumption if inventory is unlinked
+        validUpdates['inventory_consumed_per_unit'] = null;
+     } else if (value !== undefined) {
+        validUpdates[key as keyof Product] = value as any;
+     }
+   });
+
+    // If inventory is linked, ensure consumption is set (default to 1 if not provided)
+   if (validUpdates.inventory_item_id && validUpdates.inventory_consumed_per_unit === undefined) {
+        validUpdates.inventory_consumed_per_unit = 1;
+   }
+
+   const fields = Object.keys(validUpdates);
+   if (fields.length === 0) return; // No valid updates provided
+
+   query += fields.map(field => `${field} = ?`).join(', ');
+   query += ' WHERE id = ?';
+   params.push(...Object.values(validUpdates), id);
+
+   const result = await db.run(query, params);
+   if (result.changes === 0) throw new Error(`Product with id ${id} not found.`);
+}
+
+
+export async function deleteProduct(id: string): Promise<void> {
+    const db = await getDb();
+    // CASCADE delete should handle related modifier slots, package items etc.
+    const result = await db.run('DELETE FROM products WHERE id = ?', id);
+    if (result.changes === 0) throw new Error(`Product with id ${id} not found.`);
+}
+
+
+// --- Modifier Slot CRUD ---
 export async function addModifierSlot(slot: Omit<ProductModifierSlot, 'id'>): Promise<ProductModifierSlot> {
   const db = await getDb();
   const newSlot = { ...slot, id: randomUUID() };
@@ -199,7 +260,11 @@ export async function addModifierSlot(slot: Omit<ProductModifierSlot, 'id'>): Pr
   return newSlot;
 }
 
-// Example: Add Item to Package
+// TODO: Implement updateModifierSlot
+// TODO: Implement deleteModifierSlot
+
+
+// --- Package Item CRUD ---
 export async function addPackageItem(item: Omit<PackageItem, 'id'>): Promise<PackageItem> {
   const db = await getDb();
   const newItem = { ...item, id: randomUUID() };
@@ -208,59 +273,44 @@ export async function addPackageItem(item: Omit<PackageItem, 'id'>): Promise<Pac
   return newItem;
 }
 
-// Example: Add/Update Modifier Override for Package Item
-// NOTE: Requires adding a UNIQUE constraint in db initialization:
-// UNIQUE (package_item_id, product_modifier_slot_id)
+// TODO: Implement updatePackageItem
+// TODO: Implement deletePackageItem
+
+
+// --- Package Override CRUD ---
 export async function setPackageItemOverride(override: Omit<PackageItemModifierSlotOverride, 'id'>): Promise<PackageItemModifierSlotOverride> {
   const db = await getDb();
   const newId = randomUUID();
   // Use INSERT OR REPLACE to handle both adding and updating based on a unique constraint
-  await db.run('INSERT OR REPLACE INTO package_item_modifier_slot_overrides (id, package_item_id, product_modifier_slot_id, min_quantity, max_quantity) VALUES (?, ?, ?, ?, ?)',
-    newId, override.package_item_id, override.product_modifier_slot_id, override.min_quantity, override.max_quantity);
+  // Ensure the unique constraint (package_item_id, product_modifier_slot_id) exists in the DB schema.
+  await db.run('INSERT OR REPLACE INTO package_item_modifier_slot_overrides (package_item_id, product_modifier_slot_id, min_quantity, max_quantity, id) VALUES (?, ?, ?, ?, ?)',
+     override.package_item_id, override.product_modifier_slot_id, override.min_quantity, override.max_quantity, newId); // Add ID for replace to work or fetch after
   // Fetch the potentially replaced/inserted item to return it
   const result = await db.get<PackageItemModifierSlotOverride>('SELECT * FROM package_item_modifier_slot_overrides WHERE package_item_id = ? AND product_modifier_slot_id = ?', override.package_item_id, override.product_modifier_slot_id);
   if (!result) throw new Error("Failed to set package item override");
   return result;
 }
 
-// --- Delete Functions ---
+// TODO: Implement deletePackageItemOverride
 
-export async function deleteCategory(id: string): Promise<void> {
-    const db = await getDb();
-    // CASCADE delete should handle related products, slots etc.
-    await db.run('DELETE FROM categories WHERE id = ?', id);
-}
 
-export async function deleteProduct(id: string): Promise<void> {
-    const db = await getDb();
-    // CASCADE delete should handle related modifier slots, package items etc.
-    await db.run('DELETE FROM products WHERE id = ?', id);
-}
-
+// Existing delete functions - make sure they handle errors if item not found
 export async function deleteModifierSlot(id: string): Promise<void> {
     const db = await getDb();
     // CASCADE delete should handle related overrides
-    await db.run('DELETE FROM product_modifier_slots WHERE id = ?', id);
+    const result = await db.run('DELETE FROM product_modifier_slots WHERE id = ?', id);
+    if (result.changes === 0) throw new Error(`Modifier slot with id ${id} not found.`);
 }
 
 export async function deletePackageItem(id: string): Promise<void> {
     const db = await getDb();
      // CASCADE delete should handle related overrides
-    await db.run('DELETE FROM package_items WHERE id = ?', id);
+    const result = await db.run('DELETE FROM package_items WHERE id = ?', id);
+    if (result.changes === 0) throw new Error(`Package item with id ${id} not found.`);
 }
 
 export async function deletePackageItemOverride(id: string): Promise<void> {
     const db = await getDb();
-    await db.run('DELETE FROM package_item_modifier_slot_overrides WHERE id = ?', id);
+    const result = await db.run('DELETE FROM package_item_modifier_slot_overrides WHERE id = ?', id);
+    if (result.changes === 0) throw new Error(`Package override with id ${id} not found.`);
 }
-
-// Example: Update Category
-// export async function updateCategory(id: string, updates: Partial<Omit<Category, 'id'>>): Promise<void> {
-//   const db = await getDb();
-//   // Ensure 'type' is included if being updated
-//   const fields = Object.keys(updates).map(key => `${key} = ?`).join(', ');
-//   const values = Object.values(updates);
-//   await db.run(`UPDATE categories SET ${fields} WHERE id = ?`, [...values, id]);
-// }
-
-// ... other CRUD functions for update/delete ...
