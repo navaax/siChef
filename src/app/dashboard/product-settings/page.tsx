@@ -745,24 +745,27 @@ const ManagePackages = () => {
      const handleAddPackageItemSubmit: SubmitHandler<AddPackageItemFormValues> = async (values) => {
          if (!editingPackage) return;
 
-         const newItemData: Omit<PackageItem, 'id' | 'display_order'> = {
+         // Refine the type for newItemData
+          const newItemData: Omit<PackageItem, 'id' | 'product_name'> = {
              package_id: editingPackage.id,
              product_id: values.product_id,
              quantity: values.quantity,
+             display_order: currentPackageItems.length, // Simple order append
          };
+
+         console.log("Attempting to add package item:", newItemData); // Log data being sent
 
          setIsPackageItemsLoading(true);
          try {
-             const addedItem = await addPackageItem({
-                 ...newItemData,
-                 display_order: currentPackageItems.length, // Simple order append
-             });
+             const addedItem = await addPackageItem(newItemData);
              // Update local state optimistically or refetch
-              setCurrentPackageItems(prev => [...prev, { ...addedItem, product_name: allProducts.find(p => p.id === addedItem.product_id)?.name || 'Unknown' }]);
+             const productName = allProducts.find(p => p.id === addedItem.product_id)?.name || 'Unknown';
+             setCurrentPackageItems(prev => [...prev, { ...addedItem, product_name: productName }]);
              addItemForm.reset(); // Clear the add item form
              toast({ title: "Éxito", description: "Producto añadido al paquete." });
          } catch (error) {
-             toast({ title: "Error", description: `No se pudo añadir el producto: ${error instanceof Error ? error.message : 'Error desconocido'}`, variant: "destructive" });
+             console.error("Error adding package item:", error); // Log detailed error
+             toast({ title: "Error", description: `No se pudo añadir el producto: ${error instanceof Error ? error.message : 'FOREIGN KEY constraint failed?'}`, variant: "destructive" });
          } finally {
              setIsPackageItemsLoading(false);
          }
