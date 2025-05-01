@@ -10,6 +10,7 @@ import type {
     PackageItem,
     PackageItemModifierSlotOverride
 } from '@/types/product-types';
+import { randomUUID } from 'crypto'; // Import randomUUID
 
 /**
  * Fetches categories, optionally filtering by type.
@@ -172,59 +173,96 @@ export async function getOverridesForPackageItem(packageItemId: string): Promise
 }
 
 
-// --- Potential future functions for Product Settings Page ---
+// --- Functions for Product Settings Page ---
 
 // Example: Add Category
-// export async function addCategory(category: Omit<Category, 'id'>): Promise<Category> {
-//   const db = await getDb();
-//   const newCategory = { ...category, id: randomUUID() };
-//   await db.run('INSERT INTO categories (id, name, type, imageUrl) VALUES (?, ?, ?, ?)',
-//     newCategory.id, newCategory.name, newCategory.type, newCategory.imageUrl);
-//   return newCategory;
-// }
+export async function addCategory(category: Omit<Category, 'id'>): Promise<Category> {
+  const db = await getDb();
+  const newCategory = { ...category, id: randomUUID() };
+  await db.run('INSERT INTO categories (id, name, type, imageUrl) VALUES (?, ?, ?, ?)',
+    newCategory.id, newCategory.name, newCategory.type, newCategory.imageUrl);
+  return newCategory;
+}
 
 // Example: Add Product (Handles both regular and package products based on category type)
-// export async function addProduct(product: Omit<Product, 'id'>): Promise<Product> {
-//   const db = await getDb();
-//   const newProduct = { ...product, id: randomUUID() };
-//   await db.run('INSERT INTO products (id, name, price, categoryId, imageUrl, inventory_item_id, inventory_consumed_per_unit) VALUES (?, ?, ?, ?, ?, ?, ?)',
-//     newProduct.id, newProduct.name, newProduct.price, newProduct.categoryId, newProduct.imageUrl, newProduct.inventory_item_id, newProduct.inventory_consumed_per_unit);
-//   return newProduct;
-// }
+export async function addProduct(product: Omit<Product, 'id'>): Promise<Product> {
+  const db = await getDb();
+  const newProduct = { ...product, id: randomUUID() };
+  await db.run('INSERT INTO products (id, name, price, categoryId, imageUrl, inventory_item_id, inventory_consumed_per_unit) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    newProduct.id, newProduct.name, newProduct.price, newProduct.categoryId, newProduct.imageUrl, newProduct.inventory_item_id, newProduct.inventory_consumed_per_unit);
+  return newProduct;
+}
 
 // Example: Add Modifier Slot to Product
-// export async function addModifierSlot(slot: Omit<ProductModifierSlot, 'id'>): Promise<ProductModifierSlot> {
-//   const db = await getDb();
-//   const newSlot = { ...slot, id: randomUUID() };
-//   await db.run('INSERT INTO product_modifier_slots (id, product_id, label, linked_category_id, min_quantity, max_quantity) VALUES (?, ?, ?, ?, ?, ?)',
-//     newSlot.id, newSlot.product_id, newSlot.label, newSlot.linked_category_id, newSlot.min_quantity, newSlot.max_quantity);
-//   return newSlot;
-// }
+export async function addModifierSlot(slot: Omit<ProductModifierSlot, 'id'>): Promise<ProductModifierSlot> {
+  const db = await getDb();
+  const newSlot = { ...slot, id: randomUUID() };
+  await db.run('INSERT INTO product_modifier_slots (id, product_id, label, linked_category_id, min_quantity, max_quantity) VALUES (?, ?, ?, ?, ?, ?)',
+    newSlot.id, newSlot.product_id, newSlot.label, newSlot.linked_category_id, newSlot.min_quantity, newSlot.max_quantity);
+  return newSlot;
+}
 
 // Example: Add Item to Package
-// export async function addPackageItem(item: Omit<PackageItem, 'id'>): Promise<PackageItem> {
-//   const db = await getDb();
-//   const newItem = { ...item, id: randomUUID() };
-//   await db.run('INSERT INTO package_items (id, package_id, product_id, quantity, display_order) VALUES (?, ?, ?, ?, ?)',
-//     newItem.id, newItem.package_id, newItem.product_id, newItem.quantity, newItem.display_order);
-//   return newItem;
-// }
+export async function addPackageItem(item: Omit<PackageItem, 'id'>): Promise<PackageItem> {
+  const db = await getDb();
+  const newItem = { ...item, id: randomUUID() };
+  await db.run('INSERT INTO package_items (id, package_id, product_id, quantity, display_order) VALUES (?, ?, ?, ?, ?)',
+    newItem.id, newItem.package_id, newItem.product_id, newItem.quantity, newItem.display_order);
+  return newItem;
+}
 
 // Example: Add/Update Modifier Override for Package Item
-// export async function setPackageItemOverride(override: Omit<PackageItemModifierSlotOverride, 'id'>): Promise<PackageItemModifierSlotOverride> {
+// NOTE: Requires adding a UNIQUE constraint in db initialization:
+// ALTER TABLE package_item_modifier_slot_overrides ADD CONSTRAINT unique_package_item_slot UNIQUE (package_item_id, product_modifier_slot_id);
+export async function setPackageItemOverride(override: Omit<PackageItemModifierSlotOverride, 'id'>): Promise<PackageItemModifierSlotOverride> {
+  const db = await getDb();
+  const newId = randomUUID();
+  // Use INSERT OR REPLACE to handle both adding and updating based on a unique constraint
+  await db.run('INSERT OR REPLACE INTO package_item_modifier_slot_overrides (id, package_item_id, product_modifier_slot_id, min_quantity, max_quantity) VALUES (?, ?, ?, ?, ?)',
+    newId, override.package_item_id, override.product_modifier_slot_id, override.min_quantity, override.max_quantity);
+  // Fetch the potentially replaced/inserted item to return it
+  const result = await db.get<PackageItemModifierSlotOverride>('SELECT * FROM package_item_modifier_slot_overrides WHERE package_item_id = ? AND product_modifier_slot_id = ?', override.package_item_id, override.product_modifier_slot_id);
+  if (!result) throw new Error("Failed to set package item override");
+  return result;
+}
+
+// --- Delete Functions ---
+
+export async function deleteCategory(id: string): Promise<void> {
+    const db = await getDb();
+    // CASCADE delete should handle related products, slots etc.
+    await db.run('DELETE FROM categories WHERE id = ?', id);
+}
+
+export async function deleteProduct(id: string): Promise<void> {
+    const db = await getDb();
+    // CASCADE delete should handle related modifier slots, package items etc.
+    await db.run('DELETE FROM products WHERE id = ?', id);
+}
+
+export async function deleteModifierSlot(id: string): Promise<void> {
+    const db = await getDb();
+    // CASCADE delete should handle related overrides
+    await db.run('DELETE FROM product_modifier_slots WHERE id = ?', id);
+}
+
+export async function deletePackageItem(id: string): Promise<void> {
+    const db = await getDb();
+     // CASCADE delete should handle related overrides
+    await db.run('DELETE FROM package_items WHERE id = ?', id);
+}
+
+export async function deletePackageItemOverride(id: string): Promise<void> {
+    const db = await getDb();
+    await db.run('DELETE FROM package_item_modifier_slot_overrides WHERE id = ?', id);
+}
+
+// Example: Update Category
+// export async function updateCategory(id: string, updates: Partial<Omit<Category, 'id'>>): Promise<void> {
 //   const db = await getDb();
-//   const newId = randomUUID();
-//   // Use INSERT OR REPLACE to handle both adding and updating based on a unique constraint (e.g., on package_item_id and product_modifier_slot_id)
-//   // Need to add UNIQUE constraint to DB schema first:
-//   // ALTER TABLE package_item_modifier_slot_overrides ADD CONSTRAINT unique_package_item_slot UNIQUE (package_item_id, product_modifier_slot_id);
-//   await db.run('INSERT OR REPLACE INTO package_item_modifier_slot_overrides (id, package_item_id, product_modifier_slot_id, min_quantity, max_quantity) VALUES (?, ?, ?, ?, ?)',
-//     newId, override.package_item_id, override.product_modifier_slot_id, override.min_quantity, override.max_quantity);
-//   // Fetch the potentially replaced/inserted item to return it
-//   const result = await db.get<PackageItemModifierSlotOverride>('SELECT * FROM package_item_modifier_slot_overrides WHERE package_item_id = ? AND product_modifier_slot_id = ?', override.package_item_id, override.product_modifier_slot_id);
-//   if (!result) throw new Error("Failed to set package item override");
-//   return result;
+//   const fields = Object.keys(updates).map(key => `${key} = ?`).join(', ');
+//   const values = Object.values(updates);
+//   await db.run(`UPDATE categories SET ${fields} WHERE id = ?`, [...values, id]);
 // }
 
 // ... other CRUD functions for update/delete ...
-
-```
