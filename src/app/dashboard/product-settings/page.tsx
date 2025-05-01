@@ -142,6 +142,10 @@ const ManageCategories = () => {
             await deleteCategory(id);
             toast({ title: "Éxito", description: "Categoría eliminada.", variant: "destructive" });
             fetchCategoriesData(); // Refresh list
+             // Close the edit form if the deleted category was being edited
+             if (editingCategory?.id === id) {
+                 setIsFormOpen(false);
+             }
         } catch (error) {
             toast({ title: "Error", description: `No se pudo eliminar la categoría: ${error instanceof Error ? error.message : 'Error desconocido'}`, variant: "destructive" });
             // Consider checking for related products if CASCADE DELETE isn't reliable or needs confirmation
@@ -308,6 +312,11 @@ const ManageProducts = () => {
 
     // Filter categories for product assignment (exclude 'paquete')
     const productCategories = useMemo(() => categories.filter(c => c.type === 'producto' || c.type === 'modificador'), [categories]);
+    // Filter categories for modifier slots (only 'modificador' type)
+    const modifierCategories = useMemo(() => categories.filter(c => c.type === 'modificador'), [categories]);
+
+    const [currentModifierSlots, setCurrentModifierSlots] = useState<ProductModifierSlot[]>([]);
+    const [isModifierSlotsLoading, setIsModifierSlotsLoading] = useState(false);
 
     const form = useForm<ProductFormValues>({
         resolver: zodResolver(productSchema),
@@ -350,6 +359,27 @@ const ManageProducts = () => {
         fetchProductData();
     }, [toast]); // Added toast dependency
 
+    // Fetch modifier slots for the product when editing
+    useEffect(() => {
+        if (editingProduct && isFormOpen) {
+            const fetchSlots = async () => {
+                setIsModifierSlotsLoading(true);
+                try {
+                    const slots = await getModifierSlotsForProduct(editingProduct.id);
+                    setCurrentModifierSlots(slots);
+                } catch (error) {
+                    toast({ title: "Error", description: `No se pudieron cargar los modificadores para ${editingProduct.name}.`, variant: "destructive" });
+                    setCurrentModifierSlots([]);
+                } finally {
+                    setIsModifierSlotsLoading(false);
+                }
+            };
+            fetchSlots();
+        } else {
+            setCurrentModifierSlots([]); // Clear slots when dialog closes or it's a new product
+        }
+    }, [editingProduct, isFormOpen, toast]);
+
     const handleOpenForm = (product: Product | null = null) => {
         setEditingProduct(product);
         if (product) {
@@ -361,6 +391,7 @@ const ManageProducts = () => {
                 inventory_item_id: product.inventory_item_id || null, // Use null if undefined/empty
                 inventory_consumed_per_unit: product.inventory_consumed_per_unit ?? 1,
             });
+            // Modifier slots will be fetched by the useEffect
         } else {
              form.reset({
                 name: '',
@@ -370,6 +401,7 @@ const ManageProducts = () => {
                 inventory_item_id: null, // Reset with null
                 inventory_consumed_per_unit: 1,
             });
+             setCurrentModifierSlots([]); // Ensure slots are clear for new product
         }
         setIsFormOpen(true);
     };
@@ -389,9 +421,15 @@ const ManageProducts = () => {
                 await updateProduct(editingProduct.id, dataToSave);
                 toast({ title: "Éxito", description: "Producto actualizado." });
              } else {
-                await addProduct(dataToSave);
-                toast({ title: "Éxito", description: "Producto añadido." });
+                 // Create product first, then potentially keep dialog open to add modifiers
+                const newProduct = await addProduct(dataToSave as Omit<Product, 'id'>);
+                toast({ title: "Éxito", description: "Producto añadido. Puedes añadir modificadores." });
+                setEditingProduct(newProduct); // Update state to allow adding modifiers immediately
+                fetchProductData(); // Refresh list in background
+                // Do NOT close form here, allow adding modifiers
+                return;
              }
+            // If just updating, close the form
             setIsFormOpen(false);
             fetchProductData(); // Refresh list
         } catch (error) {
@@ -407,6 +445,10 @@ const ManageProducts = () => {
             await deleteProduct(id);
             toast({ title: "Éxito", description: "Producto eliminado.", variant: "destructive" });
             fetchProductData(); // Refresh list
+             // Close the edit form if the deleted product was being edited
+             if (editingProduct?.id === id) {
+                 setIsFormOpen(false);
+             }
         } catch (error) {
             toast({ title: "Error", description: `No se pudo eliminar el producto: ${error instanceof Error ? error.message : 'Error desconocido'}`, variant: "destructive" });
         } finally {
@@ -414,7 +456,37 @@ const ManageProducts = () => {
         }
     };
 
-    // TODO: Implement Modifier Slot management within Edit Dialog
+     // --- Modifier Slot Management ---
+    const handleAddModifierSlot = async (data: { label: string; linked_category_id: string; min_quantity: number; max_quantity: number }) => {
+        if (!editingProduct) return;
+        setIsModifierSlotsLoading(true);
+        try {
+            const newSlot = await addModifierSlot({
+                product_id: editingProduct.id,
+                ...data,
+            });
+            setCurrentModifierSlots(prev => [...prev, newSlot]);
+            toast({ title: "Éxito", description: "Grupo modificador añadido." });
+        } catch (error) {
+             toast({ title: "Error", description: `No se pudo añadir el grupo: ${error instanceof Error ? error.message : 'Error desconocido'}`, variant: "destructive" });
+        } finally {
+            setIsModifierSlotsLoading(false);
+        }
+    };
+
+    const handleDeleteModifierSlot = async (slotId: string) => {
+         if (!editingProduct) return;
+         setIsModifierSlotsLoading(true);
+         try {
+             await deleteModifierSlot(slotId);
+             setCurrentModifierSlots(prev => prev.filter(slot => slot.id !== slotId));
+             toast({ title: "Éxito", description: "Grupo modificador eliminado.", variant: 'destructive' });
+         } catch (error) {
+              toast({ title: "Error", description: `No se pudo eliminar el grupo: ${error instanceof Error ? error.message : 'Error desconocido'}`, variant: "destructive" });
+         } finally {
+             setIsModifierSlotsLoading(false);
+         }
+    };
 
     return (
         <div>
@@ -498,7 +570,7 @@ const ManageProducts = () => {
 
             {/* Add/Edit Dialog */}
              <Dialog open={isFormOpen} onOpenChange={setIsFormOpen}>
-                 <DialogContent className="sm:max-w-[600px]"> {/* Wider dialog */}
+                 <DialogContent className="sm:max-w-[700px]"> {/* Wider dialog for modifiers */}
                     <DialogHeader>
                         <DialogTitle>{editingProduct ? 'Editar Producto' : 'Añadir Nuevo Producto'}</DialogTitle>
                         <DialogDescription>
@@ -506,6 +578,7 @@ const ManageProducts = () => {
                         </DialogDescription>
                     </DialogHeader>
                     <Form {...form}>
+                        {/* Using a unique key to force re-render on submit/reset if needed, but onSubmit handles it */}
                         <form onSubmit={form.handleSubmit(handleFormSubmit)} className="space-y-4">
                             <FormField control={form.control} name="name" render={({ field }) => (
                                 <FormItem><FormLabel>Nombre</FormLabel><FormControl><Input placeholder="e.g., Alitas 6pz, Salsa BBQ" {...field} /></FormControl><FormMessage /></FormItem>
@@ -516,7 +589,7 @@ const ManageProducts = () => {
                                 )}/>
                                 <FormField control={form.control} name="categoryId" render={({ field }) => (
                                     <FormItem><FormLabel>Categoría</FormLabel>
-                                        <Select onValueChange={field.onChange} value={field.value}>
+                                        <Select onValueChange={field.onChange} value={field.value || ''}>
                                             <FormControl><SelectTrigger><SelectValue placeholder="Selecciona categoría" /></SelectTrigger></FormControl>
                                             <SelectContent>
                                                 {productCategories.map(cat => (
@@ -571,30 +644,140 @@ const ManageProducts = () => {
                                     )}/>
                                 )}
                              </div>
-                             {/* TODO: Add Modifier Slot Management Here within the Edit Dialog */}
-                             {editingProduct && (
-                                <Card className="mt-4">
-                                    <CardHeader><CardTitle className="text-base">Gestionar Modificadores (Próximamente)</CardTitle></CardHeader>
-                                    <CardContent><p className="text-sm text-muted-foreground">Aquí podrás añadir, editar y eliminar los grupos de modificadores (salsas, bebidas, etc.) para "{editingProduct.name}".</p></CardContent>
-                                </Card>
-                             )}
-
-                            <DialogFooter>
-                                <DialogClose asChild>
-                                    <Button type="button" variant="outline">Cancelar</Button>
-                                </DialogClose>
-                                <Button type="submit" disabled={form.formState.isSubmitting}>
-                                    {form.formState.isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4"/>}
-                                    Guardar Cambios
-                                </Button>
-                            </DialogFooter>
+                              <div className="flex justify-end">
+                                  <Button type="submit" size="sm" disabled={form.formState.isSubmitting}>
+                                        {form.formState.isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4"/>}
+                                        {editingProduct ? 'Guardar Cambios Producto' : 'Crear Producto'}
+                                  </Button>
+                              </div>
                         </form>
                     </Form>
+
+                    {/* Modifier Slot Management (Only visible when editing a product) */}
+                    {editingProduct && (
+                        <div className="space-y-4 pt-6 border-t mt-6">
+                            <h4 className="text-lg font-semibold">Grupos de Modificadores para "{editingProduct.name}"</h4>
+
+                            {/* Add Slot Form (Simplified inline form) */}
+                             <AddModifierSlotForm
+                                modifierCategories={modifierCategories}
+                                onAddSlot={handleAddModifierSlot}
+                                isLoading={isModifierSlotsLoading}
+                             />
+
+                             {/* Slots List */}
+                             <ScrollArea className="h-[200px] border rounded-md">
+                                {isModifierSlotsLoading && !currentModifierSlots.length && <div className="p-4 text-center"><Loader2 className="h-5 w-5 animate-spin inline-block" /></div>}
+                                {!isModifierSlotsLoading && currentModifierSlots.length === 0 && (
+                                    <p className="p-4 text-center text-sm text-muted-foreground">No hay grupos modificadores definidos.</p>
+                                )}
+                                {currentModifierSlots.length > 0 && (
+                                   <Table className="text-sm">
+                                       <TableHeader>
+                                           <TableRow>
+                                               <TableHead>Etiqueta</TableHead>
+                                               <TableHead>Categoría Vinculada</TableHead>
+                                               <TableHead className="w-[60px] text-center">Min</TableHead>
+                                               <TableHead className="w-[60px] text-center">Max</TableHead>
+                                               <TableHead className="w-[80px] text-right">Acciones</TableHead>
+                                           </TableRow>
+                                       </TableHeader>
+                                       <TableBody>
+                                           {currentModifierSlots.map(slot => {
+                                               const linkedCat = modifierCategories.find(c => c.id === slot.linked_category_id);
+                                               return (
+                                                   <TableRow key={slot.id}>
+                                                        <TableCell>{slot.label}</TableCell>
+                                                        <TableCell>{linkedCat?.name || 'N/A'}</TableCell>
+                                                        <TableCell className="text-center">{slot.min_quantity}</TableCell>
+                                                        <TableCell className="text-center">{slot.max_quantity}</TableCell>
+                                                        <TableCell className="text-right">
+                                                            <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive hover:text-destructive" onClick={() => handleDeleteModifierSlot(slot.id)} title="Eliminar Grupo" disabled={isModifierSlotsLoading}>
+                                                                <MinusCircle className="h-3 w-3" />
+                                                            </Button>
+                                                        </TableCell>
+                                                   </TableRow>
+                                               );
+                                            })}
+                                       </TableBody>
+                                   </Table>
+                                )}
+                            </ScrollArea>
+                        </div>
+                    )}
+
+
+                    <DialogFooter className="mt-6 pt-4 border-t">
+                        <DialogClose asChild>
+                            <Button type="button" variant="outline">Cerrar</Button>
+                        </DialogClose>
+                        {/* Main save button might be removed if saving happens per section */}
+                    </DialogFooter>
                 </DialogContent>
              </Dialog>
         </div>
     );
 };
+
+// --- Helper component for adding modifier slots ---
+const addModifierSlotSchema = z.object({
+    label: z.string().min(1, "Etiqueta requerida"),
+    linked_category_id: z.string().min(1, "Categoría requerida"),
+    min_quantity: z.coerce.number().int().min(0).default(0),
+    max_quantity: z.coerce.number().int().min(1).default(1),
+}).refine(data => data.max_quantity >= data.min_quantity, {
+    message: "Max debe ser mayor o igual a Min",
+    path: ["max_quantity"],
+});
+type AddModifierSlotFormValues = z.infer<typeof addModifierSlotSchema>;
+
+interface AddModifierSlotFormProps {
+    modifierCategories: Category[];
+    onAddSlot: (data: AddModifierSlotFormValues) => Promise<void>;
+    isLoading: boolean;
+}
+
+const AddModifierSlotForm: React.FC<AddModifierSlotFormProps> = ({ modifierCategories, onAddSlot, isLoading }) => {
+     const form = useForm<AddModifierSlotFormValues>({
+        resolver: zodResolver(addModifierSlotSchema),
+        defaultValues: { label: '', linked_category_id: '', min_quantity: 1, max_quantity: 1 },
+    });
+
+     const handleSubmit = async (values: AddModifierSlotFormValues) => {
+        await onAddSlot(values);
+        form.reset(); // Reset form after successful add
+     }
+
+     return (
+         <Form {...form}>
+            <form onSubmit={form.handleSubmit(handleSubmit)} className="flex items-end gap-2 border p-3 rounded-md bg-muted/50">
+                <FormField control={form.control} name="label" render={({ field }) => (
+                    <FormItem className="flex-grow"><FormLabel className="text-xs">Etiqueta UI</FormLabel><FormControl><Input placeholder="e.g., Salsas" {...field} /></FormControl><FormMessage className="text-xs"/> </FormItem>
+                )}/>
+                <FormField control={form.control} name="linked_category_id" render={({ field }) => (
+                     <FormItem className="flex-grow"> <FormLabel className="text-xs">Cat. Modificador</FormLabel>
+                         <Select onValueChange={field.onChange} value={field.value || ''}>
+                             <FormControl><SelectTrigger><SelectValue placeholder="Selecciona" /></SelectTrigger></FormControl>
+                             <SelectContent>
+                                 {modifierCategories.length === 0 && <SelectItem value="NONE_MOD_CAT" disabled>Crea una cat. 'modificador'</SelectItem>}
+                                 {modifierCategories.map(cat => ( <SelectItem key={cat.id} value={cat.id}>{cat.name}</SelectItem> ))}
+                             </SelectContent>
+                         </Select><FormMessage className="text-xs"/></FormItem>
+                )}/>
+                 <FormField control={form.control} name="min_quantity" render={({ field }) => (
+                    <FormItem className="w-16"><FormLabel className="text-xs">Min</FormLabel><FormControl><Input type="number" min="0" {...field} /></FormControl><FormMessage className="text-xs"/></FormItem>
+                 )}/>
+                 <FormField control={form.control} name="max_quantity" render={({ field }) => (
+                    <FormItem className="w-16"><FormLabel className="text-xs">Max</FormLabel><FormControl><Input type="number" min="1" {...field} /></FormControl><FormMessage className="text-xs"/></FormItem>
+                 )}/>
+                <Button type="submit" size="sm" disabled={isLoading || modifierCategories.length === 0}>
+                    {isLoading ? <Loader2 className="h-4 w-4 animate-spin"/> : <PlusCircle className="h-4 w-4" />}
+                 </Button>
+            </form>
+         </Form>
+     );
+}
+
 
 const ManagePackages = () => {
      const [packages, setPackages] = useState<Product[]>([]); // Packages are Products
@@ -660,10 +843,15 @@ const ManagePackages = () => {
             const fetchItems = async () => {
                 setIsPackageItemsLoading(true);
                 try {
+                    // Ensure editingPackage.id is valid before fetching
+                    if (!editingPackage.id) {
+                        throw new Error("Package ID is missing.");
+                    }
                     const items = await getItemsForPackage(editingPackage.id);
                     setCurrentPackageItems(items);
                 } catch (error) {
-                    toast({ title: "Error", description: `No se pudieron cargar los items para ${editingPackage.name}.`, variant: "destructive" });
+                    console.error("Error fetching package items:", error); // Log error
+                    toast({ title: "Error", description: `No se pudieron cargar los items para ${editingPackage.name}. ${error instanceof Error ? error.message : ''}`, variant: "destructive" });
                     setCurrentPackageItems([]);
                 } finally {
                     setIsPackageItemsLoading(false);
@@ -698,30 +886,34 @@ const ManagePackages = () => {
         // The form ensures categoryId belongs to a 'paquete' type category implicitly
         const dataToSave: Partial<Product> = values; // Omit<Product, 'id' | 'inventory_item_id' | 'inventory_consumed_per_unit'>
 
-        let savedPackageId: string | undefined = editingPackage?.id;
+        // let savedPackageId: string | undefined = editingPackage?.id; // Keep track of ID
 
         try {
             if (editingPackage) {
                 await updateProduct(editingPackage.id, dataToSave); // Use updateProduct for packages too
                  toast({ title: "Éxito", description: "Paquete actualizado." });
+                 // Optionally refetch data if needed, but typically UI updates are sufficient
+                 fetchPackageData(); // Refresh list in background
             } else {
+                 // Create the package product FIRST
                  const newPackage = await addProduct(dataToSave as Omit<Product, 'id'>); // Use addProduct service function
-                 savedPackageId = newPackage.id;
-                 setEditingPackage(newPackage); // Start editing the newly created package to add items
-                 toast({ title: "Éxito", description: "Paquete añadido. Ahora puedes añadirle productos." });
-                 // Keep dialog open
+                 // savedPackageId = newPackage.id; // Store the new ID
+                 toast({ title: "Éxito", description: "Paquete creado. Ahora puedes añadirle productos." });
+                 // IMPORTANT: Update the editingPackage state with the newly created package
+                 // This ensures the subsequent addItem calls have the correct package_id
+                 setEditingPackage(newPackage);
                  await fetchPackageData(); // Refresh list in background
-                 return; // Don't close dialog yet
+                 // DO NOT CLOSE DIALOG - User needs to add items
+                 return; // Prevent closing dialog
             }
 
-            // If editing, potentially close dialog or stay open based on UX preference
-            // For now, let's close it after saving basic package info
-            // Item management happens separately within the open dialog
-            // setIsFormOpen(false); // Decide if closing here is right
-            await fetchPackageData(); // Refresh list
+            // If editing, maybe close dialog after basic info save, or keep open
+            // Let's keep it open for consistency, user closes manually
+            // setIsFormOpen(false);
 
         } catch (error) {
             const action = editingPackage ? 'actualizar' : 'añadir';
+            console.error(`Error ${action} package:`, error); // Log detailed error
             toast({ title: "Error", description: `No se pudo ${action} el paquete: ${error instanceof Error ? error.message : 'Error desconocido'}`, variant: "destructive" });
         }
     };
@@ -743,11 +935,15 @@ const ManagePackages = () => {
     };
 
      const handleAddPackageItemSubmit: SubmitHandler<AddPackageItemFormValues> = async (values) => {
-         if (!editingPackage) return;
+         // Ensure we have a valid package ID (either from editing or after creation)
+         if (!editingPackage || !editingPackage.id) {
+             toast({ title: "Error", description: "Guarda la información básica del paquete antes de añadir productos.", variant: "destructive" });
+             return;
+         }
 
          // Refine the type for newItemData
           const newItemData: Omit<PackageItem, 'id' | 'product_name'> = {
-             package_id: editingPackage.id,
+             package_id: editingPackage.id, // Use the ID from the state
              product_id: values.product_id,
              quantity: values.quantity,
              display_order: currentPackageItems.length, // Simple order append
@@ -765,7 +961,7 @@ const ManagePackages = () => {
              toast({ title: "Éxito", description: "Producto añadido al paquete." });
          } catch (error) {
              console.error("Error adding package item:", error); // Log detailed error
-             toast({ title: "Error", description: `No se pudo añadir el producto: ${error instanceof Error ? error.message : 'FOREIGN KEY constraint failed?'}`, variant: "destructive" });
+             toast({ title: "Error", description: `No se pudo añadir el producto: ${error instanceof Error ? error.message : 'Error desconocido'}`, variant: "destructive" });
          } finally {
              setIsPackageItemsLoading(false);
          }
@@ -888,7 +1084,7 @@ const ManagePackages = () => {
                                 )}/>
                                 <FormField control={packageForm.control} name="categoryId" render={({ field }) => (
                                     <FormItem><FormLabel>Categoría (de Paquetes)</FormLabel>
-                                        <Select onValueChange={field.onChange} value={field.value}>
+                                        <Select onValueChange={field.onChange} value={field.value || ''}>
                                             <FormControl><SelectTrigger><SelectValue placeholder="Selecciona categoría" /></SelectTrigger></FormControl>
                                             <SelectContent>
                                                  {packageCategories.length === 0 && <SelectItem value="NONE_PKG_CAT" disabled>Crea una categoría tipo paquete</SelectItem>}
@@ -905,16 +1101,16 @@ const ManagePackages = () => {
                              <div className="flex justify-end">
                                 <Button type="submit" size="sm" disabled={packageForm.formState.isSubmitting || packageCategories.length === 0}>
                                     {packageForm.formState.isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4"/>}
-                                    {editingPackage ? 'Guardar Cambios del Paquete' : 'Crear Paquete'}
+                                    {editingPackage ? 'Guardar Cambios Paquete' : 'Crear Paquete'}
                                 </Button>
                              </div>
                         </form>
                      </Form>
 
-                     {/* Package Items Management (Only visible when editing a package) */}
-                     {editingPackage && (
+                     {/* Package Items Management (Only visible AFTER package created/saved) */}
+                     {editingPackage?.id && ( // Only show if editingPackage has an ID
                         <div className="space-y-4">
-                            <h4 className="text-lg font-semibold">Contenido del Paquete</h4>
+                            <h4 className="text-lg font-semibold">Contenido del Paquete "{editingPackage.name}"</h4>
 
                             {/* Add Item Form */}
                             <Form {...addItemForm}>
@@ -925,7 +1121,7 @@ const ManagePackages = () => {
                                         render={({ field }) => (
                                             <FormItem className="flex-grow">
                                                 <FormLabel className="text-xs">Producto a Añadir</FormLabel>
-                                                <Select onValueChange={field.onChange} value={field.value}>
+                                                <Select onValueChange={field.onChange} value={field.value || ''}>
                                                     <FormControl><SelectTrigger><SelectValue placeholder="Selecciona producto" /></SelectTrigger></FormControl>
                                                     <SelectContent>
                                                         {allProducts.map(prod => (
@@ -949,18 +1145,18 @@ const ManagePackages = () => {
                                         )}
                                     />
                                     <Button type="submit" size="sm" disabled={isPackageItemsLoading}>
-                                        <PlusCircle className="h-4 w-4" />
+                                         {isPackageItemsLoading ? <Loader2 className="h-4 w-4 animate-spin"/> : <PlusCircle className="h-4 w-4" />}
                                     </Button>
                                 </form>
                             </Form>
 
                             {/* Items List */}
                              <ScrollArea className="h-[200px] border rounded-md">
-                                 {isPackageItemsLoading && <div className="p-4 text-center"><Loader2 className="h-5 w-5 animate-spin inline-block" /></div>}
+                                 {isPackageItemsLoading && !currentPackageItems.length && <div className="p-4 text-center"><Loader2 className="h-5 w-5 animate-spin inline-block" /></div>}
                                  {!isPackageItemsLoading && currentPackageItems.length === 0 && (
-                                     <p className="p-4 text-center text-sm text-muted-foreground">Este paquete está vacío.</p>
+                                     <p className="p-4 text-center text-sm text-muted-foreground">Añade productos al paquete.</p>
                                  )}
-                                 {!isPackageItemsLoading && currentPackageItems.length > 0 && (
+                                 {currentPackageItems.length > 0 && ( // Display even while loading if items exist
                                     <Table className="text-sm">
                                         <TableHeader>
                                             <TableRow>
