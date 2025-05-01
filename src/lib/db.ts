@@ -20,7 +20,7 @@ export async function getDb(): Promise<Database> {
         driver: sqlite3.Database
       });
       db = newDb;
-      await initializeDb(db); // Ensure schema is created on first connect
+      await initializeDb(db); // Ensure schema is created/updated on first connect
     } catch (error) {
       console.error("Failed to open database:", error);
       throw error; // Re-throw the error to indicate failure
@@ -33,12 +33,12 @@ async function initializeDb(dbInstance: Database): Promise<void> {
   // Use PRAGMA foreign_keys=ON; for enforcing foreign key constraints
   await dbInstance.exec('PRAGMA foreign_keys=ON;');
 
-  // Create tables if they don't exist
+  // Create tables if they don't exist, ensuring 'type' column is included
   await dbInstance.exec(`
     CREATE TABLE IF NOT EXISTS categories (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
-      type TEXT NOT NULL CHECK(type IN ('producto', 'modificador', 'paquete')) DEFAULT 'producto', -- Added type column with check constraint
+      type TEXT NOT NULL CHECK(type IN ('producto', 'modificador', 'paquete')) DEFAULT 'producto', -- Ensure type column exists
       imageUrl TEXT
     );
 
@@ -98,6 +98,23 @@ async function initializeDb(dbInstance: Database): Promise<void> {
     );
 
   `);
+
+  // Attempt to add the 'type' column if it doesn't exist (for existing databases)
+  try {
+    await dbInstance.exec(`
+      ALTER TABLE categories ADD COLUMN type TEXT NOT NULL CHECK(type IN ('producto', 'modificador', 'paquete')) DEFAULT 'producto';
+    `);
+    console.log("Successfully added 'type' column to 'categories' table (if it didn't exist).");
+  } catch (error: any) {
+    // Ignore error if column already exists (SQLite specific error message)
+    if (error.message && error.message.includes('duplicate column name: type')) {
+       // console.log("'type' column already exists in 'categories' table.");
+    } else {
+      // Log other errors
+      console.error("Error attempting to add 'type' column:", error);
+    }
+  }
+
   // console.log("Database schema initialized (if not exists).");
 }
 
