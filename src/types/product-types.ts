@@ -37,20 +37,20 @@ export interface ProductModifierSlot {
     max_quantity: number;
 }
 
-// Represents a package deal
-export interface Package {
-    id: string;
-    name: string;
-    price: number;
-    category_id: string; // e.g., link to a 'Combos' or 'Packages' category
-    imageUrl?: string;
-}
+// DEPRECATED: Package is now just a Product with type 'paquete'
+// export interface Package {
+//     id: string;
+//     name: string;
+//     price: number;
+//     category_id: string; // e.g., link to a 'Combos' or 'Packages' category
+//     imageUrl?: string;
+// }
 
 // Represents an item within a package
 export interface PackageItem {
     id: string; // Unique ID for this line item within the package definition
-    package_id: string;
-    product_id: string;
+    package_id: string; // This is the product_id of the package (Product type)
+    product_id: string; // The ID of the product included in the package
     quantity: number; // How many of this product are in the package
     display_order: number;
     // For UI joining:
@@ -77,6 +77,7 @@ export interface SelectedModifierItem {
     name: string;
     priceModifier?: number; // Price adjustment (if any) - could be derived or stored separately
     slotId: string; // Which slot this modifier belongs to
+    packageItemId?: string; // Optional: Which package item this modifier belongs to (if inside a package)
 }
 
 export interface OrderItem {
@@ -112,13 +113,19 @@ export interface CurrentOrder {
 
 // --- Order History / Reporting Types ---
 
+// Represents a simplified view of an order item for display in history/reports
+export interface SavedOrderItemComponent {
+    name: string;
+    slotLabel?: string; // Label of the slot it filled (e.g., "Salsa", "Bebida")
+}
+
 export interface SavedOrderItem {
   id: string; // Matches product ID or package ID
   name: string;
   quantity: number;
   price: number; // Base price per unit or package price at time of order
-  components?: { name: string; slotLabel?: string }[]; // List of modifier names and potentially which slot they filled
-  // isApart? logic might need rethinking based on modifiers
+  totalItemPrice: number; // Total price for this line item (qty * (base + mods))
+  components: SavedOrderItemComponent[]; // List of modifier names or included package items
 }
 
 export interface SavedOrder {
@@ -134,3 +141,5 @@ export interface SavedOrder {
   paidAmount?: number; // Cash specific
   changeGiven?: number; // Cash specific
 }
+
+```

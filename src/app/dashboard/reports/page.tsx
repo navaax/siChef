@@ -1,3 +1,4 @@
+// src/app/dashboard/reports/page.tsx
 "use client";
 
 import * as React from 'react';
@@ -8,15 +9,14 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableFoo
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { useToast } from "@/hooks/use-toast";
-import { Download, FileText } from 'lucide-react'; // Icons
+import { Download, FileText, Loader2 } from 'lucide-react'; // Icons
 import { format } from 'date-fns';
 import { useAuth } from '@/contexts/auth-context';
 import { generateSalesReport, type SalesReport, type SalesHistoryItem } from '@/services/pdf-generator'; // Assuming service exists
 import type { SavedOrder } from '@/types/product-types'; // Import SavedOrder type
 
 // Helper to format currency
-const formatCurrency = (amount: number): string => {
-    // Handle potential null/undefined or non-numeric values gracefully
+const formatCurrency = (amount: number | null | undefined): string => {
     if (typeof amount !== 'number' || isNaN(amount)) {
         return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(0);
     }
@@ -40,7 +40,7 @@ export default function ReportsPage() {
   const { toast } = useToast();
   const [orders, setOrders] = useState<SavedOrder[]>([]);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
-  const [startingCash, setStartingCash] = useState<number>(0); // Example starting cash
+  const [startingCash, setStartingCash] = useState<number>(100.00); // Default starting cash
 
   // Load orders and starting cash from localStorage on mount
   useEffect(() => {
@@ -50,9 +50,19 @@ export default function ReportsPage() {
              const parsedOrders: SavedOrder[] = JSON.parse(storedOrders).map((order: any) => ({
                 ...order,
                 createdAt: new Date(order.createdAt),
-                 // Ensure subtotal is a number, default to 0 if missing or invalid
+                 // Ensure subtotal and total are numbers, default to 0 if missing or invalid
                 subtotal: typeof order.subtotal === 'number' ? order.subtotal : 0,
                 total: typeof order.total === 'number' ? order.total : 0,
+                 items: order.items?.map((item: any) => ({
+                    id: item.id || 'unknown',
+                    name: item.name || 'Unknown Item',
+                    quantity: typeof item.quantity === 'number' ? item.quantity : 0,
+                    price: typeof item.price === 'number' ? item.price : 0,
+                    totalItemPrice: typeof item.totalItemPrice === 'number' ? item.totalItemPrice : 0,
+                    components: Array.isArray(item.components) ? item.components : [],
+                 })) || [],
+                 status: ['pending', 'completed', 'cancelled'].includes(order.status) ? order.status : 'pending',
+                 paymentMethod: ['cash', 'card'].includes(order.paymentMethod) ? order.paymentMethod : 'card',
              }));
              setOrders(parsedOrders);
         } catch (error) {
@@ -62,7 +72,7 @@ export default function ReportsPage() {
     }
 
     const storedStartingCash = localStorage.getItem('siChefStartingCash');
-    setStartingCash(storedStartingCash ? parseFloat(storedStartingCash) : 100.00); // Default 100
+    setStartingCash(storedStartingCash ? parseFloat(storedStartingCash) : 100.00); // Use stored or default
 
   }, [toast]);
 
@@ -85,8 +95,8 @@ export default function ReportsPage() {
 
         try {
             const reportData: SalesReport = {
-                businessName: "siChef Restaurant", // Replace with dynamic name from settings?
-                logo: "https://picsum.photos/100/50?random=99", // Replace with actual logo URL or base64
+                businessName: "siChef POS", // Replace with dynamic name from settings?
+                logo: "https://picsum.photos/100/50?random=99", // Placeholder logo
                 reportDate: format(new Date(), 'Pp'),
                 user: username || 'Unknown User',
                 startingCash: startingCash,
@@ -105,7 +115,10 @@ export default function ReportsPage() {
                 })),
             };
 
-            const pdfBytes = await generateSalesReport(reportData);
+            // Simulate PDF generation
+            console.log("--- PDF Report Data ---", reportData);
+            await new Promise(resolve => setTimeout(resolve, 1500)); // Simulate generation time
+            const pdfBytes = await generateSalesReport(reportData); // Still call the (placeholder) function
 
              // Check if PDF generation actually returned data (placeholder returns empty)
             if (pdfBytes && pdfBytes.length > 0) {
@@ -122,32 +135,32 @@ export default function ReportsPage() {
 
                 toast({ title: "Report Generated", description: "PDF download started." });
             } else {
-                 toast({ title: "Report Generation Skipped", description: "PDF generation is currently simulated.", variant: "default" });
+                 toast({ title: "Report Generation Skipped", description: "PDF generation is simulated. Check console for data.", variant: "default" });
             }
 
 
             // --- Resetting for the new day ---
-            // Option 1: Clear all orders
-             localStorage.removeItem('siChefOrders');
-             setOrders([]);
+            // Clear completed/cancelled orders, keep pending ones
+            const activeOrders = orders.filter(o => o.status === 'pending');
+            localStorage.setItem('siChefOrders', JSON.stringify(activeOrders));
+            setOrders(activeOrders);
 
-            // Option 2: Archive completed/cancelled (More complex, requires separate storage/logic)
-            // const activeOrders = orders.filter(o => o.status === 'pending');
-            // localStorage.setItem('siChefOrders', JSON.stringify(activeOrders));
-            // setOrders(activeOrders);
-            // Archive completedOrders to another key or send to backend
+            // Optionally archive completed/cancelled orders to another key or backend
+            const archivedOrders = orders.filter(o => o.status === 'completed' || o.status === 'cancelled');
+            console.log("Archived orders (simulated):", archivedOrders);
+            // localStorage.setItem('siChefArchivedOrders_YYYYMMDD', JSON.stringify(archivedOrders));
 
             // Reset starting cash (or prompt user)
              const newStartingCash = 100.00; // Example reset value
              localStorage.setItem('siChefStartingCash', String(newStartingCash));
              setStartingCash(newStartingCash);
 
-             toast({ title: "Day Finalized", description: "Sales data cleared/archived, ready for a new day." });
+             toast({ title: "Day Finalized", description: "Completed sales cleared, ready for a new day." });
 
 
         } catch (error) {
             console.error("Error finalizing day / generating PDF:", error);
-            toast({ title: "Operation Failed", description: "Could not finalize the day or generate the report.", variant: "destructive" });
+            toast({ title: "Operation Failed", description: `Could not finalize the day or generate the report: ${error instanceof Error ? error.message : 'Unknown error'}`, variant: "destructive" });
         } finally {
             setIsGeneratingPdf(false);
         }
@@ -165,7 +178,7 @@ export default function ReportsPage() {
              <Button onClick={handleFinalizeDay} disabled={isGeneratingPdf || completedOrders.length === 0} size="sm">
                  {isGeneratingPdf ? (
                      <>
-                        <FileText className="mr-2 h-4 w-4 animate-pulse" /> Generando...
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Generando...
                      </>
                  ) : (
                      <>
@@ -197,7 +210,7 @@ export default function ReportsPage() {
                         .map((order) => (
                         <TableRow key={order.id}>
                           <TableCell className="font-medium">{order.orderNumber}</TableCell>
-                          <TableCell className="text-xs">{order.id}</TableCell>
+                          <TableCell className="text-xs text-muted-foreground break-all">{order.id}</TableCell>
                           <TableCell>{order.customerName}</TableCell>
                           <TableCell className="text-right">{formatCurrency(order.subtotal)}</TableCell>
                           <TableCell className="text-right font-medium">{formatCurrency(order.total)}</TableCell>
@@ -265,3 +278,5 @@ export default function ReportsPage() {
     </div>
   );
 }
+
+```
