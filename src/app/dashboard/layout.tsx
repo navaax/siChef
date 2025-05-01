@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from 'react';
-import { Home, ShoppingCart, BarChart2, Settings, LogOut, User } from 'lucide-react';
+import { Home, ShoppingCart, BarChart2, Settings, LogOut, User, Archive, PackagePlus } from 'lucide-react'; // Added Archive, PackagePlus
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 
@@ -24,6 +24,8 @@ import {
 const navItems = [
   { href: '/dashboard/home', label: 'Inicio', icon: Home },
   { href: '/dashboard/create-order', label: 'Crear Pedidos', icon: ShoppingCart },
+  { href: '/dashboard/inventory', label: 'Inventario', icon: Archive }, // Added Inventory
+  { href: '/dashboard/product-settings', label: 'Ajustes Productos', icon: PackagePlus }, // Added Product Settings
   { href: '/dashboard/reports', label: 'Reporte de Ventas', icon: BarChart2 },
   { href: '/dashboard/settings', label: 'Configuraciones', icon: Settings },
 ];
@@ -78,7 +80,7 @@ export default function DashboardLayout({
                     href={item.href}
                     className={cn(
                       'flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:text-foreground md:h-8 md:w-8',
-                      pathname === item.href ? 'bg-accent text-accent-foreground' : ''
+                      pathname.startsWith(item.href) ? 'bg-accent text-accent-foreground' : '' // Use startsWith for active state
                     )}
                     prefetch={false}
                   >
