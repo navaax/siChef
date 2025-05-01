@@ -22,7 +22,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '
 import { Separator } from '@/components/ui/separator'; // Added Separator
 import { useToast } from '@/hooks/use-toast';
 import Image from 'next/image';
-import { cn } from '@/lib/utils'; // Added cn
+import { cn } from '@/lib/utils';
 
 // Import services
 import {
@@ -595,7 +595,7 @@ const ManageProducts = () => {
                                             <FormControl><SelectTrigger><SelectValue placeholder="Selecciona categoría" /></SelectTrigger></FormControl>
                                             <SelectContent>
                                                  {/* Add a placeholder item */}
-                                                <SelectItem value="" disabled>Selecciona una categoría</SelectItem>
+                                                <SelectItem value="PLACEHOLDER_CAT" disabled>Selecciona una categoría</SelectItem>
                                                 {productCategories.map(cat => (
                                                     <SelectItem key={cat.id} value={cat.id}>{cat.name} ({cat.type})</SelectItem>
                                                 ))}
@@ -765,7 +765,7 @@ const AddModifierSlotForm: React.FC<AddModifierSlotFormProps> = ({ modifierCateg
                          <Select onValueChange={field.onChange} value={field.value || ''}>
                              <FormControl><SelectTrigger><SelectValue placeholder="Selecciona" /></SelectTrigger></FormControl>
                              <SelectContent>
-                                 <SelectItem value="" disabled>Selecciona categoría</SelectItem>
+                                 <SelectItem value="PLACEHOLDER_MOD_CAT" disabled>Selecciona categoría</SelectItem>
                                  {modifierCategories.length === 0 && <SelectItem value="NONE_MOD_CAT" disabled>Crea una cat. 'modificador'</SelectItem>}
                                  {modifierCategories.map(cat => ( <SelectItem key={cat.id} value={cat.id}>{cat.name}</SelectItem> ))}
                              </SelectContent>
@@ -1106,7 +1106,7 @@ const ManagePackages = () => {
                                         <Select onValueChange={field.onChange} value={field.value || ''}>
                                             <FormControl><SelectTrigger><SelectValue placeholder="Selecciona categoría" /></SelectTrigger></FormControl>
                                             <SelectContent>
-                                                 <SelectItem value="" disabled>Selecciona categoría</SelectItem>
+                                                 <SelectItem value="PLACEHOLDER_PKG_CAT" disabled>Selecciona categoría</SelectItem>
                                                  {packageCategories.length === 0 && <SelectItem value="NONE_PKG_CAT" disabled>Crea una categoría tipo paquete</SelectItem>}
                                                 {packageCategories.map(cat => (
                                                     <SelectItem key={cat.id} value={cat.id}>{cat.name}</SelectItem>
@@ -1144,7 +1144,7 @@ const ManagePackages = () => {
                                                 <Select onValueChange={field.onChange} value={field.value || ''}>
                                                     <FormControl><SelectTrigger><SelectValue placeholder="Selecciona producto" /></SelectTrigger></FormControl>
                                                     <SelectContent>
-                                                         <SelectItem value="" disabled>Selecciona producto</SelectItem>
+                                                         <SelectItem value="PLACEHOLDER_PROD" disabled>Selecciona producto</SelectItem>
                                                         {allProducts.map(prod => (
                                                             <SelectItem key={prod.id} value={prod.id}>{prod.name}</SelectItem>
                                                         ))}
