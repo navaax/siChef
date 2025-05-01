@@ -272,9 +272,32 @@ export async function addModifierSlot(slot: Omit<ProductModifierSlot, 'id'>): Pr
 export async function addPackageItem(item: Omit<PackageItem, 'id'>): Promise<PackageItem> {
   const db = await getDb();
   const newItem = { ...item, id: randomUUID() };
-  await db.run('INSERT INTO package_items (id, package_id, product_id, quantity, display_order) VALUES (?, ?, ?, ?, ?)',
-    newItem.id, newItem.package_id, newItem.product_id, newItem.quantity, newItem.display_order);
-  return newItem;
+
+  // Debugging: Check if package_id and product_id exist before insert
+  console.log(`Attempting to add item to package: Package ID = ${newItem.package_id}, Product ID = ${newItem.product_id}`);
+  const packageExists = await db.get('SELECT id FROM products WHERE id = ?', newItem.package_id);
+  const productExists = await db.get('SELECT id FROM products WHERE id = ?', newItem.product_id);
+
+  if (!packageExists) {
+    console.error(`FOREIGN KEY ERROR PRE-CHECK: Package with ID ${newItem.package_id} does not exist in products table.`);
+    throw new Error(`Package with ID ${newItem.package_id} does not exist.`);
+  }
+  if (!productExists) {
+     console.error(`FOREIGN KEY ERROR PRE-CHECK: Product with ID ${newItem.product_id} does not exist in products table.`);
+    throw new Error(`Product with ID ${newItem.product_id} does not exist.`);
+  }
+  console.log(`Pre-check passed: Package ${newItem.package_id} and Product ${newItem.product_id} exist.`);
+
+  // Proceed with insert
+  try {
+    await db.run('INSERT INTO package_items (id, package_id, product_id, quantity, display_order) VALUES (?, ?, ?, ?, ?)',
+      newItem.id, newItem.package_id, newItem.product_id, newItem.quantity, newItem.display_order);
+    console.log(`Successfully inserted package item with ID ${newItem.id}`);
+    return newItem;
+  } catch (error) {
+      console.error(`SQLITE INSERT ERROR for package_items: ID=${newItem.id}, PackageID=${newItem.package_id}, ProductID=${newItem.product_id}`, error);
+      throw error; // Re-throw the original error
+  }
 }
 
 // TODO: Implement updatePackageItem
