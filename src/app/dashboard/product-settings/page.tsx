@@ -49,10 +49,15 @@ const productSchema = z.object({
     price: z.coerce.number().min(0, "Precio debe ser positivo"), // Coerce to number
     categoryId: z.string().min(1, "Categoría es requerida"),
     imageUrl: z.string().url("Debe ser una URL válida").optional().or(z.literal('')),
-    inventory_item_id: z.string().optional(),
+    inventory_item_id: z.string().optional(), // Allow empty string from form
     inventory_consumed_per_unit: z.coerce.number().min(0, "Consumo debe ser positivo").optional(),
+}).refine(data => !data.inventory_item_id || (data.inventory_item_id && data.inventory_consumed_per_unit !== undefined && data.inventory_consumed_per_unit !== null), {
+    // Add validation: if inventory_item_id is set, inventory_consumed_per_unit must also be set
+    message: "El consumo por unidad es requerido si se vincula un item de inventario.",
+    path: ["inventory_consumed_per_unit"],
 });
 type ProductFormValues = z.infer<typeof productSchema>;
+
 
 // For packages (which are also products)
 const packageSchema = z.object({
@@ -90,7 +95,7 @@ const ManageCategories = () => {
 
     useEffect(() => {
         fetchCategoriesData();
-    }, []); // Run once on mount
+    }, [toast]); // Added toast dependency
 
     const handleAddCategory = async (values: CategoryFormValues) => {
         try {
@@ -158,7 +163,7 @@ const ManageCategories = () => {
                                     render={({ field }) => (
                                         <FormItem>
                                             <FormLabel>URL de Imagen (Opcional)</FormLabel>
-                                            <FormControl><Input type="url" placeholder="https://picsum.photos/..." {...field} /></FormControl>
+                                            <FormControl><Input type="url" placeholder="https://i.pinimg.com/..." {...field} /></FormControl>
                                             <FormMessage />
                                         </FormItem>
                                     )}
@@ -267,14 +272,18 @@ const ManageProducts = () => {
 
     useEffect(() => {
         fetchProductData();
-    }, []);
+    }, [toast]); // Added toast dependency
 
     const handleAddProduct = async (values: ProductFormValues) => {
         const dataToSave = {
             ...values,
-            inventory_item_id: values.inventory_item_id || undefined, // Send undefined if empty string
-             inventory_consumed_per_unit: values.inventory_item_id ? (values.inventory_consumed_per_unit ?? 1) : undefined, // Only send consumption if inventory item is linked
+            // Convert empty string inventory_item_id to undefined for the service
+            inventory_item_id: values.inventory_item_id || undefined,
+             // Only send consumption if inventory item is linked, ensure it's a number or undefined
+            inventory_consumed_per_unit: values.inventory_item_id ? (values.inventory_consumed_per_unit ?? 1) : undefined,
         };
+
+        // console.log("Saving product:", dataToSave); // Log data being sent
 
         try {
             await addProduct(dataToSave);
@@ -283,6 +292,7 @@ const ManageProducts = () => {
             form.reset();
             fetchProductData(); // Refresh list
         } catch (error) {
+            console.error("Error adding product:", error); // Log detailed error
             toast({ title: "Error", description: `No se pudo añadir el producto: ${error instanceof Error ? error.message : 'Error desconocido'}`, variant: "destructive" });
         }
     };
@@ -325,7 +335,7 @@ const ManageProducts = () => {
                                     )}/>
                                 </div>
                                 <FormField control={form.control} name="imageUrl" render={({ field }) => (
-                                    <FormItem><FormLabel>URL de Imagen (Opcional)</FormLabel><FormControl><Input type="url" placeholder="https://picsum.photos/..." {...field} /></FormControl><FormMessage /></FormItem>
+                                    <FormItem><FormLabel>URL de Imagen (Opcional)</FormLabel><FormControl><Input type="url" placeholder="https://i.pinimg.com/..." {...field} /></FormControl><FormMessage /></FormItem>
                                 )}/>
                                  <div className="grid grid-cols-2 gap-4">
                                     <FormField control={form.control} name="inventory_item_id" render={({ field }) => (
@@ -333,7 +343,8 @@ const ManageProducts = () => {
                                             <Select onValueChange={field.onChange} defaultValue={field.value}>
                                                  <FormControl><SelectTrigger><SelectValue placeholder="Vincular inventario..." /></SelectTrigger></FormControl>
                                                  <SelectContent>
-                                                    <SelectItem value="">-- Ninguno --</SelectItem>
+                                                    {/* Ensure value is NOT an empty string, use a placeholder or specific non-empty value */}
+                                                    {/* <SelectItem value="NONE">-- Ninguno --</SelectItem>  <-- Option 1: Use a specific value */}
                                                     {inventoryItems.map(item => (
                                                         <SelectItem key={item.id} value={item.id}>{item.name} ({item.unit})</SelectItem>
                                                     ))}
@@ -460,7 +471,7 @@ const ManagePackages = () => {
 
      useEffect(() => {
         fetchPackageData();
-    }, []);
+    }, [toast]); // Added toast dependency
 
     const handleAddPackage = async (values: PackageFormValues) => {
         // The form ensures categoryId belongs to a 'paquete' type category implicitly
@@ -508,7 +519,7 @@ const ManagePackages = () => {
                                             <Select onValueChange={field.onChange} defaultValue={field.value}>
                                                 <FormControl><SelectTrigger><SelectValue placeholder="Selecciona categoría" /></SelectTrigger></FormControl>
                                                 <SelectContent>
-                                                     {packageCategories.length === 0 && <SelectItem value="" disabled>Crea una categoría tipo 'paquete' primero</SelectItem>}
+                                                     {packageCategories.length === 0 && <SelectItem value="NONE_PKG_CAT" disabled>Crea una categoría tipo paquete</SelectItem>}
                                                     {packageCategories.map(cat => (
                                                         <SelectItem key={cat.id} value={cat.id}>{cat.name}</SelectItem>
                                                     ))}
@@ -517,7 +528,7 @@ const ManagePackages = () => {
                                     )}/>
                                 </div>
                                 <FormField control={form.control} name="imageUrl" render={({ field }) => (
-                                    <FormItem><FormLabel>URL de Imagen (Opcional)</FormLabel><FormControl><Input type="url" placeholder="https://picsum.photos/..." {...field} /></FormControl><FormMessage /></FormItem>
+                                    <FormItem><FormLabel>URL de Imagen (Opcional)</FormLabel><FormControl><Input type="url" placeholder="https://i.pinimg.com/..." {...field} /></FormControl><FormMessage /></FormItem>
                                 )}/>
                                 <DialogFooter>
                                     <Button type="button" variant="outline" onClick={() => setIsAddDialogOpen(false)}>Cancelar</Button>
