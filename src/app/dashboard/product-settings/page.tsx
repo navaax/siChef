@@ -208,7 +208,7 @@ const ManageCategories = () => {
                                                         <AlertDialogHeader>
                                                         <AlertDialogTitle>¿Estás seguro?</AlertDialogTitle>
                                                         <AlertDialogDescription>
-                                                             Esta acción eliminará la categoría "{cat.name}" y todos los productos asociados a ella. Esta acción no se puede deshacer.
+                                                             Esta acción eliminará la categoría "{cat.name}" y potencialmente los productos asociados (dependiendo de la configuración de la base de datos). Esta acción no se puede deshacer.
                                                         </AlertDialogDescription>
                                                         </AlertDialogHeader>
                                                         <AlertDialogFooter>
@@ -277,7 +277,7 @@ const ManageCategories = () => {
                                 render={({ field }) => (
                                     <FormItem>
                                         <FormLabel>URL de Imagen (Opcional)</FormLabel>
-                                        <FormControl><Input type="url" placeholder="https://picsum.photos/..." {...field} /></FormControl>
+                                        <FormControl><Input type="url" placeholder="https://picsum.photos/..." {...field} value={field.value ?? ''} /></FormControl>
                                         <FormMessage />
                                     </FormItem>
                                 )}
@@ -410,16 +410,20 @@ const ManageProducts = () => {
         // Ensure inventory_item_id is handled correctly (null vs undefined)
         const dataToSave = {
             ...values,
-            inventory_item_id: values.inventory_item_id === '' ? null : values.inventory_item_id,
-            inventory_consumed_per_unit: values.inventory_item_id === '' ? null : (values.inventory_consumed_per_unit ?? 1),
+            // Ensure optional fields are null if empty, otherwise use the value
+             imageUrl: values.imageUrl || null,
+            inventory_item_id: values.inventory_item_id || null,
+             inventory_consumed_per_unit: values.inventory_item_id ? (values.inventory_consumed_per_unit ?? 1) : null,
         };
 
-        // console.log("Saving product:", dataToSave); // Log data being sent
+        console.log("Saving product:", JSON.stringify(dataToSave, null, 2)); // Log data being sent
 
         try {
              if (editingProduct) {
                 await updateProduct(editingProduct.id, dataToSave);
                 toast({ title: "Éxito", description: "Producto actualizado." });
+                 setIsFormOpen(false); // Close form after update
+                 fetchProductData(); // Refresh list
              } else {
                  // Create product first, then potentially keep dialog open to add modifiers
                 const newProduct = await addProduct(dataToSave as Omit<Product, 'id'>);
@@ -427,11 +431,9 @@ const ManageProducts = () => {
                 setEditingProduct(newProduct); // Update state to allow adding modifiers immediately
                 fetchProductData(); // Refresh list in background
                 // Do NOT close form here, allow adding modifiers
-                return;
+                // return; // Keep form open
              }
-            // If just updating, close the form
-            setIsFormOpen(false);
-            fetchProductData(); // Refresh list
+
         } catch (error) {
              const action = editingProduct ? 'actualizar' : 'añadir';
             console.error(`Error ${action} product:`, error); // Log detailed error
@@ -529,7 +531,7 @@ const ManageProducts = () => {
                                                     {prod.name}
                                                 </TableCell>
                                                 <TableCell>{category?.name || 'N/A'}</TableCell>
-                                                <TableCell className="text-right">${prod.price.toFixed(2)}</TableCell>
+                                                <TableCell className="text-right">{formatCurrency(prod.price)}</TableCell>
                                                 <TableCell>{invItem?.name || <span className="text-xs text-muted-foreground">N/A</span>}</TableCell>
                                                 <TableCell className="text-right">{invItem ? `${prod.inventory_consumed_per_unit ?? 1} ${invItem.unit}`: '-'}</TableCell>
                                                 <TableCell className="text-right">
@@ -592,6 +594,8 @@ const ManageProducts = () => {
                                         <Select onValueChange={field.onChange} value={field.value || ''}>
                                             <FormControl><SelectTrigger><SelectValue placeholder="Selecciona categoría" /></SelectTrigger></FormControl>
                                             <SelectContent>
+                                                 {/* Add a placeholder item */}
+                                                <SelectItem value="" disabled>Selecciona una categoría</SelectItem>
                                                 {productCategories.map(cat => (
                                                     <SelectItem key={cat.id} value={cat.id}>{cat.name} ({cat.type})</SelectItem>
                                                 ))}
@@ -611,7 +615,8 @@ const ManageProducts = () => {
                                            <FormLabel>Item de Inventario (Opcional)</FormLabel>
                                             <Select
                                                 onValueChange={(value) => field.onChange(value === "__NONE__" ? null : value)}
-                                                value={field.value ?? "__NONE__"} // Handle null for select
+                                                // Ensure value is a string or undefined for Select, handle null from form state
+                                                value={field.value ?? "__NONE__"}
                                             >
                                                <FormControl>
                                                    <SelectTrigger>
@@ -619,6 +624,7 @@ const ManageProducts = () => {
                                                    </SelectTrigger>
                                                </FormControl>
                                                <SelectContent>
+                                                    {/* Ensure __NONE__ option exists and is first */}
                                                    <SelectItem value="__NONE__">-- Ninguno --</SelectItem>
                                                    {inventoryItems.map(item => (
                                                        <SelectItem key={item.id} value={item.id}>
@@ -759,6 +765,7 @@ const AddModifierSlotForm: React.FC<AddModifierSlotFormProps> = ({ modifierCateg
                          <Select onValueChange={field.onChange} value={field.value || ''}>
                              <FormControl><SelectTrigger><SelectValue placeholder="Selecciona" /></SelectTrigger></FormControl>
                              <SelectContent>
+                                 <SelectItem value="" disabled>Selecciona categoría</SelectItem>
                                  {modifierCategories.length === 0 && <SelectItem value="NONE_MOD_CAT" disabled>Crea una cat. 'modificador'</SelectItem>}
                                  {modifierCategories.map(cat => ( <SelectItem key={cat.id} value={cat.id}>{cat.name}</SelectItem> ))}
                              </SelectContent>
@@ -777,6 +784,14 @@ const AddModifierSlotForm: React.FC<AddModifierSlotFormProps> = ({ modifierCateg
          </Form>
      );
 }
+
+// Helper function to format currency
+const formatCurrency = (amount: number | null | undefined): string => {
+    if (typeof amount !== 'number' || isNaN(amount)) {
+        return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(0);
+    }
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount);
+};
 
 
 const ManagePackages = () => {
@@ -839,14 +854,10 @@ const ManagePackages = () => {
 
      // Fetch items for the package when editing
      useEffect(() => {
-        if (editingPackage && isFormOpen) {
+        if (editingPackage && isFormOpen && editingPackage.id) { // Ensure ID exists before fetching
             const fetchItems = async () => {
                 setIsPackageItemsLoading(true);
                 try {
-                    // Ensure editingPackage.id is valid before fetching
-                    if (!editingPackage.id) {
-                        throw new Error("Package ID is missing.");
-                    }
                     const items = await getItemsForPackage(editingPackage.id);
                     setCurrentPackageItems(items);
                 } catch (error) {
@@ -859,7 +870,7 @@ const ManagePackages = () => {
             };
             fetchItems();
         } else {
-            setCurrentPackageItems([]); // Clear items when dialog closes or it's a new package
+            setCurrentPackageItems([]); // Clear items when dialog closes or it's a new package without ID
         }
      }, [editingPackage, isFormOpen, toast]);
 
@@ -884,39 +895,45 @@ const ManagePackages = () => {
 
     const handlePackageFormSubmit: SubmitHandler<PackageFormValues> = async (values) => {
         // The form ensures categoryId belongs to a 'paquete' type category implicitly
-        const dataToSave: Partial<Product> = values; // Omit<Product, 'id' | 'inventory_item_id' | 'inventory_consumed_per_unit'>
+        const dataToSave: Partial<Product> = {
+             ...values,
+             imageUrl: values.imageUrl || null, // Ensure null if empty
+        };
 
-        // let savedPackageId: string | undefined = editingPackage?.id; // Keep track of ID
+        console.log("Submitting package info:", JSON.stringify(dataToSave, null, 2));
 
         try {
-            if (editingPackage) {
+            if (editingPackage?.id) { // Check if editingPackage AND its id exist
+                console.log(`Updating package with ID: ${editingPackage.id}`);
                 await updateProduct(editingPackage.id, dataToSave); // Use updateProduct for packages too
                  toast({ title: "Éxito", description: "Paquete actualizado." });
-                 // Optionally refetch data if needed, but typically UI updates are sufficient
+                 // Update the local state to reflect changes without full refetch if desired
+                 setEditingPackage(prev => prev ? { ...prev, ...dataToSave } : null);
                  fetchPackageData(); // Refresh list in background
             } else {
                  // Create the package product FIRST
+                 console.log("Creating new package...");
                  const newPackage = await addProduct(dataToSave as Omit<Product, 'id'>); // Use addProduct service function
-                 // savedPackageId = newPackage.id; // Store the new ID
+                 console.log("New package created:", JSON.stringify(newPackage, null, 2));
                  toast({ title: "Éxito", description: "Paquete creado. Ahora puedes añadirle productos." });
                  // IMPORTANT: Update the editingPackage state with the newly created package
                  // This ensures the subsequent addItem calls have the correct package_id
                  setEditingPackage(newPackage);
-                 await fetchPackageData(); // Refresh list in background
+                 fetchPackageData(); // Refresh list in background
                  // DO NOT CLOSE DIALOG - User needs to add items
-                 return; // Prevent closing dialog
+                 // return; // Prevent closing dialog - Keep open
             }
 
-            // If editing, maybe close dialog after basic info save, or keep open
-            // Let's keep it open for consistency, user closes manually
-            // setIsFormOpen(false);
+            // Maybe keep open to allow adding items right away?
+            // setIsFormOpen(false); // Decide whether to close or keep open
 
         } catch (error) {
-            const action = editingPackage ? 'actualizar' : 'añadir';
+            const action = editingPackage?.id ? 'actualizar' : 'añadir';
             console.error(`Error ${action} package:`, error); // Log detailed error
             toast({ title: "Error", description: `No se pudo ${action} el paquete: ${error instanceof Error ? error.message : 'Error desconocido'}`, variant: "destructive" });
         }
     };
+
 
     const handleDeletePackage = async (id: string) => {
         setIsDeleting(id);
@@ -937,6 +954,7 @@ const ManagePackages = () => {
      const handleAddPackageItemSubmit: SubmitHandler<AddPackageItemFormValues> = async (values) => {
          // Ensure we have a valid package ID (either from editing or after creation)
          if (!editingPackage || !editingPackage.id) {
+             console.error("Cannot add item: No valid package ID. editingPackage:", editingPackage);
              toast({ title: "Error", description: "Guarda la información básica del paquete antes de añadir productos.", variant: "destructive" });
              return;
          }
@@ -949,11 +967,12 @@ const ManagePackages = () => {
              display_order: currentPackageItems.length, // Simple order append
          };
 
-         console.log("Attempting to add package item:", newItemData); // Log data being sent
+         console.log("Attempting to add package item:", JSON.stringify(newItemData, null, 2));
 
          setIsPackageItemsLoading(true);
          try {
              const addedItem = await addPackageItem(newItemData);
+             console.log("Successfully added item:", JSON.stringify(addedItem, null, 2));
              // Update local state optimistically or refetch
              const productName = allProducts.find(p => p.id === addedItem.product_id)?.name || 'Unknown';
              setCurrentPackageItems(prev => [...prev, { ...addedItem, product_name: productName }]);
@@ -1026,7 +1045,7 @@ const ManagePackages = () => {
                                                     {pkg.name}
                                                 </TableCell>
                                                  <TableCell>{category?.name || 'N/A'}</TableCell>
-                                                <TableCell className="text-right">${pkg.price.toFixed(2)}</TableCell>
+                                                <TableCell className="text-right">{formatCurrency(pkg.price)}</TableCell>
                                                 <TableCell className="text-right">
                                                      <Button variant="ghost" size="icon" className="h-7 w-7 mr-1" onClick={() => handleOpenForm(pkg)} title="Editar Paquete">
                                                          <Edit className="h-4 w-4" />
@@ -1087,6 +1106,7 @@ const ManagePackages = () => {
                                         <Select onValueChange={field.onChange} value={field.value || ''}>
                                             <FormControl><SelectTrigger><SelectValue placeholder="Selecciona categoría" /></SelectTrigger></FormControl>
                                             <SelectContent>
+                                                 <SelectItem value="" disabled>Selecciona categoría</SelectItem>
                                                  {packageCategories.length === 0 && <SelectItem value="NONE_PKG_CAT" disabled>Crea una categoría tipo paquete</SelectItem>}
                                                 {packageCategories.map(cat => (
                                                     <SelectItem key={cat.id} value={cat.id}>{cat.name}</SelectItem>
@@ -1107,7 +1127,7 @@ const ManagePackages = () => {
                         </form>
                      </Form>
 
-                     {/* Package Items Management (Only visible AFTER package created/saved) */}
+                     {/* Package Items Management (Only visible AFTER package created/saved OR if editing existing package) */}
                      {editingPackage?.id && ( // Only show if editingPackage has an ID
                         <div className="space-y-4">
                             <h4 className="text-lg font-semibold">Contenido del Paquete "{editingPackage.name}"</h4>
@@ -1124,6 +1144,7 @@ const ManagePackages = () => {
                                                 <Select onValueChange={field.onChange} value={field.value || ''}>
                                                     <FormControl><SelectTrigger><SelectValue placeholder="Selecciona producto" /></SelectTrigger></FormControl>
                                                     <SelectContent>
+                                                         <SelectItem value="" disabled>Selecciona producto</SelectItem>
                                                         {allProducts.map(prod => (
                                                             <SelectItem key={prod.id} value={prod.id}>{prod.name}</SelectItem>
                                                         ))}
@@ -1193,6 +1214,9 @@ const ManagePackages = () => {
                                 </Card>
 
                         </div>
+                     )}
+                     {!editingPackage?.id && (
+                        <p className="text-center text-sm text-muted-foreground mt-4">Guarda la información básica del paquete para poder añadirle contenido.</p>
                      )}
 
 

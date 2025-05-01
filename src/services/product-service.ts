@@ -201,8 +201,17 @@ export async function deleteCategory(id: string): Promise<void> {
 export async function addProduct(product: Omit<Product, 'id'>): Promise<Product> {
   const db = await getDb();
   const newProduct = { ...product, id: randomUUID() };
+  console.log("Adding Product (or Package):", JSON.stringify(newProduct, null, 2));
   await db.run('INSERT INTO products (id, name, price, categoryId, imageUrl, inventory_item_id, inventory_consumed_per_unit) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    newProduct.id, newProduct.name, newProduct.price, newProduct.categoryId, newProduct.imageUrl, newProduct.inventory_item_id, newProduct.inventory_consumed_per_unit);
+    newProduct.id,
+    newProduct.name,
+    newProduct.price,
+    newProduct.categoryId,
+    newProduct.imageUrl ?? null, // Ensure null if undefined
+    newProduct.inventory_item_id ?? null, // Ensure null if undefined
+    newProduct.inventory_consumed_per_unit ?? null // Ensure null if undefined
+    );
+  console.log(`Product/Package added with ID: ${newProduct.id}`);
   return newProduct;
 }
 
@@ -217,7 +226,7 @@ export async function updateProduct(id: string, updates: Partial<Omit<Product, '
      // Handle optional fields that might come as empty strings from forms
      if (key === 'imageUrl' && value === '') {
        validUpdates[key as keyof Product] = null; // Store null in DB if image URL is cleared
-     } else if (key === 'inventory_item_id' && (value === '' || value === null)) { // Check for null as well
+     } else if (key === 'inventory_item_id' && (value === '' || value === null || value === '__NONE__')) { // Check for null/empty/placeholder
         validUpdates[key as keyof Product] = null; // Unlink inventory item
         // Also nullify consumption if inventory is unlinked
         validUpdates['inventory_consumed_per_unit'] = null;
@@ -237,14 +246,21 @@ export async function updateProduct(id: string, updates: Partial<Omit<Product, '
 
 
    const fields = Object.keys(validUpdates);
-   if (fields.length === 0) return; // No valid updates provided
+   if (fields.length === 0) {
+        console.log("No valid updates provided for product", id);
+        return; // No valid updates provided
+   }
+
 
    query += fields.map(field => `${field} = ?`).join(', ');
    query += ' WHERE id = ?';
    params.push(...Object.values(validUpdates), id);
 
+   console.log("Updating Product:", query, params);
+
    const result = await db.run(query, params);
    if (result.changes === 0) throw new Error(`Product with id ${id} not found.`);
+   console.log("Product updated successfully:", id);
 }
 
 
@@ -269,33 +285,41 @@ export async function addModifierSlot(slot: Omit<ProductModifierSlot, 'id'>): Pr
 
 
 // --- Package Item CRUD ---
-export async function addPackageItem(item: Omit<PackageItem, 'id'>): Promise<PackageItem> {
+export async function addPackageItem(item: Omit<PackageItem, 'id' | 'product_name'>): Promise<PackageItem> {
   const db = await getDb();
   const newItem = { ...item, id: randomUUID() };
 
   // Debugging: Check if package_id and product_id exist before insert
-  console.log(`Attempting to add item to package: Package ID = ${newItem.package_id}, Product ID = ${newItem.product_id}`);
+  console.log(`[addPackageItem] Attempting to add item: PackageID=${newItem.package_id}, ProductID=${newItem.product_id}, Qty=${newItem.quantity}`);
   const packageExists = await db.get('SELECT id FROM products WHERE id = ?', newItem.package_id);
   const productExists = await db.get('SELECT id FROM products WHERE id = ?', newItem.product_id);
 
   if (!packageExists) {
-    console.error(`FOREIGN KEY ERROR PRE-CHECK: Package with ID ${newItem.package_id} does not exist in products table.`);
+    console.error(`[addPackageItem] FOREIGN KEY PRE-CHECK FAILED: Package with ID ${newItem.package_id} does not exist in products table.`);
     throw new Error(`Package with ID ${newItem.package_id} does not exist.`);
   }
   if (!productExists) {
-     console.error(`FOREIGN KEY ERROR PRE-CHECK: Product with ID ${newItem.product_id} does not exist in products table.`);
+     console.error(`[addPackageItem] FOREIGN KEY PRE-CHECK FAILED: Product with ID ${newItem.product_id} does not exist in products table.`);
     throw new Error(`Product with ID ${newItem.product_id} does not exist.`);
   }
-  console.log(`Pre-check passed: Package ${newItem.package_id} and Product ${newItem.product_id} exist.`);
+  console.log(`[addPackageItem] Pre-check passed: Package ${newItem.package_id} and Product ${newItem.product_id} exist.`);
 
   // Proceed with insert
   try {
     await db.run('INSERT INTO package_items (id, package_id, product_id, quantity, display_order) VALUES (?, ?, ?, ?, ?)',
       newItem.id, newItem.package_id, newItem.product_id, newItem.quantity, newItem.display_order);
-    console.log(`Successfully inserted package item with ID ${newItem.id}`);
-    return newItem;
+    console.log(`[addPackageItem] Successfully inserted package item with ID ${newItem.id}`);
+     // Return the newly created item structure (without product_name initially)
+     return {
+         id: newItem.id,
+         package_id: newItem.package_id,
+         product_id: newItem.product_id,
+         quantity: newItem.quantity,
+         display_order: newItem.display_order,
+         // product_name is added later in the UI/calling function
+     };
   } catch (error) {
-      console.error(`SQLITE INSERT ERROR for package_items: ID=${newItem.id}, PackageID=${newItem.package_id}, ProductID=${newItem.product_id}`, error);
+      console.error(`[addPackageItem] SQLITE INSERT ERROR for package_items: ID=${newItem.id}, PackageID=${newItem.package_id}, ProductID=${newItem.product_id}`, error);
       throw error; // Re-throw the original error
   }
 }
