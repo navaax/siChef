@@ -74,23 +74,17 @@ async function initializeDb(dbInstance: Database): Promise<void> {
       FOREIGN KEY (linked_category_id) REFERENCES categories(id) ON DELETE CASCADE
     );
 
-    CREATE TABLE IF NOT EXISTS packages (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        price REAL NOT NULL,
-        category_id TEXT NOT NULL, -- e.g., link to a 'Combos' or 'Packages' category
-        imageUrl TEXT,
-        FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE CASCADE
-    );
+    -- DEPRECATED: Packages table removed, packages are now products
+    -- CREATE TABLE IF NOT EXISTS packages ( ... );
 
-    -- Items included within a package
+    -- Items included within a package (which is now a product of type 'paquete')
     CREATE TABLE IF NOT EXISTS package_items (
         id TEXT PRIMARY KEY,
-        package_id TEXT NOT NULL,
+        package_id TEXT NOT NULL, -- This is the product_id of the package
         product_id TEXT NOT NULL,
         quantity INTEGER NOT NULL DEFAULT 1, -- How many of this product are in the package
         display_order INTEGER DEFAULT 0,
-        FOREIGN KEY (package_id) REFERENCES packages(id) ON DELETE CASCADE,
+        FOREIGN KEY (package_id) REFERENCES products(id) ON DELETE CASCADE, -- Link to the package product
         FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE -- If product deleted, package item is invalid
     );
 
@@ -102,10 +96,9 @@ async function initializeDb(dbInstance: Database): Promise<void> {
         min_quantity INTEGER NOT NULL,
         max_quantity INTEGER NOT NULL,
         FOREIGN KEY (package_item_id) REFERENCES package_items(id) ON DELETE CASCADE,
-        FOREIGN KEY (product_modifier_slot_id) REFERENCES product_modifier_slots(id) ON DELETE CASCADE
+        FOREIGN KEY (product_modifier_slot_id) REFERENCES product_modifier_slots(id) ON DELETE CASCADE,
+        UNIQUE (package_item_id, product_modifier_slot_id) -- Ensures only one override per slot per package item
     );
-
-    -- Removed old modifiers and product_modifiers tables as they are replaced by the slot system
 
   `);
   // console.log("Database schema initialized (if not exists).");
