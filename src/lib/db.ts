@@ -99,23 +99,58 @@ async function initializeDb(dbInstance: Database): Promise<void> {
 
   `);
 
-  // Attempt to add the 'type' column if it doesn't exist (for existing databases)
+  // Attempt to add the 'type' column to categories if it doesn't exist
   try {
     await dbInstance.exec(`
       ALTER TABLE categories ADD COLUMN type TEXT NOT NULL CHECK(type IN ('producto', 'modificador', 'paquete')) DEFAULT 'producto';
     `);
     console.log("Successfully added 'type' column to 'categories' table (if it didn't exist).");
   } catch (error: any) {
-    // Ignore error if column already exists (SQLite specific error message)
     if (error.message && error.message.includes('duplicate column name: type')) {
        // console.log("'type' column already exists in 'categories' table.");
     } else {
-      // Log other errors
-      console.error("Error attempting to add 'type' column:", error);
+      console.error("Error attempting to add 'type' column to categories:", error);
     }
   }
 
-  // console.log("Database schema initialized (if not exists).");
+  // Attempt to add 'inventory_item_id' column to products if it doesn't exist
+  try {
+    await dbInstance.exec(`
+      ALTER TABLE products ADD COLUMN inventory_item_id TEXT;
+    `);
+     // Add foreign key constraint separately (might fail if data violates it initially)
+     try {
+        await dbInstance.exec(`ALTER TABLE products ADD CONSTRAINT fk_inventory_item FOREIGN KEY (inventory_item_id) REFERENCES inventory_items(id) ON DELETE SET NULL;`);
+     } catch (fkError: any) {
+        // Ignore if constraint already exists or handle specific FK errors
+        if (!fkError.message.includes('duplicate constraint name')) {
+             console.warn("Could not add foreign key for inventory_item_id initially (data might need cleanup or constraint exists):", fkError.message);
+        }
+     }
+    console.log("Successfully added 'inventory_item_id' column to 'products' table (if it didn't exist).");
+  } catch (error: any) {
+    if (error.message && error.message.includes('duplicate column name: inventory_item_id')) {
+       // console.log("'inventory_item_id' column already exists in 'products' table.");
+    } else {
+      console.error("Error attempting to add 'inventory_item_id' column to products:", error);
+    }
+  }
+
+  // Attempt to add 'inventory_consumed_per_unit' column to products if it doesn't exist
+  try {
+    await dbInstance.exec(`
+      ALTER TABLE products ADD COLUMN inventory_consumed_per_unit REAL DEFAULT 1;
+    `);
+    console.log("Successfully added 'inventory_consumed_per_unit' column to 'products' table (if it didn't exist).");
+  } catch (error: any) {
+    if (error.message && error.message.includes('duplicate column name: inventory_consumed_per_unit')) {
+       // console.log("'inventory_consumed_per_unit' column already exists in 'products' table.");
+    } else {
+      console.error("Error attempting to add 'inventory_consumed_per_unit' column to products:", error);
+    }
+  }
+
+  // console.log("Database schema initialized/updated.");
 }
 
 // Example of how to close the database (optional, depends on app lifecycle)
