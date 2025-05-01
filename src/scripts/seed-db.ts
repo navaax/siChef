@@ -6,7 +6,7 @@ import { randomUUID } from 'crypto';
 interface Category {
   id: string;
   name: string;
-  type: 'producto' | 'modificador' | 'paquete';
+  type: 'producto' | 'modificador' | 'paquete'; // Ensure type is included
   imageUrl?: string;
 }
 
@@ -37,17 +37,11 @@ interface ProductModifierSlot {
     max_quantity: number;
 }
 
-interface Package {
-    id: string;
-    name: string;
-    price: number;
-    category_id: string;
-    imageUrl?: string;
-}
+// Package interface removed as it's now a Product type
 
 interface PackageItem {
     id: string;
-    package_id: string;
+    package_id: string; // This is a product ID (of type 'paquete')
     product_id: string;
     quantity: number;
     display_order: number;
@@ -162,7 +156,7 @@ async function seedDatabase() {
     console.log('Inserting categories...');
     const categoryStmt = await db.prepare('INSERT INTO categories (id, name, type, imageUrl) VALUES (?, ?, ?, ?)');
     for (const category of categories) {
-      await categoryStmt.run(category.id, category.name, category.type, category.imageUrl);
+      await categoryStmt.run(category.id, category.name, category.type, category.imageUrl); // Ensure type is inserted
     }
     await categoryStmt.finalize();
     console.log(`${categories.length} categories inserted.`);
@@ -204,15 +198,6 @@ async function seedDatabase() {
     await slotStmt.finalize();
     console.log(`${modifierSlots.length} modifier slots inserted.`);
 
-
-    // // Insert Packages - Now handled within Products table
-    // console.log('Inserting packages...');
-    // const packageStmt = await db.prepare('INSERT INTO packages (id, name, price, category_id, imageUrl) VALUES (?, ?, ?, ?, ?)');
-    // for (const pkg of packages) {
-    //     await packageStmt.run(pkg.id, pkg.name, pkg.price, pkg.category_id, pkg.imageUrl);
-    // }
-    // await packageStmt.finalize();
-    // console.log(`${packages.length} packages inserted.`);
 
     // Insert Package Items
     console.log('Inserting package items...');

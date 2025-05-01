@@ -38,7 +38,7 @@ async function initializeDb(dbInstance: Database): Promise<void> {
     CREATE TABLE IF NOT EXISTS categories (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
-      type TEXT NOT NULL CHECK(type IN ('producto', 'modificador', 'paquete')) DEFAULT 'producto', -- Added type
+      type TEXT NOT NULL CHECK(type IN ('producto', 'modificador', 'paquete')) DEFAULT 'producto', -- Added type column with check constraint
       imageUrl TEXT
     );
 
@@ -73,9 +73,6 @@ async function initializeDb(dbInstance: Database): Promise<void> {
       FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE,
       FOREIGN KEY (linked_category_id) REFERENCES categories(id) ON DELETE CASCADE
     );
-
-    -- DEPRECATED: Packages table removed, packages are now products
-    -- CREATE TABLE IF NOT EXISTS packages ( ... );
 
     -- Items included within a package (which is now a product of type 'paquete')
     CREATE TABLE IF NOT EXISTS package_items (

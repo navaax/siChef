@@ -20,7 +20,8 @@ import { randomUUID } from 'crypto'; // Import randomUUID
 export async function getCategories(type?: Category['type']): Promise<Category[]> {
   const db = await getDb();
   try {
-    let query = 'SELECT * FROM categories';
+    // Ensure the query selects the 'type' column
+    let query = 'SELECT id, name, type, imageUrl FROM categories';
     const params: any[] = [];
     if (type) {
         query += ' WHERE type = ?';
@@ -122,11 +123,6 @@ export async function getModifierSlotsForProduct(productId: string): Promise<Pro
   }
 }
 
-// DEPRECATED: getPackageById is now equivalent to getProductById
-// export async function getPackageById(packageId: string): Promise<Product | null> {
-//     return getProductById(packageId);
-// }
-
 /**
  * Fetches the items (products) included in a specific package definition.
  * @param packageId The ID of the package (which is a product ID).
@@ -179,6 +175,7 @@ export async function getOverridesForPackageItem(packageItemId: string): Promise
 export async function addCategory(category: Omit<Category, 'id'>): Promise<Category> {
   const db = await getDb();
   const newCategory = { ...category, id: randomUUID() };
+  // Ensure 'type' is included in the INSERT statement
   await db.run('INSERT INTO categories (id, name, type, imageUrl) VALUES (?, ?, ?, ?)',
     newCategory.id, newCategory.name, newCategory.type, newCategory.imageUrl);
   return newCategory;
@@ -213,7 +210,7 @@ export async function addPackageItem(item: Omit<PackageItem, 'id'>): Promise<Pac
 
 // Example: Add/Update Modifier Override for Package Item
 // NOTE: Requires adding a UNIQUE constraint in db initialization:
-// ALTER TABLE package_item_modifier_slot_overrides ADD CONSTRAINT unique_package_item_slot UNIQUE (package_item_id, product_modifier_slot_id);
+// UNIQUE (package_item_id, product_modifier_slot_id)
 export async function setPackageItemOverride(override: Omit<PackageItemModifierSlotOverride, 'id'>): Promise<PackageItemModifierSlotOverride> {
   const db = await getDb();
   const newId = randomUUID();
@@ -260,6 +257,7 @@ export async function deletePackageItemOverride(id: string): Promise<void> {
 // Example: Update Category
 // export async function updateCategory(id: string, updates: Partial<Omit<Category, 'id'>>): Promise<void> {
 //   const db = await getDb();
+//   // Ensure 'type' is included if being updated
 //   const fields = Object.keys(updates).map(key => `${key} = ?`).join(', ');
 //   const values = Object.values(updates);
 //   await db.run(`UPDATE categories SET ${fields} WHERE id = ?`, [...values, id]);

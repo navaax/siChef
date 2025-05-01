@@ -5,7 +5,7 @@
 export interface Category {
   id: string;
   name: string;
-  type: 'producto' | 'modificador' | 'paquete'; // Added type
+  type: 'producto' | 'modificador' | 'paquete'; // Ensure type is included
   imageUrl?: string; // Optional in DB
 }
 
@@ -36,15 +36,6 @@ export interface ProductModifierSlot {
     min_quantity: number;
     max_quantity: number;
 }
-
-// DEPRECATED: Package is now just a Product with type 'paquete'
-// export interface Package {
-//     id: string;
-//     name: string;
-//     price: number;
-//     category_id: string; // e.g., link to a 'Combos' or 'Packages' category
-//     imageUrl?: string;
-// }
 
 // Represents an item within a package
 export interface PackageItem {
@@ -141,5 +132,3 @@ export interface SavedOrder {
   paidAmount?: number; // Cash specific
   changeGiven?: number; // Cash specific
 }
-
-```
