@@ -1,4 +1,4 @@
-{'use client';
+'use client';
 
 import * as React from 'react';
 import { useState, useEffect, useCallback, useMemo } from 'react';
@@ -37,13 +37,15 @@ import {
 } from '@/services/product-service';
 
 // Importar tipos
-import type { Product, Package, PackageItem, PackageItemModifierSlotOverride, ProductModifierSlot } from '@/types/product-types';
+import type { Product, Package, PackageItem, PackageItemModifierSlotOverride, ProductModifierSlot, Category } from '@/types/product-types';
 
 // --- Esquemas Zod ---
 const packageSchema = z.object({
     name: z.string().min(1, "Nombre es requerido"),
     price: z.coerce.number().min(0, "Precio debe ser positivo"),
     imageUrl: z.string().url("Debe ser una URL válida").optional().or(z.literal('')),
+    // Nuevo campo para categoría de UI
+    category_id: z.string().nullable().optional(), // Permite nulo o string
 });
 type PackageFormValues = z.infer<typeof packageSchema>;
 
@@ -66,20 +68,28 @@ type OverrideFormValues = z.infer<typeof overrideSchema>;
 // --- Props del Componente ---
 interface ManagePackagesProps {
     allProducts: Product[]; // Todos los productos disponibles para añadir
+    allCategories: Category[]; // Todas las categorías para el selector de UI
     initialPackages: Package[];
     onDataChange: () => Promise<void>; // Callback para refrescar datos
+    // Prop para controlar visibilidad del diálogo
+    isDialogOpen: boolean;
+    onDialogClose: () => void;
+    initialEditingPackage: Package | null;
 }
 
 
 // --- Componente Principal ---
 const ManagePackages: React.FC<ManagePackagesProps> = ({
     allProducts,
+    allCategories,
     initialPackages,
-    onDataChange
+    onDataChange,
+    isDialogOpen,
+    onDialogClose,
+    initialEditingPackage,
 }) => {
     const [packages, setPackages] = useState<Package[]>(initialPackages);
-    const [isFormOpen, setIsFormOpen] = useState(false);
-    const [editingPackage, setEditingPackage] = useState<Package | null>(null);
+    const [editingPackage, setEditingPackage] = useState<Package | null>(initialEditingPackage);
     const [isSubmitting, setIsSubmitting] = useState(false); // Estado de carga del form principal
     const [isDeleting, setIsDeleting] = useState<string | null>(null); // Estado de carga de eliminación
     const [currentPackageItems, setCurrentPackageItems] = useState<PackageItem[]>([]);
@@ -90,39 +100,43 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
     const [currentItemOverrides, setCurrentItemOverrides] = useState<PackageItemModifierSlotOverride[]>([]); // Overrides existentes para ese item
     const { toast } = useToast();
 
+     // Router and Pathname
+     const router = useRouter();
+     const pathname = usePathname();
+     const replace = router.replace; // Definir replace
+
+
     // Actualizar estado local si los datos iniciales cambian
     useEffect(() => {
         setPackages(initialPackages);
     }, [initialPackages]);
 
-    // Usar useSearchParams para abrir el diálogo si hay un ID en la URL
-    const searchParams = useSearchParams();
-    const router = useRouter();
-    const pathname = usePathname();
+     // Sincronizar el estado de edición con la prop inicial
+     useEffect(() => {
+         setEditingPackage(initialEditingPackage);
+         if (initialEditingPackage) {
+             packageForm.reset({
+                 name: initialEditingPackage.name,
+                 price: initialEditingPackage.price,
+                 imageUrl: initialEditingPackage.imageUrl || '',
+                 category_id: initialEditingPackage.category_id || null
+             });
+             fetchPackageItems(initialEditingPackage.id);
+         } else {
+              packageForm.reset({ name: '', price: 0, imageUrl: '', category_id: null });
+              setCurrentPackageItems([]);
+         }
+     // eslint-disable-next-line react-hooks/exhaustive-deps
+     }, [initialEditingPackage]);
 
-    // Abrir automáticamente el diálogo si hay un ID de paquete en la URL
-    useEffect(() => {
-        const pkgId = searchParams.get('editPackage');
-        if (pkgId) {
-            const pkgToEdit = initialPackages.find(p => p.id === pkgId);
-            if (pkgToEdit) {
-                console.log(`[ManagePackages] Abriendo diálogo para editar paquete ID: ${pkgId}`);
-                openDialog(pkgToEdit);
-            } else {
-                console.warn(`[ManagePackages] Paquete con ID ${pkgId} no encontrado en initialPackages.`);
-                // Limpiar la URL si el paquete no existe
-                const newParams = new URLSearchParams(searchParams.toString());
-                newParams.delete('editPackage');
-                router.replace(`${pathname}?${newParams.toString()}`);
-            }
-        }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [searchParams, initialPackages, router, pathname]); // Solo se ejecuta si cambia searchParams o initialPackages
+
+    // Filtrar categorías tipo 'paquete' para el selector de UI
+    const packageUICategories = useMemo(() => allCategories.filter(c => c.type === 'paquete'), [allCategories]);
 
 
     const packageForm = useForm<PackageFormValues>({
         resolver: zodResolver(packageSchema),
-        defaultValues: { name: '', price: 0, imageUrl: '' },
+        defaultValues: { name: '', price: 0, imageUrl: '', category_id: null },
     });
 
     const addItemForm = useForm<AddPackageItemFormValues>({
@@ -149,63 +163,34 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
         }
     }, [toast]);
 
-    // Abrir el diálogo de edición/creación
-    const openDialog = (pkg: Package | null = null) => {
-        setEditingPackage(pkg);
-        setCurrentPackageItems([]); // Limpiar items al abrir/cambiar paquete
-        addItemForm.reset();
-        setEditingOverridesForItem(null); // Limpiar edición de overrides
 
-        if (pkg) {
-            packageForm.reset({ name: pkg.name, price: pkg.price, imageUrl: pkg.imageUrl || '' });
-            fetchPackageItems(pkg.id); // Cargar items si es edición
-            // Actualizar URL sin recargar página
-            const newParams = new URLSearchParams(searchParams.toString());
-            newParams.set('editPackage', pkg.id);
-            router.replace(`${pathname}?${newParams.toString()}`);
-        } else {
-            packageForm.reset({ name: '', price: 0, imageUrl: '' });
-            // Limpiar ID de la URL al crear nuevo
-            const newParams = new URLSearchParams(searchParams.toString());
-            newParams.delete('editPackage');
-            router.replace(`${pathname}?${newParams.toString()}`);
-        }
-        setIsFormOpen(true);
-    };
-
-     // Cerrar el diálogo y limpiar URL
-     const closeDialog = () => {
-        setIsFormOpen(false);
-        setEditingPackage(null);
-        setCurrentPackageItems([]);
-        setEditingOverridesForItem(null);
-        const newParams = new URLSearchParams(searchParams.toString());
-        newParams.delete('editPackage');
-        router.replace(`${pathname}?${newParams.toString()}`);
-    };
-
-
-    // Guardar/Actualizar información básica del paquete
-    const handlePackageFormSubmit: SubmitHandler<PackageFormValues> = async (values) => {
+     // Guardar/Actualizar información básica del paquete
+     const handlePackageFormSubmit: SubmitHandler<PackageFormValues> = useCallback(async (values) => {
         setIsSubmitting(true);
-        const dataToSave: Partial<Package> = { ...values, imageUrl: values.imageUrl || null };
+        const dataToSave: Omit<Package, 'id'> = {
+            ...values,
+            imageUrl: values.imageUrl || null,
+            category_id: values.category_id || null,
+        };
         console.log("[ManagePackages] Guardando info paquete:", JSON.stringify(dataToSave, null, 2));
 
         try {
             let updatedPackage: Package;
+            let action = 'creado';
             if (editingPackage?.id) {
+                action = 'actualizado';
                 await updatePackageService(editingPackage.id, dataToSave);
-                updatedPackage = { ...editingPackage, ...dataToSave };
-                toast({ title: "Éxito", description: "Paquete actualizado." });
+                updatedPackage = { ...editingPackage, ...dataToSave, items: currentPackageItems }; // Conservar items
             } else {
-                updatedPackage = await addPackageService(dataToSave as Omit<Package, 'id'>);
-                toast({ title: "Éxito", description: "Paquete creado. Ahora puedes añadirle productos." });
-                // Actualizar URL con el nuevo ID
-                const newParams = new URLSearchParams(searchParams.toString());
-                newParams.set('editPackage', updatedPackage.id);
-                router.replace(`${pathname}?${newParams.toString()}`);
+                updatedPackage = await addPackageService(dataToSave);
+                updatedPackage.items = []; // Nuevo paquete no tiene items aún
+                 // Actualizar URL con el nuevo ID después de crear
+                 const currentParams = new URLSearchParams(window.location.search);
+                 currentParams.set('editPackage', updatedPackage.id);
+                 replace(`${pathname}?${currentParams.toString()}`);
             }
-            setEditingPackage(updatedPackage); // Actualizar estado con el paquete guardado/creado (incluye ID)
+            toast({ title: "Éxito", description: `Paquete ${action}.` });
+            setEditingPackage(updatedPackage); // Actualizar estado de edición
             await onDataChange(); // Refrescar lista principal en el padre
         } catch (error) {
             const action = editingPackage?.id ? 'actualizar' : 'añadir';
@@ -214,25 +199,8 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
         } finally {
             setIsSubmitting(false);
         }
-    };
+    }, [editingPackage, currentPackageItems, replace, pathname, toast, onDataChange]);
 
-    // Eliminar paquete completo
-    const handleDeletePackage = async (id: string, name: string) => {
-        setIsDeleting(id);
-        try {
-            await deletePackageService(id);
-            toast({ title: "Éxito", description: `Paquete "${name}" eliminado.`, variant: "destructive" });
-            await onDataChange();
-             if (editingPackage?.id === id) {
-                 closeDialog(); // Cerrar diálogo si se elimina el paquete en edición
-             }
-        } catch (error) {
-             console.error(`[ManagePackages] Error al eliminar paquete ${id}:`, error);
-            toast({ variant: "destructive", title: 'Error al Eliminar', description: `No se pudo eliminar el paquete. ${error instanceof Error ? error.message : ''}` });
-        } finally {
-            setIsDeleting(null);
-        }
-    };
 
     // Añadir un producto al paquete actual
     const handleAddPackageItemSubmit: SubmitHandler<AddPackageItemFormValues> = async (values) => {
@@ -368,75 +336,9 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
 
 
      return (
-        <div>
-             <div className="flex justify-between items-center mb-4">
-                 <h3 className="text-xl font-semibold">Gestionar Paquetes</h3>
-                 <Button size="sm" onClick={() => openDialog()}>
-                     <PlusCircle className="mr-2 h-4 w-4" /> Añadir Paquete
-                 </Button>
-             </div>
-              <p className="text-muted-foreground mb-4">Crea y edita paquetes/combos. Añade productos y configura modificadores específicos para el paquete.</p>
-              <Card>
-                 <CardContent className="p-0">
-                    <ScrollArea className="h-[60vh]">
-                        <Table>
-                           <TableHeader className="sticky top-0 bg-background z-10 shadow-sm">
-                                <TableRow>
-                                    <TableHead>Nombre</TableHead>
-                                    <TableHead className="text-right">Precio</TableHead>
-                                    <TableHead className="text-right">Acciones</TableHead>
-                                </TableRow>
-                             </TableHeader>
-                             <TableBody>
-                                {packages.length === 0 ? (
-                                     <TableRow><TableCell colSpan={3} className="text-center h-24">No hay paquetes.</TableCell></TableRow>
-                                 ) : (
-                                    packages.map(pkg => (
-                                        <TableRow key={pkg.id}>
-                                            <TableCell className="font-medium flex items-center gap-2">
-                                                {pkg.imageUrl ? (
-                                                    <Image src={pkg.imageUrl} alt={pkg.name} width={32} height={24} className="rounded object-cover" data-ai-hint="package combo deal image" unoptimized/>
-                                                 ) : <div className='w-8 h-6 bg-muted rounded'></div>}
-                                                {pkg.name}
-                                            </TableCell>
-                                            <TableCell className="text-right">{formatCurrency(pkg.price)}</TableCell>
-                                            <TableCell className="text-right">
-                                                 <Button variant="ghost" size="icon" className="h-7 w-7 mr-1" onClick={() => openDialog(pkg)} title="Editar Paquete">
-                                                     <Edit className="h-4 w-4" />
-                                                 </Button>
-                                                 <AlertDialog>
-                                                    <AlertDialogTrigger asChild>
-                                                         <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" disabled={isDeleting === pkg.id} title="Eliminar Paquete">
-                                                             {isDeleting === pkg.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
-                                                         </Button>
-                                                    </AlertDialogTrigger>
-                                                     <AlertDialogContent>
-                                                        <AlertDialogHeader>
-                                                        <AlertDialogTitle>¿Estás seguro?</AlertDialogTitle>
-                                                        <AlertDialogDescription>
-                                                             Esta acción eliminará el paquete "{pkg.name}" y su contenido definido. No se puede deshacer.
-                                                        </AlertDialogDescription>
-                                                        </AlertDialogHeader>
-                                                        <AlertDialogFooter>
-                                                        <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                                                        <AlertDialogAction onClick={() => handleDeletePackage(pkg.id, pkg.name)} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-                                                            Eliminar
-                                                        </AlertDialogAction>
-                                                        </AlertDialogFooter>
-                                                    </AlertDialogContent>
-                                                 </AlertDialog>
-                                            </TableCell>
-                                        </TableRow>
-                                    ))
-                                )}
-                             </TableBody>
-                        </Table>
-                    </ScrollArea>
-                 </CardContent>
-              </Card>
-
-               {/* Dialogo Añadir/Editar Paquete */}
-              <Dialog open={isFormOpen} onOpenChange={(isOpen) => { if (!isOpen) closeDialog(); else setIsFormOpen(true); }}>
+         <>
+             {/* Dialogo Añadir/Editar Paquete */}
+              <Dialog open={isDialogOpen} onOpenChange={(isOpen) => { if (!isOpen) onDialogClose(); }}>
                  <DialogContent className="sm:max-w-[800px] max-h-[90vh] flex flex-col">
                      <DialogHeader>
                          <DialogTitle>{editingPackage ? 'Editar Paquete' : 'Añadir Nuevo Paquete'}</DialogTitle>
@@ -455,6 +357,18 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
                                 <div className="grid grid-cols-2 gap-4">
                                     <FormField control={packageForm.control} name="price" render={({ field }) => (
                                         <FormItem><FormLabel>Precio del Paquete</FormLabel><FormControl><Input type="number" step="0.01" placeholder="0.00" {...field} /></FormControl><FormMessage /></FormItem>
+                                    )}/>
+                                     <FormField control={packageForm.control} name="category_id" render={({ field }) => (
+                                        <FormItem><FormLabel>Categoría (UI)</FormLabel>
+                                            <Select onValueChange={(value) => field.onChange(value === "__NONE__" ? null : value)} value={field.value ?? "__NONE__"}>
+                                                <FormControl><SelectTrigger><SelectValue placeholder="Selecciona para agrupar" /></SelectTrigger></FormControl>
+                                                <SelectContent>
+                                                     <SelectItem value="__NONE__">-- Ninguna --</SelectItem>
+                                                    {packageUICategories.map(cat => (
+                                                        <SelectItem key={cat.id} value={cat.id}>{cat.name}</SelectItem>
+                                                    ))}
+                                                </SelectContent>
+                                            </Select><FormMessage /></FormItem>
                                     )}/>
                                 </div>
                                 <FormField control={packageForm.control} name="imageUrl" render={({ field }) => (
@@ -481,9 +395,11 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
                                                     <FormControl><SelectTrigger><SelectValue placeholder="Selecciona producto" /></SelectTrigger></FormControl>
                                                     <SelectContent>
                                                         <SelectItem value="__NONE__" disabled>Selecciona producto</SelectItem>
-                                                        {allProducts.map(prod => (
-                                                            <SelectItem key={prod.id} value={prod.id}>{prod.name}</SelectItem>
-                                                        ))}
+                                                        {allProducts
+                                                             .filter(p => p.categoryId && allCategories.find(c => c.id === p.categoryId)?.type !== 'paquete') // Excluir paquetes de ser añadidos a sí mismos
+                                                             .map(prod => (
+                                                                <SelectItem key={prod.id} value={prod.id}>{prod.name}</SelectItem>
+                                                            ))}
                                                     </SelectContent>
                                                 </Select> <FormMessage />
                                             </FormItem>
@@ -614,7 +530,7 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
                                                              >
                                                                 <Save className="h-4 w-4"/>
                                                              </Button>
-                                                             {isOverridden && (
+                                                             {isOverridden && currentOverride && ( // Added check for currentOverride
                                                                 <Button type="button" variant="ghost" size="sm" className="text-destructive hover:text-destructive" onClick={() => handleDeleteOverride(currentOverride.id)} disabled={isOverridesLoading} title="Eliminar Regla">
                                                                     <Trash2 className="h-4 w-4"/>
                                                                 </Button>
@@ -636,8 +552,7 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
                     </DialogFooter>
                 </DialogContent>
               </Dialog>
-
-        </div>
+         </>
      );
 };
 
