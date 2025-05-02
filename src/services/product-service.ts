@@ -90,15 +90,21 @@ export async function getModifiersByCategory(categoryId: string): Promise<Produc
 
 
 /**
- * Obtiene todos los paquetes definidos.
+ * Obtiene todos los paquetes definidos desde la tabla 'packages'.
  * @returns Una promesa que resuelve a un array de objetos Package.
  */
 export async function getAllPackages(): Promise<Package[]> {
     const db = await getDb();
     try {
-        const query = 'SELECT p.*, c.name as categoryName FROM packages p LEFT JOIN categories c ON p.category_id = c.id ORDER BY p.name ASC';
+        // Se une con categories opcionalmente para obtener el nombre de la categoría UI
+        const query = `
+            SELECT p.*, c.name as categoryName
+            FROM packages p
+            LEFT JOIN categories c ON p.category_id = c.id
+            ORDER BY p.name ASC
+        `;
         console.log(`[getAllPackages] Query: ${query}`);
-        const packages = await db.all<Package[]>(query);
+        const packages = await db.all<Package[]>(query); // No se necesitan parámetros aquí
         console.log(`[getAllPackages] Found ${packages.length} packages.`);
         return packages;
     } catch (error) {
@@ -107,8 +113,9 @@ export async function getAllPackages(): Promise<Package[]> {
     }
 }
 
+
 /**
- * Obtiene paquetes asociados a una categoría específica (para UI).
+ * Obtiene paquetes asociados a una categoría UI específica (de la tabla 'packages').
  * @param categoryId El ID de la categoría (usualmente tipo 'paquete').
  * @returns Una promesa que resuelve a un array de objetos Package.
  */
@@ -126,8 +133,8 @@ export async function getPackagesByCategoryUI(categoryId: string): Promise<Packa
     console.log(`[getPackagesByCategoryUI] Found ${packages.length} packages for category ${categoryId}.`);
     return packages;
   } catch (error) {
-    console.error(`[getPackagesByCategoryUI] Error fetching packages for category ${categoryId}:`, error);
-    throw new Error(`Falló la obtención de paquetes para la categoría ${categoryId}. Error original: ${error instanceof Error ? error.message : error}`);
+    console.error(`[getPackagesByCategoryUI] Error fetching packages for UI category ${categoryId}:`, error);
+    throw new Error(`Falló la obtención de paquetes para la categoría UI ${categoryId}. Error original: ${error instanceof Error ? error.message : error}`);
   }
 }
 
@@ -152,7 +159,7 @@ export async function getProductById(productId: string): Promise<Product | null>
 }
 
 /**
- * Obtiene un solo paquete por su ID.
+ * Obtiene un solo paquete por su ID (de la tabla 'packages').
  * @param packageId El ID del paquete.
  * @returns Una promesa que resuelve a un objeto Package o null si no se encuentra.
  */
@@ -197,7 +204,7 @@ export async function getModifierSlotsForProduct(productId: string): Promise<Pro
 
 /**
  * Obtiene los items (productos) incluidos en la definición de un paquete específico.
- * @param packageId El ID del paquete.
+ * @param packageId El ID del paquete (de la tabla 'packages').
  * @returns Una promesa que resuelve a un array de objetos PackageItem, incluyendo el nombre del producto.
  */
 export async function getItemsForPackage(packageId: string): Promise<PackageItem[]> {
@@ -371,8 +378,9 @@ export async function deleteProduct(id: string): Promise<void> {
         const query = 'DELETE FROM products WHERE id = ?';
          console.log(`[deleteProduct] Query: ${query}, Params: [${id}]`);
         const result = await db.run(query, [id]);
-        if (result.changes === 0) throw new Error(`Producto con id ${id} no encontrado.`);
-         console.log(`[deleteProduct] Product ${id} deleted successfully.`);
+        // No lanzar error si el producto no se encuentra, simplemente no se eliminó nada.
+        // if (result.changes === 0) throw new Error(`Producto con id ${id} no encontrado.`);
+         console.log(`[deleteProduct] Product ${id} deleted successfully (or did not exist). Changes: ${result.changes}`);
     } catch (error) {
          console.error(`[deleteProduct] Error deleting product ${id}:`, error);
         throw new Error(`Falló al eliminar producto. Error original: ${error instanceof Error ? error.message : error}`);
@@ -384,11 +392,14 @@ export async function addPackage(pkg: Omit<Package, 'id'>): Promise<Package> {
     const db = await getDb();
     const newPackage = { ...pkg, id: randomUUID() };
     try {
-        // Validar que category_id existe (si se proporciona)
+        // Validar que category_id existe (si se proporciona) y es de tipo 'paquete'
         if (newPackage.category_id) {
              const category = await db.get('SELECT type FROM categories WHERE id = ?', [newPackage.category_id]);
              if (!category) {
                  throw new Error(`Categoría con ID ${newPackage.category_id} no encontrada.`);
+             }
+             if (category.type !== 'paquete') {
+                 throw new Error(`La categoría UI '${newPackage.category_id}' no es de tipo 'paquete'.`);
              }
         }
 
@@ -420,12 +431,15 @@ export async function updatePackage(id: string, updates: Partial<Omit<Package, '
         }
     });
 
-    // Validar categoría si se proporciona
+    // Validar categoría si se proporciona y no es null
     if (validUpdates.category_id) {
         const category = await db.get('SELECT type FROM categories WHERE id = ?', [validUpdates.category_id]);
         if (!category) {
             throw new Error(`Categoría con ID ${validUpdates.category_id} no encontrada.`);
         }
+         if (category.type !== 'paquete') {
+             throw new Error(`La categoría UI '${validUpdates.category_id}' no es de tipo 'paquete'.`);
+         }
     }
 
     const fields = Object.keys(validUpdates);
@@ -739,43 +753,27 @@ export async function updatePackageItemsAndOverrides(packageId: string, itemsToS
  * Útil para poblar listas donde ambos tipos de items pueden ser seleccionados.
  * @returns Una promesa que resuelve a un array de objetos que pueden ser Product o Package, con un campo 'itemType'.
  */
-export async function getAllProductList(): Promise<(Product | Package) & { itemType: 'product' | 'package' }[]> {
+export async function getAllProductList(): Promise<Product[]> {
     const db = await getDb();
     try {
-        // Obtener productos (solo tipo 'producto')
+        // Obtener productos (incluyendo modificadores por ahora, ya que no hay campo que los distinga en 'products')
+        // Podríamos filtrar por category.type si fuera necesario, pero la lista completa puede ser útil
         const productsQuery = `
-            SELECT p.*, c.name as categoryName, 'product' as itemType
+            SELECT p.*, c.name as categoryName
             FROM products p
             JOIN categories c ON p.categoryId = c.id
-            WHERE c.type = 'producto'
+            ORDER BY c.name, p.name
         `;
-        // Obtener paquetes
-        const packagesQuery = `
-             SELECT pk.*, c.name as categoryName, 'package' as itemType
-             FROM packages pk
-             LEFT JOIN categories c ON pk.category_id = c.id -- Left join si la categoría es opcional
-         `;
-        console.log(`[getAllProductList] Fetching products and packages`);
-        const [products, packages] = await Promise.all([
-             db.all<any[]>(productsQuery), // Usar any[] temporalmente
-             db.all<any[]>(packagesQuery)
-        ]);
-        console.log(`[getAllProductList] Found ${products.length} products and ${packages.length} packages.`);
-
-        // Asegurar que la estructura coincida con la interfaz esperada
-        const typedProducts = products as (Product & { itemType: 'product' })[];
-        const typedPackages = packages as (Package & { itemType: 'package' })[];
-
-
-        // Combinar las listas
-        const combinedList = [...typedProducts, ...typedPackages];
-
-        return combinedList;
+        console.log(`[getAllProductList] Fetching all products/modifiers.`);
+        const products = await db.all<Product[]>(productsQuery);
+        console.log(`[getAllProductList] Found ${products.length} products/modifiers.`);
+        return products;
     } catch (error) {
-        console.error('[getAllProductList] Error fetching combined product list:', error);
-        throw new Error(`Falló la obtención de la lista combinada de productos. Error original: ${error instanceof Error ? error.message : error}`);
+        console.error('[getAllProductList] Error fetching product list:', error);
+        throw new Error(`Falló la obtención de la lista de productos. Error original: ${error instanceof Error ? error.message : error}`);
     }
 }
+
 
 // Helper function (if needed elsewhere)
 export async function getCategoryById(categoryId: string): Promise<Category | null> {
