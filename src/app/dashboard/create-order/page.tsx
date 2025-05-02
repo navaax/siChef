@@ -38,10 +38,15 @@ import type {
     CurrentOrder,
     SelectedModifierItem,
     SavedOrder,
-    InventoryItem
+    InventoryItem,
+    ProductModifierSlotOption // Asegurarse que este tipo esté importado
 } from '@/types/product-types';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog"
 import { buttonVariants } from "@/components/ui/button" // Importar buttonVariants
+
+// Capacitor (Importación conceptual - ¡Necesita un plugin real!)
+// import { Plugins } from '@capacitor/core';
+// const { PrinterPlugin } = Plugins;
 
 
 // --- Funciones de Ayuda ---
@@ -102,6 +107,7 @@ export default function CreateOrderPage() {
         modifiers: false,
         packageDetails: false,
         inventory: false, // Añadido para verificaciones/actualizaciones de inventario
+        printing: false, // Nuevo estado para impresión
     });
 
 
@@ -157,15 +163,25 @@ export default function CreateOrderPage() {
     setIsLoading(prev => ({ ...prev, modifiers: true }));
     let preparedSlots: ModifierSlotState[] = [];
     try {
+        // 1. Obtener la definición de los slots
         const slotsDefinition = await getModifierSlotsForProduct(productId);
         if (slotsDefinition && slotsDefinition.length > 0) {
-            // Obtener opciones (productos) para la categoría vinculada de cada slot
-            const optionsPromises = slotsDefinition.map(async (slot) => {
-                // Obtener productos de la categoría vinculada (estas son las opciones de modificador)
-                // Usar getModifiersByCategory en lugar de getProductsByCategory para opciones de modificador
-                const options = await getModifiersByCategory(slot.linked_category_id);
-                return { ...slot, options: options, selectedOptions: [] }; // Inicializar estado
-            });
+             // 2. Para cada slot, determinar qué opciones mostrar
+             const optionsPromises = slotsDefinition.map(async (slot) => {
+                 let options: Product[] = [];
+                 if (slot.allowedOptions && slot.allowedOptions.length > 0) {
+                     // Si hay opciones específicas definidas, usarlas
+                      console.log(`[fetchAndPrepareModifierSlots] Slot ${slot.id} tiene ${slot.allowedOptions.length} opciones específicas.`);
+                     // Necesitamos los detalles completos de cada producto modificador permitido
+                     const optionDetailsPromises = slot.allowedOptions.map(opt => getProductById(opt.modifier_product_id));
+                     options = (await Promise.all(optionDetailsPromises)).filter(p => p !== null) as Product[];
+                 } else {
+                     // Si no hay opciones específicas, obtener *todos* los modificadores de la categoría vinculada
+                      console.log(`[fetchAndPrepareModifierSlots] Slot ${slot.id} usa categoría ${slot.linked_category_id}.`);
+                     options = await getModifiersByCategory(slot.linked_category_id);
+                 }
+                 return { ...slot, options: options, selectedOptions: [] }; // Inicializar estado
+             });
             preparedSlots = await Promise.all(optionsPromises);
         }
     } catch (error) {
@@ -191,6 +207,7 @@ export default function CreateOrderPage() {
             // Para cada item en el paquete, obtener sus slots modificadores base y aplicar overrides
             const itemSlotsPromises = packageItems.map(async (item) => {
                 // 1. Obtener los slots modificadores base para el producto real en el item del paquete (ej., Alitas 6pz)
+                // fetchAndPrepareModifierSlots ya maneja la lógica de opciones específicas vs. categoría completa
                 const baseSlots = await fetchAndPrepareModifierSlots(item.product_id);
 
                 // 2. Obtener cualquier override específico para esta instancia de item de paquete
@@ -710,6 +727,106 @@ export default function CreateOrderPage() {
       }
   };
 
+   // Función para generar el texto de la comanda (placeholder)
+   const generateReceiptText = (order: SavedOrder): string => {
+        let receipt = `-----------------------------\n`;
+        receipt += `     Comanda Cocina\n`;
+        receipt += `-----------------------------\n`;
+        receipt += `Pedido #: ${order.orderNumber} (${order.id})\n`;
+        receipt += `Cliente: ${order.customerName}\n`;
+        receipt += `Fecha: ${format(order.createdAt, 'Pp')}\n`;
+        receipt += `-----------------------------\n\n`;
+
+        order.items.forEach(item => {
+            receipt += `${item.quantity}x ${item.name}`;
+            if(item.price !== item.totalItemPrice / item.quantity) { // Mostrar precio base si difiere
+                receipt += ` (${formatCurrency(item.price)} c/u)`;
+            }
+            receipt += ` - ${formatCurrency(item.totalItemPrice)}\n`;
+
+            if (item.components.length > 0) {
+                item.components.forEach(comp => {
+                    receipt += `  - ${comp.slotLabel ? `[${comp.slotLabel}] ` : ''}${comp.name}\n`;
+                });
+            }
+            receipt += `\n`; // Espacio entre items
+        });
+
+        receipt += `-----------------------------\n`;
+        receipt += `Subtotal: ${formatCurrency(order.subtotal)}\n`;
+        receipt += `TOTAL: ${formatCurrency(order.total)}\n`;
+        receipt += `Forma Pago: ${order.paymentMethod.toUpperCase()}\n`;
+        if(order.paymentMethod === 'cash' && order.paidAmount !== undefined) {
+            receipt += `Pagado: ${formatCurrency(order.paidAmount)}\n`;
+            receipt += `Cambio: ${formatCurrency(order.changeGiven ?? 0)}\n`;
+        }
+        receipt += `-----------------------------\n`;
+        receipt += `    ¡Gracias por tu compra!\n`;
+        receipt += `-----------------------------\n`;
+        return receipt;
+   };
+
+   // Placeholder para la función de impresión real usando Capacitor
+   const handlePrintReceipt = async (receiptText: string) => {
+        setIsLoading(prev => ({ ...prev, printing: true }));
+        toast({ title: "Imprimiendo...", description: "Enviando comanda a la impresora..." });
+
+        console.log("--- INICIO COMANDA (SIMULADO) ---");
+        console.log(receiptText);
+        console.log("--- FIN COMANDA (SIMULADO) ---");
+
+        // --- Inicio: Lógica de Capacitor (¡Requiere Plugin!) ---
+        /*
+        if (typeof window !== 'undefined' && window.Capacitor?.isNativePlatform()) {
+            try {
+                // Asumiendo que existe un plugin 'PrinterPlugin'
+                // const { PrinterPlugin } = Plugins;
+                // if (!PrinterPlugin) throw new Error("Plugin de impresora no disponible.");
+
+                // 1. Buscar impresoras (ej. Bluetooth) - La implementación depende del plugin
+                // const discovered = await PrinterPlugin.discoverPrinters({ types: ['bluetooth'] });
+                // if (!discovered || discovered.printers.length === 0) {
+                //   throw new Error("No se encontraron impresoras Bluetooth.");
+                // }
+                // const targetPrinter = discovered.printers[0]; // Seleccionar la primera encontrada (o permitir selección)
+                // console.log("Usando impresora:", targetPrinter);
+
+                // 2. Imprimir el texto
+                // await PrinterPlugin.print({
+                //   printerId: targetPrinter.id, // ID de la impresora encontrada
+                //   content: receiptText,
+                //   contentType: 'text' // O 'escpos' si generas comandos ESC/POS
+                // });
+
+                // Simulación para desarrollo web
+                await new Promise(resolve => setTimeout(resolve, 1500)); // Simular espera
+
+                toast({ title: "Impresión Exitosa", description: "Comanda enviada correctamente (simulado)." });
+
+            } catch (error) {
+                console.error("Error al imprimir con Capacitor:", error);
+                toast({
+                    variant: "destructive",
+                    title: "Error de Impresión",
+                    description: `No se pudo imprimir. ${error instanceof Error ? error.message : 'Error desconocido'}`,
+                });
+            }
+        } else {
+            console.warn("Capacitor no disponible o no es plataforma nativa. Impresión simulada en consola.");
+            await new Promise(resolve => setTimeout(resolve, 1000)); // Simular espera
+             toast({ title: "Impresión Simulada", description: "Comanda mostrada en consola." });
+        }
+        */
+         // Simulación simple sin Capacitor por ahora
+         await new Promise(resolve => setTimeout(resolve, 1000));
+         toast({ title: "Impresión Simulada", description: "Comanda mostrada en consola." });
+
+        // --- Fin: Lógica de Capacitor ---
+
+        setIsLoading(prev => ({ ...prev, printing: false }));
+   };
+
+
   const handleFinalizeOrder = async () => {
     if (currentOrder.items.length === 0) {
       toast({ title: "Pedido Vacío", description: "Por favor añade items al pedido.", variant: 'destructive' });
@@ -902,9 +1019,13 @@ export default function CreateOrderPage() {
            // Si es un producto regular, listar sus modificadores
            else if (item.type === 'product' && item.selectedModifiers.length > 0) {
                  item.selectedModifiers.forEach(mod => {
-                     // Intentar encontrar la etiqueta de slot desde el estado de modificador actual
-                     const slot = currentModifierSlots.find(s => s.id === mod.slotId);
-                     components.push({ name: mod.name, slotLabel: slot?.label || 'Mod' });
+                     // Intentar encontrar la etiqueta de slot desde el estado de modificador actual (o slotDefinition si se carga)
+                     let slotLabelFound = 'Mod';
+                     const slotDefinition = currentModifierSlots.find(s => s.id === mod.slotId);
+                     if(slotDefinition) slotLabelFound = slotDefinition.label;
+                     // Fallback: buscar en la definición del producto si no está en estado
+                     // const productSlots = await getModifierSlotsForProduct(item.id); // Esto sería async, no ideal aquí
+                     components.push({ name: mod.name, slotLabel: slotLabelFound });
                  });
            }
 
@@ -930,30 +1051,11 @@ export default function CreateOrderPage() {
     const updatedOrders = [...existingOrders, finalizedOrder];
     localStorage.setItem('siChefOrders', JSON.stringify(updatedOrders));
 
-    // 4. Disparar Impresión (Simulado)
-    console.log('--- Imprimiendo Comanda de Cocina ---');
-    console.log(`Pedido #: ${finalizedOrder.orderNumber} (${finalizedOrder.id})`);
-    console.log(`Cliente: ${finalizedOrder.customerName}`);
-    console.log('-----------------------------');
-    finalizedOrder.items.forEach(item => {
-        console.log(`${item.quantity}x ${item.name} (${formatCurrency(item.price)} c/u)`);
-        // Imprimir componentes/modificadores simplificados
-        if (item.components.length > 0) {
-             item.components.forEach(comp => {
-                 console.log(`  - ${comp.slotLabel ? `[${comp.slotLabel}] ` : ''}${comp.name}`);
-             });
-        }
-    });
-    console.log('-----------------------------');
-    console.log(`Total: ${formatCurrency(finalizedOrder.total)}`);
-    console.log(`Forma Pago: ${finalizedOrder.paymentMethod}`);
-     if(finalizedOrder.paymentMethod === 'cash' && finalizedOrder.paidAmount !== undefined) {
-        console.log(`Pagado: ${formatCurrency(finalizedOrder.paidAmount)}`);
-        console.log(`Cambio: ${formatCurrency(finalizedOrder.changeGiven ?? 0)}`);
-    }
-     console.log('-----------------------------');
+    // 4. Disparar Impresión (Ahora usa la función handlePrintReceipt)
+    const receiptText = generateReceiptText(finalizedOrder);
+    await handlePrintReceipt(receiptText); // Esperar a que la impresión termine (o falle)
 
-    // 5. Resetear estado para un nuevo pedido
+    // 5. Resetear estado para un nuevo pedido (SOLO si la impresión no falló gravemente - podría necesitarse lógica adicional)
     setCurrentOrder({
       id: '', customerName: 'Guest', items: [], subtotal: 0, total: 0, paymentMethod: 'card'
     });
@@ -1445,15 +1547,15 @@ export default function CreateOrderPage() {
                  <Button
                     className="w-full"
                     onClick={handleFinalizeOrder}
-                    disabled={currentOrder.items.length === 0 || isLoading.inventory} // Deshabilitar si está vacío o durante actualización de inventario
+                    disabled={currentOrder.items.length === 0 || isLoading.inventory || isLoading.printing} // Deshabilitar si está vacío o durante actualización/impresión
                     aria-label="Finalizar Pedido e Imprimir Ticket"
                 >
-                    {isLoading.inventory ? (
+                    {isLoading.inventory || isLoading.printing ? (
                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                     ) : (
                         <Printer className="mr-2 h-4 w-4" />
                     )}
-                    Finalizar e Imprimir Ticket
+                    {isLoading.printing ? 'Imprimiendo...' : 'Finalizar e Imprimir'}
                  </Button>
             </div>
          </Card>
