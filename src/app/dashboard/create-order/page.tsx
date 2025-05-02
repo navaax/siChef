@@ -3,7 +3,7 @@
 
 import * as React from 'react';
 import { useState, useEffect, useCallback } from 'react';
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button"; // Importar buttonVariants explícitamente
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -28,6 +28,8 @@ import {
     getModifiersByCategory, // Importar esto
 } from '@/services/product-service';
 import { adjustInventoryStock, getInventoryItems } from '@/services/inventory-service'; // Se agregó ajuste y obtención de inventario
+import { printTicket, PrinterError } from '@/services/printer-service'; // Importar servicio de impresora
+import { generateTicketData } from './ticket'; // Importar generador de datos de ticket
 import type {
     Category,
     Product,
@@ -43,12 +45,6 @@ import type {
     ProductModifierSlotOption // Asegurarse que este tipo esté importado
 } from '@/types/product-types';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
-import { buttonVariants } from "@/components/ui/button"; // Importar buttonVariants
-
-// Capacitor (Importación conceptual - ¡Necesita un plugin real!)
-// import { Plugins } from '@capacitor/core';
-// const { PrinterPlugin } = Plugins;
-
 
 // --- Funciones de Ayuda ---
 const formatCurrency = (amount: number | null | undefined): string => {
@@ -100,6 +96,8 @@ export default function CreateOrderPage() {
   const [products, setProducts] = useState<Product[]>([]); // Productos (no paquete) para la categoría seleccionada
   const [packages, setPackages] = useState<Package[]>([]); // Paquetes (de la tabla 'packages') para la categoría UI seleccionada
   const [inventoryMap, setInventoryMap] = useState<Map<string, InventoryItem>>(new Map()); // Almacenar inventario para verificaciones
+  // Estado para impresora seleccionada REMOVED - Cordova plugin uses OS dialog
+  // const [selectedPrinter, setSelectedPrinter] = useState<DiscoveredPrinter | null>(null);
 
   const [isLoading, setIsLoading] = useState({
         categories: true,
@@ -130,6 +128,11 @@ export default function CreateOrderPage() {
         fetchedInventory.forEach(item => invMap.set(item.id, item));
         setInventoryMap(invMap);
 
+        // Cargar impresora seleccionada de localStorage - REMOVED
+        // const savedPrinterString = localStorage.getItem('siChefSettings_selectedPrinter');
+        // if (savedPrinterString) { ... }
+
+
       } catch (error) {
         toast({ title: "Error al Cargar Datos", description: "Fallo al cargar categorías o inventario.", variant: "destructive" });
       } finally {
@@ -157,7 +160,7 @@ export default function CreateOrderPage() {
     } finally {
       setIsLoading(prev => ({ ...prev, products: false, packages: false }));
     }
-  }, [toast]);
+  }, [toast]); // Agregado toast a dependencias
 
   // Obtiene slots modificadores y sus opciones (productos) para un producto
    const fetchAndPrepareModifierSlots = useCallback(async (productId: string): Promise<ModifierSlotState[]> => {
@@ -728,109 +731,29 @@ export default function CreateOrderPage() {
       }
   };
 
-   // Función para generar el texto de la comanda (placeholder)
-   const generateReceiptText = (order: SavedOrder): string => {
-        let receipt = `-----------------------------\n`;
-        receipt += `     Comanda Cocina\n`;
-        receipt += `-----------------------------\n`;
-        receipt += `Pedido #: ${order.orderNumber} (${order.id})\n`;
-        receipt += `Cliente: ${order.customerName}\n`;
-        receipt += `Fecha: ${format(order.createdAt, 'Pp')}\n`;
-        receipt += `-----------------------------\n\n`;
 
-        order.items.forEach(item => {
-            receipt += `${item.quantity}x ${item.name}`;
-            if(item.price !== item.totalItemPrice / item.quantity) { // Mostrar precio base si difiere
-                receipt += ` (${formatCurrency(item.price)} c/u)`;
-            }
-            receipt += ` - ${formatCurrency(item.totalItemPrice)}\n`;
-
-            if (item.components.length > 0) {
-                item.components.forEach(comp => {
-                    receipt += `  - ${comp.slotLabel ? `[${comp.slotLabel}] ` : ''}${comp.name}\n`;
-                });
-            }
-            receipt += `\n`; // Espacio entre items
-        });
-
-        receipt += `-----------------------------\n`;
-        receipt += `Subtotal: ${formatCurrency(order.subtotal)}\n`;
-        receipt += `TOTAL: ${formatCurrency(order.total)}\n`;
-        receipt += `Forma Pago: ${order.paymentMethod.toUpperCase()}\n`;
-        if(order.paymentMethod === 'cash' && order.paidAmount !== undefined) {
-            receipt += `Pagado: ${formatCurrency(order.paidAmount)}\n`;
-            receipt += `Cambio: ${formatCurrency(order.changeGiven ?? 0)}\n`;
-        }
-        receipt += `-----------------------------\n`;
-        receipt += `    ¡Gracias por tu compra!\n`;
-        receipt += `-----------------------------\n`;
-        return receipt;
-   };
-
-   // Placeholder para la función de impresión real usando Capacitor
-   const handlePrintReceipt = async (receiptText: string) => {
+   // Maneja la lógica de impresión usando el servicio de impresora
+   const handleActualPrint = async (receiptHtml: string) => { // Changed parameter to receiptHtml
         setIsLoading(prev => ({ ...prev, printing: true }));
         toast({ title: "Imprimiendo...", description: "Enviando comanda a la impresora..." });
 
-        // Obtener la impresora seleccionada de localStorage
-        const selectedPrinterId = localStorage.getItem('siChefSettings_selectedPrinter');
+        // Con cordova-plugin-printer, no seleccionamos impresora manualmente, usa el diálogo del SO
+        // if (!selectedPrinter) { ... } REMOVED
 
-        console.log("--- INICIO COMANDA (SIMULADO) ---");
-        console.log(`Impresora Destino: ${selectedPrinterId || 'Ninguna seleccionada (usando predeterminada?)'}`);
-        console.log(receiptText);
-        console.log("--- FIN COMANDA (SIMULADO) ---");
-
-        if (!selectedPrinterId) {
+        try {
+            await printTicket(receiptHtml); // Usar la función renombrada printTicket (que llama a printHtmlTicket)
+            toast({ title: "Diálogo de Impresión Mostrado", description: `Selecciona una impresora en el diálogo del sistema.` });
+        } catch (error) {
+             console.error("Error al imprimir:", error);
+             const message = error instanceof PrinterError ? error.message : "Error desconocido al imprimir.";
              toast({
                 variant: "destructive",
-                title: "Impresora no Configurada",
-                description: "Ve a Configuraciones para seleccionar una impresora.",
+                title: "Error de Impresión",
+                description: message,
             });
-             setIsLoading(prev => ({ ...prev, printing: false }));
-            return; // Detener si no hay impresora
+        } finally {
+            setIsLoading(prev => ({ ...prev, printing: false }));
         }
-
-        // --- Inicio: Lógica de Capacitor (¡Requiere Plugin!) ---
-        /*
-        if (typeof window !== 'undefined' && window.Capacitor?.isNativePlatform()) {
-            try {
-                // Asumiendo que existe un plugin 'PrinterPlugin' y que puedes imprimir por ID/Dirección
-                // const { PrinterPlugin } = Plugins;
-                // if (!PrinterPlugin) throw new Error("Plugin de impresora no disponible.");
-
-                // Aquí usarías selectedPrinterId (que puede ser una dirección IP, MAC, etc.)
-                // await PrinterPlugin.print({
-                //   printerId: selectedPrinterId,
-                //   content: receiptText,
-                //   contentType: 'text' // O 'escpos' si generas comandos ESC/POS
-                // });
-
-                // Simulación para desarrollo web
-                await new Promise(resolve => setTimeout(resolve, 1500)); // Simular espera
-
-                toast({ title: "Impresión Exitosa", description: `Comanda enviada a ${selectedPrinterId} (simulado).` });
-
-            } catch (error) {
-                console.error("Error al imprimir con Capacitor:", error);
-                toast({
-                    variant: "destructive",
-                    title: "Error de Impresión",
-                    description: `No se pudo imprimir en ${selectedPrinterId}. ${error instanceof Error ? error.message : 'Error desconocido'}`,
-                });
-            }
-        } else {
-            console.warn("Capacitor no disponible o no es plataforma nativa. Impresión simulada en consola.");
-            await new Promise(resolve => setTimeout(resolve, 1000)); // Simular espera
-             toast({ title: "Impresión Simulada", description: `Comanda para ${selectedPrinterId} mostrada en consola.` });
-        }
-        */
-         // Simulación simple sin Capacitor por ahora
-         await new Promise(resolve => setTimeout(resolve, 1000));
-         toast({ title: "Impresión Simulada", description: `Comanda para ${selectedPrinterId} mostrada en consola.` });
-
-        // --- Fin: Lógica de Capacitor ---
-
-        setIsLoading(prev => ({ ...prev, printing: false }));
    };
 
 
@@ -1058,9 +981,15 @@ export default function CreateOrderPage() {
     const updatedOrders = [...existingOrders, finalizedOrder];
     localStorage.setItem('siChefOrders', JSON.stringify(updatedOrders));
 
-    // 4. Disparar Impresión (Ahora usa la función handlePrintReceipt)
-    const receiptText = generateReceiptText(finalizedOrder);
-    await handlePrintReceipt(receiptText); // Esperar a que la impresión termine (o falle)
+    // 4. Generar datos del ticket (HTML ahora) y Disparar Impresión (si la opción está activada)
+    const printReceiptsEnabled = localStorage.getItem('siChefSettings_printReceipts') === 'true';
+    if (printReceiptsEnabled) {
+        const receiptHtml = await generateTicketData(finalizedOrder); // Generate HTML
+        await handleActualPrint(receiptHtml); // Pass HTML to print handler
+    } else {
+         toast({ title: "Impresión Omitida", description: "La impresión de recibos está desactivada en la configuración." });
+    }
+
 
     // 5. Resetear estado para un nuevo pedido (SOLO si la impresión no falló gravemente - podría necesitarse lógica adicional)
     setCurrentOrder({
@@ -1078,7 +1007,7 @@ export default function CreateOrderPage() {
     setProducts([]);
     setPackages([]);
 
-    toast({ title: "Pedido Finalizado", description: `${finalizedOrder.id} creado y enviado a cocina.` });
+    toast({ title: "Pedido Finalizado", description: `${finalizedOrder.id} creado y guardado.` });
   };
 
   // --- Lógica de Renderizado ---
