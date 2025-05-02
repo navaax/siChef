@@ -551,48 +551,56 @@ export async function deleteModifierSlot(id: string): Promise<void> {
 
 // --- CRUD Override de Paquete ---
 export async function setPackageItemOverride(override: Omit<PackageItemModifierSlotOverride, 'id' | 'product_modifier_slot_label'>): Promise<PackageItemModifierSlotOverride> {
-  const db = await getDb();
-  const newId = randomUUID();
-  try {
-      // Pre-checks
-      const itemExists = await db.get('SELECT id FROM package_items WHERE id = ?', override.package_item_id);
-      if (!itemExists) throw new Error(`Item de paquete con ID ${override.package_item_id} no existe.`);
-      const slotExists = await db.get('SELECT id FROM product_modifier_slots WHERE id = ?', override.product_modifier_slot_id);
-      if (!slotExists) throw new Error(`Slot modificador con ID ${override.product_modifier_slot_id} no existe.`);
+    const db = await getDb();
+    const newId = randomUUID();
+    try {
+        // Pre-checks
+        const itemExists = await db.get('SELECT id FROM package_items WHERE id = ?', override.package_item_id);
+        if (!itemExists) throw new Error(`Item de paquete con ID ${override.package_item_id} no existe.`);
+        const slotExists = await db.get('SELECT id FROM product_modifier_slots WHERE id = ?', override.product_modifier_slot_id);
+        if (!slotExists) throw new Error(`Slot modificador con ID ${override.product_modifier_slot_id} no existe.`);
 
-      // Usa INSERT OR REPLACE para simplificar (actualiza si la combinación ya existe)
-      const query = `
-         INSERT INTO package_item_modifier_slot_overrides (package_item_id, product_modifier_slot_id, min_quantity, max_quantity, id)
-         VALUES (?, ?, ?, ?, ?)
-         ON CONFLICT(package_item_id, product_modifier_slot_id) DO UPDATE SET
-           min_quantity = excluded.min_quantity,
-           max_quantity = excluded.max_quantity
-     `;
-      const params = [override.package_item_id, override.product_modifier_slot_id, override.min_quantity, override.max_quantity, newId];
-      console.log(`[setPackageItemOverride] Query: ${query}, Params: ${JSON.stringify(params)}`);
-      await db.run(query, params);
+        // Check if override exists
+        const existingQuery = `SELECT id FROM package_item_modifier_slot_overrides WHERE package_item_id = ? AND product_modifier_slot_id = ?`;
+        const existingOverride = await db.get<{id: string}>(existingQuery, [override.package_item_id, override.product_modifier_slot_id]);
 
-      // Re-fetch para obtener el ID correcto y la etiqueta
-      const resultQuery = `
-         SELECT pio.*, pms.label as product_modifier_slot_label
-         FROM package_item_modifier_slot_overrides pio
-         JOIN product_modifier_slots pms ON pio.product_modifier_slot_id = pms.id
-         WHERE pio.package_item_id = ? AND pio.product_modifier_slot_id = ?
-     `;
-      const result = await db.get<PackageItemModifierSlotOverride>(resultQuery, [override.package_item_id, override.product_modifier_slot_id]);
+        if (existingOverride) {
+            // Update existing override
+             const updateQuery = `UPDATE package_item_modifier_slot_overrides SET min_quantity = ?, max_quantity = ? WHERE id = ?`;
+             const updateParams = [override.min_quantity, override.max_quantity, existingOverride.id];
+             console.log(`[setPackageItemOverride] Updating existing override: Query: ${updateQuery}, Params: ${JSON.stringify(updateParams)}`);
+             await db.run(updateQuery, updateParams);
+        } else {
+             // Insert new override
+             const insertQuery = `INSERT INTO package_item_modifier_slot_overrides (id, package_item_id, product_modifier_slot_id, min_quantity, max_quantity) VALUES (?, ?, ?, ?, ?)`;
+             const insertParams = [newId, override.package_item_id, override.product_modifier_slot_id, override.min_quantity, override.max_quantity];
+             console.log(`[setPackageItemOverride] Inserting new override: Query: ${insertQuery}, Params: ${JSON.stringify(insertParams)}`);
+             await db.run(insertQuery, insertParams);
+        }
 
-      if (!result) throw new Error("Falló al establecer/verificar el override de item de paquete después de la inserción/reemplazo.");
-      console.log(`[setPackageItemOverride] Override for item ${override.package_item_id}, slot ${override.product_modifier_slot_id} set successfully. Result ID: ${result.id}`);
-      return result;
 
-  } catch (error) {
-      console.error(`[setPackageItemOverride] Error setting override for item ${override.package_item_id}, slot ${override.product_modifier_slot_id}:`, error);
-      if (error instanceof Error && error.message.includes("FOREIGN KEY constraint failed")) {
-          throw new Error(`Error de llave foránea: Asegúrate que el ID de item de paquete '${override.package_item_id}' y el ID de slot '${override.product_modifier_slot_id}' existen. Error original: ${error.message}`);
-      }
-      throw new Error(`Falló al establecer override de item de paquete. Error original: ${error instanceof Error ? error.message : error}`);
-  }
+        // Re-fetch para obtener el ID correcto y la etiqueta
+        const resultQuery = `
+           SELECT pio.*, pms.label as product_modifier_slot_label
+           FROM package_item_modifier_slot_overrides pio
+           JOIN product_modifier_slots pms ON pio.product_modifier_slot_id = pms.id
+           WHERE pio.package_item_id = ? AND pio.product_modifier_slot_id = ?
+       `;
+        const result = await db.get<PackageItemModifierSlotOverride>(resultQuery, [override.package_item_id, override.product_modifier_slot_id]);
+
+        if (!result) throw new Error("Falló al establecer/verificar el override de item de paquete después de la inserción/reemplazo.");
+        console.log(`[setPackageItemOverride] Override for item ${override.package_item_id}, slot ${override.product_modifier_slot_id} set successfully. Result ID: ${result.id}`);
+        return result;
+
+    } catch (error) {
+        console.error(`[setPackageItemOverride] Error setting override for item ${override.package_item_id}, slot ${override.product_modifier_slot_id}:`, error);
+        if (error instanceof Error && error.message.includes("FOREIGN KEY constraint failed")) {
+            throw new Error(`Error de llave foránea: Asegúrate que el ID de item de paquete '${override.package_item_id}' y el ID de slot '${override.product_modifier_slot_id}' existen. Error original: ${error.message}`);
+        }
+        throw new Error(`Falló al establecer override de item de paquete. Error original: ${error instanceof Error ? error.message : error}`);
+    }
 }
+
 
 
 export async function deletePackageItemOverride(id: string): Promise<void> {
@@ -611,7 +619,8 @@ export async function deletePackageItemOverride(id: string): Promise<void> {
 
 // --- Bulk Update for Package Items and Overrides ---
 interface ItemToSave {
-    id: string | null; // Null if new
+    localId: string; // Use localId from frontend state
+    id: string | null; // Null if new in DB
     package_id: string;
     product_id: string;
     quantity: number;
@@ -619,8 +628,9 @@ interface ItemToSave {
     modifierOverrides: OverrideToSave[];
 }
 interface OverrideToSave {
-    id: string | null; // Null if new
-    package_item_id: string; // Placeholder, will be set if item is new
+    localId: string; // Use localId from frontend state
+    id: string | null; // Null if new in DB
+    package_item_id: string; // Placeholder, will be set
     product_modifier_slot_id: string;
     min_quantity: number;
     max_quantity: number;
@@ -636,87 +646,74 @@ export async function updatePackageItemsAndOverrides(packageId: string, itemsToS
 
         // 2. Procesar items a guardar (insertar/actualizar)
         const savedItemIds = new Set<string>();
-        const newItemIdMap = new Map<string, string>(); // Map localId -> dbId for new items
+        const localToDbIdMap = new Map<string, string>(); // Map localId -> dbId
 
         for (const item of itemsToSave) {
-            let currentItemId = item.id; // Puede ser el ID real o null si es nuevo
+             let currentDbItemId = item.id; // This is the *database* ID if it exists
 
-            if (currentItemId && existingDbItemIds.has(currentItemId)) {
-                // Actualizar item existente
-                console.log(`[updatePackageItems] Updating item ${currentItemId}`);
-                await db.run(
-                    'UPDATE package_items SET product_id = ?, quantity = ?, display_order = ? WHERE id = ? AND package_id = ?',
-                    [item.product_id, item.quantity, item.display_order, currentItemId, packageId]
-                );
-                savedItemIds.add(currentItemId);
-                existingDbItemIds.delete(currentItemId); // Marcar como procesado
-            } else {
-                // Insertar nuevo item
-                const newItemDbId = randomUUID();
-                console.log(`[updatePackageItems] Inserting new item for product ${item.product_id}, new DB ID: ${newItemDbId}`);
-                await db.run(
-                    'INSERT INTO package_items (id, package_id, product_id, quantity, display_order) VALUES (?, ?, ?, ?, ?)',
-                    [newItemDbId, packageId, item.product_id, item.quantity, item.display_order]
-                );
-                currentItemId = newItemDbId; // Usar el nuevo ID de la BD
-                savedItemIds.add(currentItemId);
-                 // Mapear el ID local (que no tenía guiones) al nuevo ID de la BD si es necesario
-                 // if (item.id && !item.id.includes('-')) { // Si el id original era temporal
-                 //     newItemIdMap.set(item.id, currentItemId);
-                 // }
-                 // Corrección: Usar el `id` original (que ahora es null para nuevos) como clave no sirve.
-                 // Necesitamos una forma de identificar el item original. Usaremos `product_id` y `display_order` como clave temporal
-                 // Esto asume que no hay dos items nuevos del mismo producto en el mismo orden (lo cual es razonable para UI)
-                 // Una mejor solución sería usar el localId que SÍ teníamos antes. Asumamos que itemToSave incluye ese localId
-                 // if (item.localId) { newItemIdMap.set(item.localId, currentItemId); }
-                 // SIN localId, esta parte es difícil. Asumamos que item.id era el localId si era nuevo
-                 // if (item.id && !item.id.includes('-')) { // Check if it looks like a temporary ID
-                  //    newItemIdMap.set(item.id, currentItemId);
-                 // }
-                 // *** REVISIÓN: El frontend debe pasar el localId para mapear correctamente ***
-                 // Asumiendo que item.id ES el localId si es nuevo (no tiene '-')
-                 // O MEJOR: Añadir localId al tipo ItemToSave
+             if (currentDbItemId && existingDbItemIds.has(currentDbItemId)) {
+                 // Actualizar item existente
+                 console.log(`[updatePackageItems] Updating existing item ${currentDbItemId}`);
+                 await db.run(
+                     'UPDATE package_items SET product_id = ?, quantity = ?, display_order = ? WHERE id = ? AND package_id = ?',
+                     [item.product_id, item.quantity, item.display_order, currentDbItemId, packageId]
+                 );
+                 savedItemIds.add(currentDbItemId);
+                 localToDbIdMap.set(item.localId, currentDbItemId); // Map local ID to existing DB ID
+                 existingDbItemIds.delete(currentDbItemId); // Marcar como procesado
+             } else {
+                 // Insertar nuevo item
+                 const newItemDbId = randomUUID();
+                 console.log(`[updatePackageItems] Inserting new item for product ${item.product_id}, new DB ID: ${newItemDbId}, local ID: ${item.localId}`);
+                 await db.run(
+                     'INSERT INTO package_items (id, package_id, product_id, quantity, display_order) VALUES (?, ?, ?, ?, ?)',
+                     [newItemDbId, packageId, item.product_id, item.quantity, item.display_order]
+                 );
+                 currentDbItemId = newItemDbId; // Usar el nuevo ID de la BD
+                 savedItemIds.add(currentDbItemId);
+                 localToDbIdMap.set(item.localId, currentDbItemId); // Map local ID to new DB ID
             }
 
-            if (!currentItemId) continue; // Seguridad
+            if (!currentDbItemId) continue; // Seguridad
 
-             // 3. Procesar overrides para este item
+             // 3. Procesar overrides para este item (using currentDbItemId)
              const existingOverrides = await db.all<{ id: string, product_modifier_slot_id: string }>(
                 'SELECT id, product_modifier_slot_id FROM package_item_modifier_slot_overrides WHERE package_item_id = ?',
-                [currentItemId]
+                [currentDbItemId] // Use the correct database ID
              );
-             const existingOverrideIds = new Set(existingOverrides.map(ov => ov.id));
+             const existingOverrideDbIds = new Set(existingOverrides.map(ov => ov.id));
              const existingOverrideSlotMap = new Map(existingOverrides.map(ov => [ov.product_modifier_slot_id, ov.id]));
 
              for (const override of item.modifierOverrides) {
                  const slotId = override.product_modifier_slot_id;
                  const existingOverrideDbId = existingOverrideSlotMap.get(slotId);
+                 const overrideDbIdToUse = override.id && !override.id.includes('-') ? override.id : null; // DB ID if exists
 
-                 if (existingOverrideDbId) {
-                      // Actualizar override existente
-                      console.log(`[updatePackageItems] Updating override ${existingOverrideDbId} for item ${currentItemId}, slot ${slotId}`);
+                 if (overrideDbIdToUse && existingOverrideDbIds.has(overrideDbIdToUse)) {
+                     // Update existing override by its DB ID
+                     console.log(`[updatePackageItems] Updating override ${overrideDbIdToUse} for item ${currentDbItemId}, slot ${slotId}`);
                      await db.run(
                          'UPDATE package_item_modifier_slot_overrides SET min_quantity = ?, max_quantity = ? WHERE id = ?',
-                         [override.min_quantity, override.max_quantity, existingOverrideDbId]
+                         [override.min_quantity, override.max_quantity, overrideDbIdToUse]
                      );
-                     existingOverrideIds.delete(existingOverrideDbId); // Marcar como procesado
+                     existingOverrideDbIds.delete(overrideDbIdToUse); // Mark as processed
                  } else {
-                     // Insertar nuevo override
+                     // Insert new override
                      const newOverrideDbId = randomUUID();
-                      console.log(`[updatePackageItems] Inserting new override for item ${currentItemId}, slot ${slotId}`);
+                     console.log(`[updatePackageItems] Inserting new override for item ${currentDbItemId}, slot ${slotId}, localId: ${override.localId}`);
                      await db.run(
                          'INSERT INTO package_item_modifier_slot_overrides (id, package_item_id, product_modifier_slot_id, min_quantity, max_quantity) VALUES (?, ?, ?, ?, ?)',
-                         [newOverrideDbId, currentItemId, slotId, override.min_quantity, override.max_quantity]
+                         [newOverrideDbId, currentDbItemId, slotId, override.min_quantity, override.max_quantity]
                      );
+                     // We don't need to track saved override IDs if we remove orphans below
                  }
             }
 
-            // 4. Eliminar overrides que ya no existen para este item
-            for (const overrideIdToDelete of existingOverrideIds) {
-                 console.log(`[updatePackageItems] Deleting obsolete override ${overrideIdToDelete} for item ${currentItemId}`);
+             // 4. Eliminar overrides que ya no existen para este item (based on DB IDs)
+             for (const overrideIdToDelete of existingOverrideDbIds) {
+                 console.log(`[updatePackageItems] Deleting obsolete override ${overrideIdToDelete} for item ${currentDbItemId}`);
                  await db.run('DELETE FROM package_item_modifier_slot_overrides WHERE id = ?', [overrideIdToDelete]);
-            }
-
+             }
         }
 
         // 5. Eliminar items que ya no existen en el paquete
@@ -734,6 +731,7 @@ export async function updatePackageItemsAndOverrides(packageId: string, itemsToS
         throw new Error(`Falló al actualizar contenido del paquete. Error original: ${error instanceof Error ? error.message : error}`);
     }
 }
+
 
 
 /**

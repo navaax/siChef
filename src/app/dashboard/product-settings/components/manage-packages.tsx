@@ -1,3 +1,4 @@
+// src/app/dashboard/product-settings/components/manage-packages.tsx
 'use client';
 
 import * as React from 'react';
@@ -6,8 +7,10 @@ import { useForm, type SubmitHandler } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-// Remove Node crypto import
-// import { randomUUID } from 'crypto';
+// Use Node crypto for server-side randomUUID if needed, or client-side alternative
+// For client-side only:
+import { v4 as uuidv4 } from 'uuid';
+
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from '@/components/ui/button';
@@ -153,7 +156,8 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
                 setIsItemDataLoading(true);
                 try {
                     // Usar allProductsAndModifiers filtrado localmente para evitar llamadas extra
-                    const prods = allProductsAndModifiers.filter(p => p.categoryId === selectedCategoryId);
+                    // Check if allProductsAndModifiers is defined before filtering
+                    const prods = allProductsAndModifiers ? allProductsAndModifiers.filter(p => p.categoryId === selectedCategoryId) : [];
                     setProductsInCategory(prods);
                     addItemForm.resetField('product_id', { defaultValue: '' }); // Resetear producto al cambiar categoría
                 } catch (error) {
@@ -283,12 +287,12 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
 
             // Procesar cada item pendiente
             for (const [index, pendingItem] of pendingItems.entries()) {
-                 let dbItemId = pendingItem.localId.includes('-') ? pendingItem.localId : null; // Asumir UUID si tiene '-'
+                 let dbItemId = pendingItem.localId.includes('-') ? null : pendingItem.localId; // Assume UUID means real ID
 
                 if (dbItemId && currentDbItemIds.has(dbItemId)) {
                      // Item existente (actualizar - por ahora solo orden, se podría expandir)
-                     // console.log(`Actualizando orden de item ${dbItemId}`);
-                     // await db.run('UPDATE package_items SET display_order = ? WHERE id = ?', [index, dbItemId]);
+                     console.log(`Actualizando orden de item ${dbItemId}`);
+                     await db.run('UPDATE package_items SET display_order = ?, quantity = ? WHERE id = ?', [index, pendingItem.quantity, dbItemId]); // Update quantity as well
                     savedItemIds.add(dbItemId);
                     currentDbItemIds.delete(dbItemId); // Marcar como procesado
                  } else {
@@ -303,6 +307,8 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
                     const newItemInDb = await addPackageItem(newItemData);
                     dbItemId = newItemInDb.id; // ID real de la BD
                     savedItemIds.add(dbItemId);
+                    // Update localId to real DB ID for subsequent override handling
+                    pendingItem.localId = dbItemId;
                  }
 
                 // Guardar/Actualizar Overrides para este item (dbItemId ahora es el ID real)
@@ -312,10 +318,10 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
                      const currentDbOverrideIds = new Set(currentDbOverrides.map(ov => ov.id));
 
                      for (const localOverride of pendingItem.modifierOverrides) {
-                        let dbOverrideId = localOverride.id.includes('-') ? localOverride.id : null;
+                         let dbOverrideId = localOverride.id.includes('-') ? null : localOverride.id; // Assume UUID means real ID
 
                         const overrideData: Omit<PackageItemModifierSlotOverride, 'id'|'product_modifier_slot_label'> = {
-                            package_item_id: dbItemId,
+                            package_item_id: dbItemId, // Use the correct dbItemId
                             product_modifier_slot_id: localOverride.product_modifier_slot_id,
                             min_quantity: localOverride.min_quantity,
                             max_quantity: localOverride.max_quantity,
@@ -324,12 +330,12 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
                          if (dbOverrideId && currentDbOverrideIds.has(dbOverrideId)) {
                              // Actualizar override existente (usando setPackageItemOverride que hace INSERT OR REPLACE)
                               console.log(`Actualizando override ${dbOverrideId}`);
-                             await setPackageItemOverride(overrideData);
+                             await setPackageItemOverride(overrideData); // Pass data without ID
                              currentDbOverrideIds.delete(dbOverrideId); // Marcar como procesado
                          } else {
                             // Insertar nuevo override (usando setPackageItemOverride)
                              console.log(`Insertando nuevo override para slot ${localOverride.product_modifier_slot_id}`);
-                            await setPackageItemOverride(overrideData);
+                            await setPackageItemOverride(overrideData); // Pass data without ID
                          }
                      }
                      // Eliminar overrides de la BD que ya no existen localmente
@@ -371,7 +377,7 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
              const slots = await getModifierSlotsForProduct(productToAdd.id);
 
              const newPendingItem: PendingPackageItem = {
-                 localId: crypto.randomUUID(), // ID temporal local
+                 localId: uuidv4(), // Usar uuidv4 para ID temporal local
                  product_id: productToAdd.id,
                  product_name: productToAdd.name,
                  quantity: values.quantity,
@@ -431,7 +437,7 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
                 } else {
                     // Añadir nuevo override
                      const newOverride: PackageItemModifierSlotOverride = {
-                         id: crypto.randomUUID(), // ID temporal local para el override
+                         id: uuidv4(), // ID temporal local para el override
                          package_item_id: item.localId, // Referencia al ID local del item
                          product_modifier_slot_id: slotId,
                          min_quantity: min,
@@ -471,7 +477,7 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
              toast({ title: 'Paquete Eliminado', description: `"${name}" eliminado.` });
              await onDataChange();
          } catch (error) {
-              console.error("[ManagePackages][Handler Delete Package] Error deleting package:", error);
+              console.error("[Handler Delete Package] Error deleting package:", error);
              toast({ variant: 'destructive', title: 'Error al Eliminar Paquete', description: `No se pudo eliminar. ${error instanceof Error ? error.message : ''}` });
          } finally {
              setIsDeleting(null);
@@ -814,5 +820,8 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
          </div>
      );
 };
+
+// Re-enable db object usage
+declare const db: any;
 
 export default ManagePackages;
