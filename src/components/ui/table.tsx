@@ -5,15 +5,17 @@ import { cn } from "@/lib/utils"
 const Table = React.forwardRef<
   HTMLTableElement,
   React.HTMLAttributes<HTMLTableElement>
->(({ className, ...props }, ref) => (
+>(({ className, children, ...props }, ref) => (
   <div className="relative w-full overflow-auto">
     <table
       ref={ref}
       className={cn("w-full caption-bottom text-sm", className)}
       {...props}
-    />
+    >
+      {children}
+    </table>
   </div>
-))
+));
 Table.displayName = "Table"
 
 const TableHeader = React.forwardRef<
@@ -22,12 +24,11 @@ const TableHeader = React.forwardRef<
 >(({ className, children, ...props }, ref) => {
   // Explicit return structure to potentially avoid whitespace issues
   return (
-    <thead ref={ref} className={cn("[&_tr]:border-b", className)} {...props}>
-      {children}
-    </thead>
+    <thead ref={ref} className={cn("[&_tr]:border-b", className)} {...props}>{children}</thead>
   );
 });
-TableHeader.displayName = "TableHeader"
+TableHeader.displayName = "TableHeader";
+
 
 const TableBody = React.forwardRef<
   HTMLTableSectionElement,
@@ -61,13 +62,8 @@ const TableRow = React.forwardRef<
   HTMLTableRowElement,
   React.HTMLAttributes<HTMLTableRowElement>
 >(({ className, children, ...props }, ref) => (
-  <tr
-    ref={ref}
-    className={cn("border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted", className)}
-    {...props}
-  >
-    {children}
-  </tr>
+  // Ensure no space
+  <tr ref={ref} className={cn("border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted", className)} {...props}>{children}</tr>
 ));
 TableRow.displayName = "TableRow"
 
@@ -75,6 +71,7 @@ const TableHead = React.forwardRef<
   HTMLTableCellElement,
   React.ThHTMLAttributes<HTMLTableCellElement>
 >(({ className, children, ...props }, ref) => (
+  // Ensure no space
   <th
     ref={ref}
     className={cn(
@@ -82,9 +79,7 @@ const TableHead = React.forwardRef<
       className
     )}
     {...props}
-  >
-    {children}
-  </th>
+  >{children}</th>
 ));
 TableHead.displayName = "TableHead"
 
