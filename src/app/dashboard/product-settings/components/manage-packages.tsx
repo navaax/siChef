@@ -71,10 +71,6 @@ interface ManagePackagesProps {
     allCategories: Category[]; // Todas las categorías para el selector de UI
     initialPackages: Package[];
     onDataChange: () => Promise<void>; // Callback para refrescar datos
-    // Prop para controlar visibilidad del diálogo
-    isDialogOpen: boolean;
-    onDialogClose: () => void;
-    initialEditingPackage: Package | null;
 }
 
 
@@ -84,12 +80,10 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
     allCategories,
     initialPackages,
     onDataChange,
-    isDialogOpen,
-    onDialogClose,
-    initialEditingPackage,
 }) => {
     const [packages, setPackages] = useState<Package[]>(initialPackages);
-    const [editingPackage, setEditingPackage] = useState<Package | null>(initialEditingPackage);
+    const [editingPackage, setEditingPackage] = useState<Package | null>(null);
+    const [isFormOpen, setIsFormOpen] = useState(false); // Estado del diálogo
     const [isSubmitting, setIsSubmitting] = useState(false); // Estado de carga del form principal
     const [isDeleting, setIsDeleting] = useState<string | null>(null); // Estado de carga de eliminación
     const [currentPackageItems, setCurrentPackageItems] = useState<PackageItem[]>([]);
@@ -104,6 +98,7 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
      const router = useRouter();
      const pathname = usePathname();
      const replace = router.replace; // Definir replace
+     const searchParams = useSearchParams(); // Para leer query params
 
 
     // Actualizar estado local si los datos iniciales cambian
@@ -111,23 +106,22 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
         setPackages(initialPackages);
     }, [initialPackages]);
 
-     // Sincronizar el estado de edición con la prop inicial
+     // Efecto para abrir el diálogo si hay un query param 'editPackage'
      useEffect(() => {
-         setEditingPackage(initialEditingPackage);
-         if (initialEditingPackage) {
-             packageForm.reset({
-                 name: initialEditingPackage.name,
-                 price: initialEditingPackage.price,
-                 imageUrl: initialEditingPackage.imageUrl || '',
-                 category_id: initialEditingPackage.category_id || null
-             });
-             fetchPackageItems(initialEditingPackage.id);
-         } else {
-              packageForm.reset({ name: '', price: 0, imageUrl: '', category_id: null });
-              setCurrentPackageItems([]);
+        const editPackageId = searchParams.get('editPackage');
+        if (editPackageId) {
+             const pkgToEdit = initialPackages.find(pkg => pkg.id === editPackageId);
+             if (pkgToEdit) {
+                 handleEditClick(pkgToEdit);
+             } else {
+                 // Si el ID no corresponde a ningún paquete, eliminar el param
+                 const newParams = new URLSearchParams(searchParams);
+                 newParams.delete('editPackage');
+                 replace(`${pathname}?${newParams.toString()}`);
+             }
          }
      // eslint-disable-next-line react-hooks/exhaustive-deps
-     }, [initialEditingPackage]);
+     }, [searchParams, initialPackages]);
 
 
     // Filtrar categorías tipo 'paquete' para el selector de UI
@@ -163,6 +157,40 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
         }
     }, [toast]);
 
+    // --- Handlers para abrir/cerrar diálogo ---
+     const handleAddClick = () => {
+         setEditingPackage(null);
+         packageForm.reset({ name: '', price: 0, imageUrl: '', category_id: null });
+         setCurrentPackageItems([]);
+         setIsFormOpen(true);
+     };
+
+     const handleEditClick = (pkg: Package) => {
+         setEditingPackage(pkg);
+         packageForm.reset({
+             name: pkg.name,
+             price: pkg.price,
+             imageUrl: pkg.imageUrl || '',
+             category_id: pkg.category_id || null
+         });
+         fetchPackageItems(pkg.id);
+         setIsFormOpen(true);
+          // Actualizar URL sin recargar para mantener estado
+          const currentParams = new URLSearchParams(window.location.search);
+          currentParams.set('editPackage', pkg.id);
+          replace(`${pathname}?${currentParams.toString()}`);
+     };
+
+     const handleCloseDialog = () => {
+         setIsFormOpen(false);
+         setEditingPackage(null);
+         setCurrentPackageItems([]);
+         // Limpiar el query param al cerrar
+         const currentParams = new URLSearchParams(window.location.search);
+         currentParams.delete('editPackage');
+         replace(`${pathname}?${currentParams.toString()}`);
+     };
+
 
      // Guardar/Actualizar información básica del paquete
      const handlePackageFormSubmit: SubmitHandler<PackageFormValues> = useCallback(async (values) => {
@@ -184,7 +212,7 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
             } else {
                 updatedPackage = await addPackageService(dataToSave);
                 updatedPackage.items = []; // Nuevo paquete no tiene items aún
-                 // Actualizar URL con el nuevo ID después de crear
+                 // Actualizar URL con el nuevo ID después de crear SIN recargar
                  const currentParams = new URLSearchParams(window.location.search);
                  currentParams.set('editPackage', updatedPackage.id);
                  replace(`${pathname}?${currentParams.toString()}`);
@@ -199,6 +227,7 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
         } finally {
             setIsSubmitting(false);
         }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [editingPackage, currentPackageItems, replace, pathname, toast, onDataChange]);
 
 
@@ -251,7 +280,7 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
          }
      };
 
-     // --- Gestión de Overrides de Modificadores ---
+    // --- Gestión de Overrides de Modificadores ---
 
      // Abrir diálogo para editar overrides de un item específico
      const openOverridesDialog = async (item: PackageItem) => {
@@ -284,7 +313,7 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
         if (!editingOverridesForItem) return;
         setIsOverridesLoading(true);
         try {
-            const data: Omit<PackageItemModifierSlotOverride, 'id'> = {
+            const data: Omit<PackageItemModifierSlotOverride, 'id' | 'product_modifier_slot_label'> = {
                 package_item_id: editingOverridesForItem.id,
                 product_modifier_slot_id: slotId,
                 min_quantity: min,
@@ -327,6 +356,21 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
         }
      };
 
+     // Eliminar un paquete completo
+     const handleDeletePackage = async (id: string, name: string) => {
+         setIsDeleting(id);
+         try {
+             await deletePackageService(id);
+             toast({ title: 'Paquete Eliminado', description: `"${name}" eliminado.` });
+             await onDataChange();
+         } catch (error) {
+              console.error("[ManagePackages][Handler Delete Package] Error deleting package:", error);
+             toast({ variant: 'destructive', title: 'Error al Eliminar Paquete', description: `No se pudo eliminar. ${error instanceof Error ? error.message : ''}` });
+         } finally {
+             setIsDeleting(null);
+         }
+     };
+
 
      // Helper para formatear moneda
     const formatCurrency = (amount: number | null | undefined): string => {
@@ -336,9 +380,84 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
 
 
      return (
-         <>
+        <div>
+             <div className="flex justify-between items-center mb-4">
+                 <h3 className="text-xl font-semibold">Gestionar Paquetes</h3>
+                 <Button size="sm" onClick={handleAddClick}>
+                     <PlusCircle className="mr-2 h-4 w-4" /> Añadir Paquete
+                 </Button>
+             </div>
+             <p className="text-muted-foreground mb-4">Crea combos o paquetes, añade productos y configura reglas de modificadores.</p>
+
+             <Card>
+                 <CardContent className="p-0">
+                     <ScrollArea className="h-[60vh]">
+                         <Table>
+                             <TableHeader className="sticky top-0 bg-background z-10 shadow-sm">
+                                <TableRow>
+                                    <TableHead>Nombre</TableHead>
+                                    <TableHead>Categoría (UI)</TableHead>
+                                    <TableHead className="text-right">Precio</TableHead>
+                                    <TableHead>Imagen</TableHead>
+                                    <TableHead className="text-right">Acciones</TableHead>
+                                </TableRow>
+                             </TableHeader>
+                             <TableBody>
+                                {packages.length === 0 ? (
+                                    <TableRow><TableCell colSpan={5} className="text-center h-24">No hay paquetes definidos.</TableCell></TableRow>
+                                ) : (
+                                    packages.map(pkg => {
+                                        const uiCategory = allCategories.find(c => c.id === pkg.category_id);
+                                        return (
+                                            <TableRow key={pkg.id}>
+                                                <TableCell className="font-medium">{pkg.name}</TableCell>
+                                                <TableCell>{uiCategory?.name || <span className="text-xs text-muted-foreground">N/A</span>}</TableCell>
+                                                <TableCell className="text-right">{formatCurrency(pkg.price)}</TableCell>
+                                                <TableCell>
+                                                    {pkg.imageUrl ? (
+                                                        <Image src={pkg.imageUrl} alt={pkg.name} width={40} height={30} className="rounded object-cover" data-ai-hint="package deal image" unoptimized/>
+                                                    ) : (
+                                                        <span className="text-xs text-muted-foreground">N/A</span>
+                                                    )}
+                                                </TableCell>
+                                                <TableCell className="text-right">
+                                                     <Button variant="ghost" size="icon" className="h-7 w-7 mr-1" onClick={() => handleEditClick(pkg)} title="Editar Paquete">
+                                                        <Edit className="h-4 w-4" />
+                                                     </Button>
+                                                      <AlertDialog>
+                                                        <AlertDialogTrigger asChild>
+                                                            <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" disabled={isDeleting === pkg.id} title="Eliminar Paquete">
+                                                               {isDeleting === pkg.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                                                            </Button>
+                                                        </AlertDialogTrigger>
+                                                        <AlertDialogContent>
+                                                            <AlertDialogHeader>
+                                                            <AlertDialogTitle>¿Estás seguro?</AlertDialogTitle>
+                                                            <AlertDialogDescription>
+                                                                Esta acción eliminará el paquete "{pkg.name}" y todo su contenido. No se puede deshacer.
+                                                            </AlertDialogDescription>
+                                                            </AlertDialogHeader>
+                                                            <AlertDialogFooter>
+                                                            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                                                            <AlertDialogAction onClick={() => handleDeletePackage(pkg.id, pkg.name)} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                                                                Eliminar
+                                                            </AlertDialogAction>
+                                                            </AlertDialogFooter>
+                                                        </AlertDialogContent>
+                                                     </AlertDialog>
+                                                </TableCell>
+                                            </TableRow>
+                                        );
+                                    })
+                                )}
+                             </TableBody>
+                         </Table>
+                     </ScrollArea>
+                 </CardContent>
+             </Card>
+
              {/* Dialogo Añadir/Editar Paquete */}
-              <Dialog open={isDialogOpen} onOpenChange={(isOpen) => { if (!isOpen) onDialogClose(); }}>
+              <Dialog open={isFormOpen} onOpenChange={(isOpen) => { if (!isOpen) handleCloseDialog(); }}>
                  <DialogContent className="sm:max-w-[800px] max-h-[90vh] flex flex-col">
                      <DialogHeader>
                          <DialogTitle>{editingPackage ? 'Editar Paquete' : 'Añadir Nuevo Paquete'}</DialogTitle>
@@ -459,7 +578,7 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
 
                      <DialogFooter className="mt-auto pt-4 border-t shrink-0"> {/* Footer fuera del scroll */}
                         <DialogClose asChild>
-                            <Button type="button" variant="outline">Cerrar</Button>
+                            <Button type="button" variant="outline" onClick={handleCloseDialog}>Cerrar</Button>
                         </DialogClose>
                     </DialogFooter>
                 </DialogContent>
@@ -552,7 +671,7 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
                     </DialogFooter>
                 </DialogContent>
               </Dialog>
-         </>
+         </div>
      );
 };
 

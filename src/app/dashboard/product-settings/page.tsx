@@ -15,10 +15,10 @@ import ManagePackages from './components/manage-packages';
 // Importar servicios
 import {
     getCategories,
-    getProductsByCategory,
-    getModifiersByCategory,
+    getProductsByCategory, // Se usa internamente en ManageProducts, puede que no sea necesario aquí
+    getModifiersByCategory, // Se usa internamente en ManageProducts, puede que no sea necesario aquí
     getAllPackages,
-    getAllProductList // Usar esta función para obtener productos y modificadores
+    getAllProductList // Para obtener productos y modificadores para pasarlos
 } from '@/services/product-service';
 import { getInventoryItems } from '@/services/inventory-service';
 import type { Category, Product, Package, InventoryItem } from '@/types/product-types';
@@ -31,7 +31,7 @@ export default function ProductSettingsPage() {
 
     // Estado para almacenar los datos compartidos
     const [allCategories, setAllCategories] = useState<Category[]>([]);
-    const [allProducts, setAllProducts] = useState<Product[]>([]); // Almacena productos y modificadores
+    const [allProductsAndModifiers, setAllProductsAndModifiers] = useState<Product[]>([]); // Almacena productos y modificadores
     const [allPackages, setAllPackages] = useState<Package[]>([]);
     const [allInventoryItems, setAllInventoryItems] = useState<InventoryItem[]>([]);
 
@@ -56,13 +56,12 @@ export default function ProductSettingsPage() {
             console.log(`[ProductSettingsPage] Obtenidos ${fetchedPackages.length} paquetes.`);
             setAllPackages(fetchedPackages);
 
-             console.log("[ProductSettingsPage] Obteniendo todos los productos y modificadores...");
+            console.log("[ProductSettingsPage] Obteniendo todos los productos y modificadores...");
+            // Usamos getAllProductList y filtramos por itemType='product' como Product
             const productListRaw = await getAllProductList();
-            // Aquí se asume que getAllProductList puede devolver productos/modificadores (itemType='product') y paquetes (itemType='package')
-            const fetchedProductsAndModifiers = productListRaw.filter(item => item.itemType === 'product') as Product[];
-
-             console.log(`[ProductSettingsPage] Obtenidos ${fetchedProductsAndModifiers.length} productos/modificadores.`);
-             setAllProducts(fetchedProductsAndModifiers);
+            const fetchedProductsAndMods = productListRaw.filter(item => item.itemType === 'product') as Product[];
+            console.log(`[ProductSettingsPage] Obtenidos ${fetchedProductsAndMods.length} productos/modificadores.`);
+            setAllProductsAndModifiers(fetchedProductsAndMods);
 
 
             console.log("[ProductSettingsPage] fetchData completado exitosamente.");
@@ -134,16 +133,16 @@ export default function ProductSettingsPage() {
                              <ManageProducts
                                 categories={allCategories}
                                 inventoryItems={allInventoryItems}
-                                initialProducts={allProducts} // Pasar productos y modificadores
+                                initialProducts={allProductsAndModifiers} // Pasar productos y modificadores
                                 onDataChange={fetchData}
                             />
                         </TabsContent>
                         <TabsContent value="packages" className="flex-grow overflow-auto mt-0">
                               <ManagePackages
-                                allProducts={allProducts.filter(p => p.categoryId && allCategories.find(c => c.id === p.categoryId)?.type === 'producto')} // Solo productos vendibles
-                                allCategories={allCategories}
-                                initialPackages={allPackages}
-                                onDataChange={fetchData}
+                                allProducts={allProductsAndModifiers.filter(p => p.categoryId && allCategories.find(c => c.id === p.categoryId)?.type === 'producto')} // Solo productos vendibles para añadir a paquetes
+                                allCategories={allCategories} // Pasar todas las categorías para el selector de UI
+                                initialPackages={allPackages} // Pasar los paquetes existentes
+                                onDataChange={fetchData} // Pasar la función de refresco
                             />
                         </TabsContent>
                     </Tabs>
