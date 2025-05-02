@@ -76,9 +76,13 @@ export default function SettingsPage() {
     `;
 
     try {
+      // Llama a la función de impresión del servicio
       await printTicket(testHtml, "Prueba de Impresión siChef");
-      // Éxito aquí significa que se llamó al diálogo de impresión (del OS o navegador)
-      toast({ title: "Diálogo de Impresión Mostrado", description: "Selecciona una impresora en el diálogo del sistema o navegador.", icon: <CheckCircle className="h-4 w-4 text-green-500"/> });
+
+      // En el navegador, esto generalmente abre el diálogo de impresión del navegador.
+      // En una app Capacitor con el plugin correcto, podría abrir el diálogo del OS.
+      toast({ title: "Diálogo de Impresión Iniciado", description: "Selecciona una impresora en el diálogo del sistema o navegador.", icon: <CheckCircle className="h-4 w-4 text-green-500"/> });
+
     } catch (error) {
       console.error("Error en la prueba de impresión:", error);
       const message = error instanceof PrinterError ? error.message : "Error desconocido al imprimir.";
@@ -112,7 +116,7 @@ export default function SettingsPage() {
 
           <SettingsSection
             title="Impresión"
-            description="Configuración de impresión de recibos. Funciona en navegador (abre diálogo) y en app nativa (usa diálogo del OS)."
+            description="Configuración de impresión de recibos. Usa el diálogo de impresión del navegador/OS."
            >
              <div className="flex items-center space-x-2 mb-4">
                 <input
@@ -137,7 +141,6 @@ export default function SettingsPage() {
               {isTestingPrinter ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
               Probar Impresión (Abre Diálogo)
             </Button>
-
           </SettingsSection>
 
            <SettingsSection title="Usuarios" description="Administrar cuentas de usuario.">
@@ -157,4 +160,3 @@ export default function SettingsPage() {
     </div>
   );
 }
-```
