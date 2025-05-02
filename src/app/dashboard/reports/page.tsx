@@ -28,7 +28,7 @@ import { CalendarIcon } from "lucide-react"; // Added for date picker
 import { Calendar } from "@/components/ui/calendar"; // Added for date picker
 import { cn } from "@/lib/utils"; // Added for date picker styling
 
-// Helper to get status badge variant
+// Helper para obtener variante de badge de estado
 const getStatusVariant = (status: SavedOrder['status']): "default" | "secondary" | "destructive" | "outline" | null | undefined => {
   switch (status) {
     case 'completed': return 'secondary';
@@ -40,7 +40,7 @@ const getStatusVariant = (status: SavedOrder['status']): "default" | "secondary"
 
 type WizardStep = 'countCash' | 'expenses' | 'tips' | 'loans' | 'summary' | 'confirm';
 
-// --- Component ---
+// --- Componente ---
 export default function ReportsPage() {
   const { username } = useAuth();
   const { currentSession, clearSession } = useCashRegister(); // Obtener sesión de caja actual
@@ -60,7 +60,7 @@ export default function ReportsPage() {
     endingCashTotal: 0,
   });
 
-   // Load orders from localStorage on mount
+   // Cargar pedidos desde localStorage al montar
   useEffect(() => {
     const storedOrders = localStorage.getItem('siChefOrders');
     if (storedOrders) {
@@ -83,13 +83,13 @@ export default function ReportsPage() {
            }));
            setAllOrders(parsedOrders);
       } catch (error) {
-          console.error("Failed to parse orders from localStorage:", error);
+          console.error("Fallo al parsear pedidos desde localStorage:", error);
           toast({ title: "Error al Cargar Pedidos", description: "No se pudieron cargar los datos de ventas anteriores.", variant: "destructive" });
       }
     }
   }, [toast]);
 
-  // Filter orders based on selected date
+  // Filtrar pedidos basado en la fecha seleccionada
   useEffect(() => {
     if (selectedDate) {
       const startOfDay = new Date(selectedDate);
@@ -102,7 +102,7 @@ export default function ReportsPage() {
       );
       setFilteredOrders(filtered);
     } else {
-      setFilteredOrders(allOrders); // Show all if no date selected
+      setFilteredOrders(allOrders); // Mostrar todos si no hay fecha seleccionada
     }
   }, [selectedDate, allOrders]);
 
@@ -183,17 +183,21 @@ export default function ReportsPage() {
     setIsGeneratingPdf(true);
     toast({ title: "Generando Reporte...", description: "Preparando el PDF de ventas y cerrando caja." });
 
+    // CAPTURE DATA BEFORE ANY STATE CHANGES
+    const currentCompletedOrders = [...completedOrders]; // Create a stable copy
+    const reportTimestamp = new Date(); // Use a consistent timestamp
+
     try {
-        // 1. Preparar datos del reporte
+        // 1. Preparar datos del reporte usando la copia estable
         const reportData: SalesReport = {
             businessName: "siChef POS", // Reemplazar con nombre dinámico
             // logo: "https://picsum.photos/100/50?random=99", // Logo placeholder - Opcional
-            reportDate: new Date().toISOString(), // Usar ISO string, formato se aplica en PDF
+            reportDate: reportTimestamp.toISOString(), // Usar timestamp consistente
             user: username || 'Usuario Desconocido',
             startingCash: startingCash,
-            totalSales: totalSales,
-            cashSales: cashSales,
-            cardSales: cardSales,
+            totalSales: totalSales, // Calculation based on filtered data before this function
+            cashSales: cashSales,   // Calculation based on filtered data before this function
+            cardSales: cardSales,   // Calculation based on filtered data before this function
             totalExpenses: endOfDayData.expenses ?? 0,
             totalTips: endOfDayData.tips ?? 0,
             loansWithdrawalsAmount: endOfDayData.loanAmount ?? 0,
@@ -201,7 +205,7 @@ export default function ReportsPage() {
             endingCash: endOfDayData.endingCashTotal ?? 0, // Conteo final
             expectedCashInRegister: expectedCashInRegister, // Calculado incluyendo gastos, etc.
             calculatedDifference: cashDifference, // Diferencia calculada
-            salesHistory: completedOrders.map(order => ({
+            salesHistory: currentCompletedOrders.map(order => ({ // USAR LA COPIA ESTABLE
                 orderNumber: String(order.orderNumber),
                 orderId: order.id,
                 customer: order.customerName,
@@ -212,43 +216,47 @@ export default function ReportsPage() {
             })),
         };
 
+        console.log("Datos para el reporte:", reportData); // Log para depuración
+
         // 2. Generar PDF
         const pdfBytes = await generateSalesReport(reportData);
+        console.log(`Bytes del PDF generados: ${pdfBytes?.length}`); // Log para depuración
 
         // 3. Descargar PDF
         if (pdfBytes && pdfBytes.length > 0) {
             const blob = new Blob([pdfBytes], { type: 'application/pdf' });
             const link = document.createElement('a');
             link.href = URL.createObjectURL(blob);
-            const timestamp = format(new Date(), 'yyyyMMdd_HHmmss');
-            link.download = `siChef_ReporteVentas_${timestamp}.pdf`;
+            const timestampStr = format(reportTimestamp, 'yyyyMMdd_HHmmss'); // Usar timestamp consistente
+            link.download = `siChef_ReporteVentas_${timestampStr}.pdf`;
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);
-            URL.revokeObjectURL(link.href);
+            URL.revokeObjectURL(link.href); // Limpiar objeto URL
             toast({ title: "Reporte Generado", description: "Descarga de PDF iniciada." });
         } else {
-             // Esto no debería suceder con la implementación real de PDF
-             console.warn('generateSalesReport devolvió un array vacío o nulo.');
-             toast({ title: "Error Reporte", description: "No se pudo generar el archivo PDF.", variant: "destructive" });
+             console.error('generateSalesReport devolvió un array vacío o nulo.');
+             toast({ title: "Error Reporte", description: "No se pudo generar el archivo PDF (datos vacíos).", variant: "destructive" });
+             // NO continuar si falla la generación/descarga del PDF crítico
+             setIsGeneratingPdf(false);
+             return;
         }
+
+        // ---- SOLO SI EL PDF SE GENERÓ Y DESCARGÓ ----
 
         // 4. Cerrar la sesión de caja en la BD
         await closeCashSession(
             currentSession.id,
             endOfDayData.endingCashTotal ?? 0,
-            cashSales,
-            cardSales,
+            cashSales, // Pasar los totales calculados antes
+            cardSales, // Pasar los totales calculados antes
             endOfDayData.expenses ?? 0,
             endOfDayData.tips ?? 0,
             endOfDayData.loanAmount ?? 0,
             endOfDayData.loanReason ?? ''
         );
 
-        // 5. Resetear estado local
-        // Mover todas las órdenes (incluyendo pendientes) al historial o limpiar completadas?
-        // Por ahora, limpiaremos las completadas de la sesión actual (localStorage)
-        // En una app real, esto sería manejado por el backend.
+        // 5. Resetear estado local y localStorage (MOVIDO AL FINAL)
         const remainingOrders = allOrders.filter(o => o.status !== 'completed' || o.createdAt < currentSession.start_time); // Conservar pendientes y antiguas
         localStorage.setItem('siChefOrders', JSON.stringify(remainingOrders));
         setAllOrders(remainingOrders); // Actualizar estado local
@@ -264,6 +272,7 @@ export default function ReportsPage() {
         setIsGeneratingPdf(false);
     }
 };
+
 
 // --- Renderizado del Wizard ---
 const renderWizardContent = () => {
@@ -391,6 +400,7 @@ const renderWizardContent = () => {
              <div className="space-y-3 py-4 text-sm">
                 <div className="flex justify-between"><span className="text-muted-foreground">Fondo Inicial:</span> <span>{formatCurrency(startingCash)}</span></div>
                 <div className="flex justify-between"><span className="text-muted-foreground">Ventas Efectivo:</span> <span className="text-green-600">+ {formatCurrency(cashSales)}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Ventas Tarjeta:</span> <span>{formatCurrency(cardSales)}</span></div> {/* Agregado */}
                 <div className="flex justify-between"><span className="text-muted-foreground">Gastos:</span> <span className="text-red-600">- {formatCurrency(endOfDayData.expenses ?? 0)}</span></div>
                 <div className="flex justify-between"><span className="text-muted-foreground">Propinas (Efectivo):</span> <span className="text-green-600">+ {formatCurrency(endOfDayData.tips ?? 0)}</span></div>
                 <div className="flex justify-between"><span className="text-muted-foreground">Préstamos/Retiros:</span> <span className="text-red-600">- {formatCurrency(endOfDayData.loanAmount ?? 0)}</span></div>
@@ -428,7 +438,7 @@ const renderWizardContent = () => {
              <CardDescription>Historial de pedidos por fecha.</CardDescription>
           </div>
           <div className="flex items-center gap-4">
-              {/* Date Picker */}
+              {/* Selector de Fecha */}
              <Popover>
                 <PopoverTrigger asChild>
                 <Button
