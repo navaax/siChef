@@ -29,8 +29,8 @@ export function Toaster() {
           </Toast>
         )
       })}
-      {/* Modified className to position toasts at bottom center */}
-      <ToastViewport className="fixed bottom-0 left-1/2 z-[100] flex max-h-screen w-full -translate-x-1/2 flex-col-reverse p-4 sm:max-w-md" />
+      {/* Removed custom className to use default positioning from ToastViewport */}
+      <ToastViewport />
     </ToastProvider>
   )
 }
