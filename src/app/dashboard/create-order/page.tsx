@@ -267,9 +267,12 @@ export default function CreateOrderPage() {
          // Sin modificadores, añadir directamente al pedido (el precio es solo el precio base)
         addProductToOrder(product, [], product.price);
          toast({ title: `${product.name} añadido`, description: 'Sin modificadores' });
-         // Permanecer en la vista de productos para posibles adiciones adicionales
-         setView('products');
-         setSelectedProduct(null); // Resetear selección después de añadir
+         // MODIFICADO: Regresar a categorías después de añadir
+         setView('categories');
+         resetProductSelection(); // Resetear selección y slots
+         setSelectedCategory(null); // Limpiar categoría seleccionada
+         setProducts([]); // Limpiar productos de la lista
+         setPackages([]); // Limpiar paquetes de la lista
     }
 
   };
@@ -391,8 +394,12 @@ export default function CreateOrderPage() {
         description: chosenModifiers.length > 0 ? `Modificadores: ${chosenModifiers.map(m => m.name).join(', ')}` : 'Sin modificadores',
     });
 
-    // Resetear y regresar
-    resetProductSelection();
+    // MODIFICADO: Regresar a categorías después de añadir
+    setView('categories');
+    resetProductSelection(); // Resetear selección y slots
+    setSelectedCategory(null); // Limpiar categoría seleccionada
+    setProducts([]); // Limpiar productos de la lista
+    setPackages([]); // Limpiar paquetes de la lista
   };
 
    const handleAddPackageToOrder = async () => { // Hacer asíncrono para obtener detalles del producto
@@ -533,8 +540,12 @@ export default function CreateOrderPage() {
             title: `Paquete "${packageDef.name}" añadido`,
         });
 
-        // Resetear y regresar
-        resetPackageSelection();
+        // MODIFICADO: Regresar a categorías después de añadir
+        setView('categories');
+        resetPackageSelection(); // Resetear selección y detalles
+        setSelectedCategory(null); // Limpiar categoría seleccionada
+        setProducts([]); // Limpiar productos de la lista
+        setPackages([]); // Limpiar paquetes de la lista
    };
 
   // Añadir producto regular al pedido
@@ -644,21 +655,25 @@ export default function CreateOrderPage() {
   const resetProductSelection = () => {
     setSelectedProduct(null);
     setCurrentModifierSlots([]);
-    setView('products'); // Regresar a la lista de la categoría actual
+    // No cambia la vista aquí, se maneja en el caller
+    // setView('products');
   }
 
   const resetPackageSelection = () => {
     setSelectedPackage(null);
     setSelectedPackageDetail(null);
-    setView('products'); // Regresar a la lista de la categoría actual
+    // No cambia la vista aquí, se maneja en el caller
+    // setView('products');
   }
 
 
   const handleBack = () => {
     if (view === 'modifiers') {
       resetProductSelection();
+      setView('products'); // Regresar a la lista de productos
     } else if (view === 'package-details') {
        resetPackageSelection();
+       setView('products'); // Regresar a la lista de productos
     } else if (view === 'products') { // Vista unificada para productos y paquetes
       setView('categories');
       setSelectedCategory(null);
@@ -800,7 +815,7 @@ export default function CreateOrderPage() {
                           const invItemId = pkgItemDetails.inventory_item_id;
                           // Consumo = consumo del producto * cantidad definida en paquete * cantidad de paquete en pedido
                           // Asumir cantidad de item de paquete definida en tabla package_items (o predeterminado 1)
-                           const packageItemDef = packageItems.find(pi => pi.id === pkgItem.packageItemId);
+                           const packageItemDef = selectedPackageDetail?.packageItems.find(pi => pi.id === pkgItem.packageItemId); // Buscar en detalle de paquete
                            const itemQtyInPackage = packageItemDef?.quantity || 1;
                            const change = -(pkgItemDetails.inventory_consumed_per_unit * itemQtyInPackage * orderItem.quantity);
                           const currentData = inventoryAdjustments[invItemId] || { change: 0, name: inventoryMap.get(invItemId)?.name || 'Inv Item Desc.' };
@@ -875,10 +890,10 @@ export default function CreateOrderPage() {
                          pkgItem.selectedModifiers.forEach(mod => {
                             // Intentar encontrar etiqueta de slot desde estado de detalle de paquete si está disponible
                              let slotLabel = 'Mod';
-                             if (selectedPackageDetail && selectedPackageDetail.itemSlots[pkgItem.packageItemId]) {
-                                 const slot = selectedPackageDetail.itemSlots[pkgItem.packageItemId].find(s => s.id === mod.slotId);
-                                 slotLabel = slot?.label || `Mod (${pkgItem.productName})`;
-                             }
+                             // Intentar buscar en selectedPackageDetail (si está cargado) o en currentModifierSlots (si se está editando)
+                             const slotsSource = selectedPackageDetail?.itemSlots[pkgItem.packageItemId] ?? currentModifierSlots;
+                             const slot = slotsSource.find(s => s.id === mod.slotId);
+                             slotLabel = slot?.label || `Mod (${pkgItem.productName})`;
                              components.push({ name: `↳ ${mod.name}`, slotLabel: slotLabel});
                          });
                     }
@@ -1446,4 +1461,3 @@ export default function CreateOrderPage() {
     </div>
   );
 }
-
