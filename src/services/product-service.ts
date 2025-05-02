@@ -5,12 +5,12 @@ import { getDb } from '@/lib/db';
 import type {
     Category,
     Product,
+    Package, // Import the new Package type
     ProductModifierSlot,
-    // Package, // DEPRECATED: Package is now just a Product with type 'paquete'
     PackageItem,
     PackageItemModifierSlotOverride
 } from '@/types/product-types';
-import { randomUUID } from 'crypto'; // Import randomUUID
+import { randomUUID } from 'crypto';
 
 /**
  * Fetches categories, optionally filtering by type.
@@ -20,7 +20,6 @@ import { randomUUID } from 'crypto'; // Import randomUUID
 export async function getCategories(type?: Category['type']): Promise<Category[]> {
   const db = await getDb();
   try {
-    // Ensure the query selects the 'type' column
     let query = 'SELECT id, name, type, imageUrl FROM categories';
     const params: any[] = [];
     if (type) {
@@ -37,70 +36,105 @@ export async function getCategories(type?: Category['type']): Promise<Category[]
 }
 
 /**
- * Fetches products that are NOT packages within a specific category.
- * @param categoryId The ID of the category.
+ * Fetches products (NOT modifiers, NOT packages) within a specific category.
+ * @param categoryId The ID of the category (must be type 'producto').
  * @returns A promise resolving to an array of Product objects.
  */
 export async function getProductsByCategory(categoryId: string): Promise<Product[]> {
   const db = await getDb();
   try {
-    // Fetch products BELONGING to the specified category AND whose category type is NOT 'paquete'
+    // Fetch products belonging to the specified category where category type is 'producto'
      const products = await db.all<Product[]>(`
         SELECT p.*
         FROM products p
         JOIN categories c ON p.categoryId = c.id
-        WHERE p.categoryId = ? AND c.type != 'paquete'
+        WHERE p.categoryId = ? AND c.type = 'producto'
         ORDER BY p.name ASC
      `, categoryId);
     return products;
   } catch (error) {
-    console.error(`Error fetching non-package products for category ${categoryId}:`, error);
-    throw new Error(`Failed to fetch non-package products for category ${categoryId}.`);
+    console.error(`Error fetching products for category ${categoryId}:`, error);
+    throw new Error(`Failed to fetch products for category ${categoryId}.`);
   }
 }
 
 /**
- * Fetches ONLY packages (products associated with a category of type 'paquete').
- * @param categoryId The ID of the category (usually one with type 'paquete').
- * @returns A promise resolving to an array of Product objects representing packages.
+ * Fetches modifier options (products associated with a category of type 'modificador').
+ * @param categoryId The ID of the category (must be type 'modificador').
+ * @returns A promise resolving to an array of Product objects representing modifier options.
  */
-export async function getPackagesByCategory(categoryId: string): Promise<Product[]> {
+export async function getModifiersByCategory(categoryId: string): Promise<Product[]> {
     const db = await getDb();
     try {
-        // Fetch products BELONGING to the specified category AND whose category type IS 'paquete'
-         const packages = await db.all<Product[]>(`
+        const modifiers = await db.all<Product[]>(`
             SELECT p.*
             FROM products p
             JOIN categories c ON p.categoryId = c.id
-            WHERE p.categoryId = ? AND c.type = 'paquete'
+            WHERE p.categoryId = ? AND c.type = 'modificador'
             ORDER BY p.name ASC
         `, categoryId);
-        return packages;
+        return modifiers;
     } catch (error) {
-        console.error(`Error fetching packages for category ${categoryId}:`, error);
-        throw new Error(`Failed to fetch packages for category ${categoryId}.`);
+        console.error(`Error fetching modifiers for category ${categoryId}:`, error);
+        throw new Error(`Failed to fetch modifiers for category ${categoryId}.`);
     }
 }
 
+
 /**
- * Fetches a single product or package by its ID.
- * @param productId The ID of the product or package.
+ * Fetches all defined packages.
+ * @returns A promise resolving to an array of Package objects.
+ */
+export async function getAllPackages(): Promise<Package[]> {
+    const db = await getDb();
+    try {
+        const packages = await db.all<Package[]>('SELECT * FROM packages ORDER BY name ASC');
+        return packages;
+    } catch (error) {
+        console.error(`Error fetching packages:`, error);
+        throw new Error(`Failed to fetch packages.`);
+    }
+}
+
+
+/**
+ * Fetches a single product by its ID.
+ * @param productId The ID of the product.
  * @returns A promise resolving to a Product object or null if not found.
  */
 export async function getProductById(productId: string): Promise<Product | null> {
     const db = await getDb();
     try {
-        // This function works for both regular products and packages now
         const product = await db.get<Product>(
             'SELECT * FROM products WHERE id = ?',
              productId
         );
         return product || null;
     } catch (error) {
-        console.error(`Error fetching product/package ${productId}:`, error);
-        throw new Error(`Failed to fetch product/package ${productId}.`);
+        console.error(`Error fetching product ${productId}:`, error);
+        throw new Error(`Failed to fetch product ${productId}.`);
     }
 }
+
+/**
+ * Fetches a single package by its ID.
+ * @param packageId The ID of the package.
+ * @returns A promise resolving to a Package object or null if not found.
+ */
+export async function getPackageById(packageId: string): Promise<Package | null> {
+    const db = await getDb();
+    try {
+        const pkg = await db.get<Package>(
+            'SELECT * FROM packages WHERE id = ?',
+             packageId
+        );
+        return pkg || null;
+    } catch (error) {
+        console.error(`Error fetching package ${packageId}:`, error);
+        throw new Error(`Failed to fetch package ${packageId}.`);
+    }
+}
+
 
 /**
  * Fetches the modifier slots defined for a specific product.
@@ -125,7 +159,7 @@ export async function getModifierSlotsForProduct(productId: string): Promise<Pro
 
 /**
  * Fetches the items (products) included in a specific package definition.
- * @param packageId The ID of the package (which is a product ID).
+ * @param packageId The ID of the package.
  * @returns A promise resolving to an array of PackageItem objects, including the product name.
  */
 export async function getItemsForPackage(packageId: string): Promise<PackageItem[]> {
@@ -184,78 +218,69 @@ export async function updateCategory(id: string, updates: Partial<Omit<Category,
   const db = await getDb();
   const fields = Object.keys(updates).map(key => `${key} = ?`).join(', ');
   const values = Object.values(updates);
-  if (fields.length === 0) return; // No updates provided
+  if (fields.length === 0) return;
   const result = await db.run(`UPDATE categories SET ${fields} WHERE id = ?`, [...values, id]);
   if (result.changes === 0) throw new Error(`Category with id ${id} not found.`);
 }
 
 export async function deleteCategory(id: string): Promise<void> {
     const db = await getDb();
-    // CASCADE delete should handle related products, slots etc. if configured correctly in DB schema
-    // Verify if products using this category exist before deleting? Or let cascade handle it.
     const result = await db.run('DELETE FROM categories WHERE id = ?', id);
     if (result.changes === 0) throw new Error(`Category with id ${id} not found.`);
 }
 
-// --- Product CRUD (also used for Packages) ---
+// --- Product CRUD ---
 export async function addProduct(product: Omit<Product, 'id'>): Promise<Product> {
   const db = await getDb();
   const newProduct = { ...product, id: randomUUID() };
-  console.log("[addProduct] Adding Product (or Package) - Attempting INSERT:", JSON.stringify(newProduct, null, 2));
+  console.log("[addProduct] Adding Product - Attempting INSERT:", JSON.stringify(newProduct, null, 2));
   try {
     await db.run('INSERT INTO products (id, name, price, categoryId, imageUrl, inventory_item_id, inventory_consumed_per_unit) VALUES (?, ?, ?, ?, ?, ?, ?)',
       newProduct.id,
       newProduct.name,
       newProduct.price,
       newProduct.categoryId,
-      newProduct.imageUrl ?? null, // Ensure null if undefined
-      newProduct.inventory_item_id ?? null, // Ensure null if undefined
-      newProduct.inventory_consumed_per_unit ?? null // Ensure null if undefined
+      newProduct.imageUrl ?? null,
+      newProduct.inventory_item_id ?? null,
+      newProduct.inventory_consumed_per_unit ?? null
       );
-    console.log(`[addProduct] Product/Package successfully added with ID: ${newProduct.id}`);
+    console.log(`[addProduct] Product successfully added with ID: ${newProduct.id}`);
     return newProduct;
   } catch (error) {
-    console.error(`[addProduct] Error inserting Product/Package with ID ${newProduct.id}:`, error); // Log the error
-    throw error; // Re-throw the error so the frontend knows it failed
+    console.error(`[addProduct] Error inserting Product with ID ${newProduct.id}:`, error);
+    throw error;
   }
 }
 
 export async function updateProduct(id: string, updates: Partial<Omit<Product, 'id'>>): Promise<void> {
   const db = await getDb();
-   // Prepare updates, ensuring potential undefined values from form are handled
    const validUpdates: Partial<Product> = {};
    let query = 'UPDATE products SET ';
    const params: any[] = [];
 
    Object.entries(updates).forEach(([key, value]) => {
-     // Handle optional fields that might come as empty strings from forms
      if (key === 'imageUrl' && value === '') {
-       validUpdates[key as keyof Product] = null; // Store null in DB if image URL is cleared
-     } else if (key === 'inventory_item_id' && (value === '' || value === null || value === '__NONE__')) { // Check for null/empty/placeholder
-        validUpdates[key as keyof Product] = null; // Unlink inventory item
-        // Also nullify consumption if inventory is unlinked
+       validUpdates[key as keyof Product] = null;
+     } else if (key === 'inventory_item_id' && (value === '' || value === null || value === '__NONE__')) {
+        validUpdates[key as keyof Product] = null;
         validUpdates['inventory_consumed_per_unit'] = null;
      } else if (value !== undefined) {
         validUpdates[key as keyof Product] = value as any;
      }
    });
 
-    // If inventory is linked, ensure consumption is set (default to 1 if not provided and not explicitly set to null)
    if (validUpdates.inventory_item_id && validUpdates.inventory_consumed_per_unit === undefined) {
         validUpdates.inventory_consumed_per_unit = 1;
    }
-   // If inventory is unlinked, ensure consumption is null
    if (validUpdates.inventory_item_id === null) {
         validUpdates.inventory_consumed_per_unit = null;
    }
 
-
    const fields = Object.keys(validUpdates);
    if (fields.length === 0) {
         console.log("No valid updates provided for product", id);
-        return; // No valid updates provided
+        return;
    }
-
 
    query += fields.map(field => `${field} = ?`).join(', ');
    query += ' WHERE id = ?';
@@ -271,9 +296,66 @@ export async function updateProduct(id: string, updates: Partial<Omit<Product, '
 
 export async function deleteProduct(id: string): Promise<void> {
     const db = await getDb();
-    // CASCADE delete should handle related modifier slots, package items etc.
     const result = await db.run('DELETE FROM products WHERE id = ?', id);
     if (result.changes === 0) throw new Error(`Product with id ${id} not found.`);
+}
+
+// --- Package CRUD ---
+export async function addPackage(pkg: Omit<Package, 'id'>): Promise<Package> {
+    const db = await getDb();
+    const newPackage = { ...pkg, id: randomUUID() };
+    console.log("[addPackage] Adding Package - Attempting INSERT:", JSON.stringify(newPackage, null, 2));
+    try {
+        await db.run('INSERT INTO packages (id, name, price, imageUrl) VALUES (?, ?, ?, ?)',
+            newPackage.id,
+            newPackage.name,
+            newPackage.price,
+            newPackage.imageUrl ?? null
+        );
+        console.log(`[addPackage] Package successfully added with ID: ${newPackage.id}`);
+        return newPackage;
+    } catch (error) {
+        console.error(`[addPackage] Error inserting Package with ID ${newPackage.id}:`, error);
+        throw error;
+    }
+}
+
+export async function updatePackage(id: string, updates: Partial<Omit<Package, 'id'>>): Promise<void> {
+    const db = await getDb();
+    const validUpdates: Partial<Package> = {};
+    let query = 'UPDATE packages SET ';
+    const params: any[] = [];
+
+    Object.entries(updates).forEach(([key, value]) => {
+        if (key === 'imageUrl' && value === '') {
+            validUpdates[key as keyof Package] = null;
+        } else if (value !== undefined) {
+            validUpdates[key as keyof Package] = value as any;
+        }
+    });
+
+    const fields = Object.keys(validUpdates);
+    if (fields.length === 0) {
+        console.log("No valid updates provided for package", id);
+        return;
+    }
+
+    query += fields.map(field => `${field} = ?`).join(', ');
+    query += ' WHERE id = ?';
+    params.push(...Object.values(validUpdates), id);
+
+    console.log("Updating Package:", query, params);
+
+    const result = await db.run(query, params);
+    if (result.changes === 0) throw new Error(`Package with id ${id} not found.`);
+    console.log("Package updated successfully:", id);
+}
+
+export async function deletePackage(id: string): Promise<void> {
+    const db = await getDb();
+    // CASCADE delete should handle package items and overrides
+    const result = await db.run('DELETE FROM packages WHERE id = ?', id);
+    if (result.changes === 0) throw new Error(`Package with id ${id} not found.`);
 }
 
 
@@ -286,7 +368,11 @@ export async function addModifierSlot(slot: Omit<ProductModifierSlot, 'id'>): Pr
   return newSlot;
 }
 
-// TODO: Implement updateModifierSlot
+export async function deleteModifierSlot(id: string): Promise<void> {
+    const db = await getDb();
+    const result = await db.run('DELETE FROM product_modifier_slots WHERE id = ?', id);
+    if (result.changes === 0) throw new Error(`Modifier slot with id ${id} not found.`);
+}
 
 
 // --- Package Item CRUD ---
@@ -294,18 +380,17 @@ export async function addPackageItem(item: Omit<PackageItem, 'id' | 'product_nam
   const db = await getDb();
   const newItem = { ...item, id: randomUUID() };
 
-  // Detailed Logging for Debugging FK Constraint
   console.log(`[addPackageItem] START: Attempting to add item. Input Data:`, item);
   console.log(`[addPackageItem] Generated newItem object:`, newItem);
 
-  // Pre-check if package_id exists in products table
-  const packageExists = await db.get('SELECT id, name FROM products WHERE id = ?', newItem.package_id);
+  // Pre-check if package_id exists in packages table
+  const packageExists = await db.get('SELECT id, name FROM packages WHERE id = ?', newItem.package_id);
   if (!packageExists) {
-    const errorMsg = `[addPackageItem] FOREIGN KEY PRE-CHECK FAILED: Package (Product) with ID ${newItem.package_id} does not exist in products table. Cannot add item.`;
+    const errorMsg = `[addPackageItem] FOREIGN KEY PRE-CHECK FAILED: Package with ID ${newItem.package_id} does not exist in packages table. Cannot add item.`;
     console.error(errorMsg);
     throw new Error(errorMsg);
   } else {
-     console.log(`[addPackageItem] Pre-check PASSED: Found package (Product) ID ${newItem.package_id} with name "${packageExists.name}".`);
+     console.log(`[addPackageItem] Pre-check PASSED: Found package ID ${newItem.package_id} with name "${packageExists.name}".`);
   }
 
   // Pre-check if product_id exists in products table
@@ -319,67 +404,45 @@ export async function addPackageItem(item: Omit<PackageItem, 'id' | 'product_nam
   }
 
   console.log(`[addPackageItem] All pre-checks passed. Proceeding with INSERT into package_items.`);
-  console.log(`[addPackageItem] VALUES: ID=${newItem.id}, PackageID=${newItem.package_id}, ProductID=${newItem.product_id}, Qty=${newItem.quantity}, Order=${newItem.display_order}`); // Log values before insert
+  console.log(`[addPackageItem] VALUES: ID=${newItem.id}, PackageID=${newItem.package_id}, ProductID=${newItem.product_id}, Qty=${newItem.quantity}, Order=${newItem.display_order}`);
 
-  // Proceed with insert
   try {
     await db.run('INSERT INTO package_items (id, package_id, product_id, quantity, display_order) VALUES (?, ?, ?, ?, ?)',
       newItem.id, newItem.package_id, newItem.product_id, newItem.quantity, newItem.display_order);
     console.log(`[addPackageItem] SUCCESS: Inserted package item with ID ${newItem.id} linking Package ${newItem.package_id} and Product ${newItem.product_id}.`);
 
-     // Return the newly created item structure (without product_name initially)
      return {
          id: newItem.id,
          package_id: newItem.package_id,
          product_id: newItem.product_id,
          quantity: newItem.quantity,
          display_order: newItem.display_order,
-         // product_name is added later in the UI/calling function
+         // product_name is added later
      };
   } catch (error) {
       console.error(`[addPackageItem] SQLITE INSERT ERROR for package_items: ID=${newItem.id}, PackageID=${newItem.package_id}, ProductID=${newItem.product_id}. Error details:`, error);
-      // Rethrowing the original error might be better for consistent error handling upstream
       if (error instanceof Error && error.message.includes("FOREIGN KEY constraint failed")) {
          throw new Error(`Database constraint error: Ensure package ID '${newItem.package_id}' and product ID '${newItem.product_id}' are valid. Original error: ${error.message}`);
       }
-      throw error; // Re-throw the original error if it's not a specific FK issue we handled
+      throw error;
   }
 }
 
-
-// TODO: Implement updatePackageItem
-
+export async function deletePackageItem(id: string): Promise<void> {
+    const db = await getDb();
+    const result = await db.run('DELETE FROM package_items WHERE id = ?', id);
+    if (result.changes === 0) throw new Error(`Package item with id ${id} not found.`);
+}
 
 // --- Package Override CRUD ---
 export async function setPackageItemOverride(override: Omit<PackageItemModifierSlotOverride, 'id'>): Promise<PackageItemModifierSlotOverride> {
   const db = await getDb();
   const newId = randomUUID();
-  // Use INSERT OR REPLACE to handle both adding and updating based on a unique constraint
-  // Ensure the unique constraint (package_item_id, product_modifier_slot_id) exists in the DB schema.
   await db.run('INSERT OR REPLACE INTO package_item_modifier_slot_overrides (package_item_id, product_modifier_slot_id, min_quantity, max_quantity, id) VALUES (?, ?, ?, ?, ?)',
-     override.package_item_id, override.product_modifier_slot_id, override.min_quantity, override.max_quantity, newId); // Add ID for replace to work or fetch after
-  // Fetch the potentially replaced/inserted item to return it
+     override.package_item_id, override.product_modifier_slot_id, override.min_quantity, override.max_quantity, newId);
   const result = await db.get<PackageItemModifierSlotOverride>('SELECT * FROM package_item_modifier_slot_overrides WHERE package_item_id = ? AND product_modifier_slot_id = ?', override.package_item_id, override.product_modifier_slot_id);
   if (!result) throw new Error("Failed to set package item override");
   return result;
-}
-
-// TODO: Implement deletePackageItemOverride
-
-
-// Existing delete functions - make sure they handle errors if item not found
-export async function deleteModifierSlot(id: string): Promise<void> {
-    const db = await getDb();
-    // CASCADE delete should handle related overrides
-    const result = await db.run('DELETE FROM product_modifier_slots WHERE id = ?', id);
-    if (result.changes === 0) throw new Error(`Modifier slot with id ${id} not found.`);
-}
-
-export async function deletePackageItem(id: string): Promise<void> {
-    const db = await getDb();
-     // CASCADE delete should handle related overrides
-    const result = await db.run('DELETE FROM package_items WHERE id = ?', id);
-    if (result.changes === 0) throw new Error(`Package item with id ${id} not found.`);
 }
 
 export async function deletePackageItemOverride(id: string): Promise<void> {
