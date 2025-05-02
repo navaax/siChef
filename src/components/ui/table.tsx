@@ -20,9 +20,8 @@ const TableHeader = React.forwardRef<
   HTMLTableSectionElement,
   React.HTMLAttributes<HTMLTableSectionElement>
 >(({ className, children, ...props }, ref) => ( // Explicitly accept children
-  <thead ref={ref} className={cn("[&_tr]:border-b", className)} {...props}>
-    {children} {/* Render children explicitly */}
-  </thead>
+  // Ensure no space between the tag and the children prop
+  <thead ref={ref} className={cn("[&_tr]:border-b", className)} {...props}>{children}</thead>
 ))
 TableHeader.displayName = "TableHeader"
 
@@ -30,13 +29,8 @@ const TableBody = React.forwardRef<
   HTMLTableSectionElement,
   React.HTMLAttributes<HTMLTableSectionElement>
 >(({ className, children, ...props }, ref) => ( // Explicitly accept children
-  <tbody
-    ref={ref}
-    className={cn("[&_tr:last-child]:border-0", className)}
-    {...props}
-  >
-    {children} {/* Render children explicitly */}
-  </tbody>
+  // Ensure no space
+  <tbody ref={ref} className={cn("[&_tr:last-child]:border-0", className)} {...props}>{children}</tbody>
 ))
 TableBody.displayName = "TableBody"
 
@@ -44,16 +38,8 @@ const TableFooter = React.forwardRef<
   HTMLTableSectionElement,
   React.HTMLAttributes<HTMLTableSectionElement>
 >(({ className, children, ...props }, ref) => ( // Explicitly accept children
-  <tfoot
-    ref={ref}
-    className={cn(
-      "border-t bg-muted/50 font-medium [&>tr]:last:border-b-0",
-      className
-    )}
-    {...props}
-  >
-    {children} {/* Render children explicitly */}
-  </tfoot>
+  // Ensure no space
+  <tfoot ref={ref} className={cn("border-t bg-muted/50 font-medium [&>tr]:last:border-b-0", className)} {...props}>{children}</tfoot>
 ))
 TableFooter.displayName = "TableFooter"
 
@@ -61,16 +47,8 @@ const TableRow = React.forwardRef<
   HTMLTableRowElement,
   React.HTMLAttributes<HTMLTableRowElement>
 >(({ className, children, ...props }, ref) => ( // Explicitly accept children
-  <tr
-    ref={ref}
-    className={cn(
-      "border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted",
-      className
-    )}
-    {...props}
-  >
-    {children} {/* Render children explicitly */}
-  </tr>
+  // Ensure no space
+  <tr ref={ref} className={cn("border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted", className)} {...props}>{children}</tr>
 ))
 TableRow.displayName = "TableRow"
 
