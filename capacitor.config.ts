@@ -2,9 +2,9 @@
 import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
-  appId: 'com.example.sichefpos', // Replace with your App ID
+  appId: 'com.nava.sichefpos', // Replace with your App ID
   appName: 'siChef POS',
-  webDir: 'out', // Use 'out' for Next.js static export
+  webDir: 'out', // Use 'out' for Next.js static export output
   bundledWebRuntime: false,
   server: {
     // For local development with live reload, point to your Next.js dev server

@@ -1,5 +1,6 @@
+/** @type {import('next').NextConfig} */
 const nextConfig = {
-  /* config options here */
+  output: 'export', // ✅ Necesario para que funcione con Capacitor
   typescript: {
     ignoreBuildErrors: true,
   },
@@ -14,7 +15,7 @@ const nextConfig = {
         port: '',
         pathname: '/**',
       },
-      { // Add pinimg.com to allowed hostnames
+      {
         protocol: 'https',
         hostname: 'i.pinimg.com',
         port: '',
