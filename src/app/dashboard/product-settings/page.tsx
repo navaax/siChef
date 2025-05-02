@@ -900,28 +900,31 @@ const ManagePackages = () => {
              imageUrl: values.imageUrl || null, // Ensure null if empty
         };
 
-        console.log("Submitting package info:", JSON.stringify(dataToSave, null, 2));
+        console.log("[handlePackageFormSubmit] Submitting package info:", JSON.stringify(dataToSave, null, 2));
+        console.log("[handlePackageFormSubmit] Current editingPackage state before save/update:", editingPackage);
 
         try {
             if (editingPackage?.id) { // Check if editingPackage AND its id exist
-                console.log(`Updating package with ID: ${editingPackage.id}`);
+                console.log(`[handlePackageFormSubmit] Updating package with ID: ${editingPackage.id}`);
                 await updateProduct(editingPackage.id, dataToSave); // Use updateProduct for packages too
                  toast({ title: "Éxito", description: "Paquete actualizado." });
                  // Update the local state to reflect changes without full refetch if desired
                  setEditingPackage(prev => prev ? { ...prev, ...dataToSave } : null);
-                 fetchPackageData(); // Refresh list in background
+                // fetchPackageData(); // Refresh list in background - Temporarily disable to prevent potential state conflicts
                  // Keep the form open to continue editing items or adding new ones
+                 console.log("[handlePackageFormSubmit] Package updated. New editingPackage state:", editingPackage); // Log state AFTER update attempt
             } else {
                  // Create the package product FIRST
-                 console.log("Creating new package...");
+                 console.log("[handlePackageFormSubmit] Creating new package...");
                  const newPackage = await addProduct(dataToSave as Omit<Product, 'id'>); // Use addProduct service function
-                 console.log("New package created:", JSON.stringify(newPackage, null, 2));
+                 console.log("[handlePackageFormSubmit] New package created:", JSON.stringify(newPackage, null, 2));
                  toast({ title: "Éxito", description: "Paquete creado. Ahora puedes añadirle productos." });
                  // IMPORTANT: Update the editingPackage state with the newly created package
                  // This ensures the subsequent addItem calls have the correct package_id
                  setEditingPackage(newPackage);
-                 fetchPackageData(); // Refresh list in background
+                 // fetchPackageData(); // Refresh list in background - Temporarily disable
                  // Keep the form open
+                 console.log("[handlePackageFormSubmit] New package created. Updated editingPackage state:", newPackage); // Log new state
             }
 
             // Keep dialog open to allow adding items right away
@@ -929,7 +932,7 @@ const ManagePackages = () => {
 
         } catch (error) {
             const action = editingPackage?.id ? 'actualizar' : 'añadir';
-            console.error(`Error ${action} package:`, error); // Log detailed error
+            console.error(`[handlePackageFormSubmit] Error ${action} package:`, error); // Log detailed error
             toast({ title: "Error", description: `No se pudo ${action} el paquete: ${error instanceof Error ? error.message : 'Error desconocido'}`, variant: "destructive" });
         }
     };
@@ -954,7 +957,7 @@ const ManagePackages = () => {
      const handleAddPackageItemSubmit: SubmitHandler<AddPackageItemFormValues> = async (values) => {
          // Ensure we have a valid package ID (either from editing or after creation)
          if (!editingPackage || !editingPackage.id) {
-             console.error("Cannot add item: No valid package ID. Ensure package is saved first. editingPackage:", editingPackage);
+             console.error("[handleAddPackageItemSubmit] Cannot add item: No valid package ID. Ensure package is saved first. Current editingPackage state:", editingPackage);
              toast({ title: "Error", description: "Guarda la información básica del paquete antes de añadir productos.", variant: "destructive" });
              return;
          }
@@ -976,14 +979,14 @@ const ManagePackages = () => {
          }
 
          console.log(`[handleAddPackageItemSubmit] Attempting to add item to package ${editingPackage.id}: Product ${productToAdd.name} (ID: ${values.product_id}), Qty: ${values.quantity}`);
-         console.log("[handleAddPackageItemSubmit] newItemData:", newItemData);
+         console.log("[handleAddPackageItemSubmit] newItemData to send to service:", newItemData);
 
 
          setIsPackageItemsLoading(true);
          try {
              // The addPackageItem service function already does pre-checks
              const addedItem = await addPackageItem(newItemData);
-             console.log("[handleAddPackageItemSubmit] Successfully added item:", JSON.stringify(addedItem, null, 2));
+             console.log("[handleAddPackageItemSubmit] Successfully added item (response from service):", JSON.stringify(addedItem, null, 2));
 
              // Update local state optimistically
              setCurrentPackageItems(prev => [...prev, { ...addedItem, product_name: productToAdd.name }]); // Use productToAdd for name
@@ -1146,7 +1149,7 @@ const ManagePackages = () => {
                      {/* Package Items Management (Only visible AFTER package created/saved OR if editing existing package) */}
                      {editingPackage?.id && ( // Only show if editingPackage has an ID
                         <div className="space-y-4">
-                            <h4 className="text-lg font-semibold">Contenido del Paquete "{editingPackage.name}"</h4>
+                            <h4 className="text-lg font-semibold">Contenido del Paquete "{editingPackage.name}" (ID: {editingPackage.id})</h4> {/* Added ID for debugging */}
 
                             {/* Add Item Form */}
                             <Form {...addItemForm}>

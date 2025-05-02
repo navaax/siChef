@@ -319,6 +319,7 @@ export async function addPackageItem(item: Omit<PackageItem, 'id' | 'product_nam
   }
 
   console.log(`[addPackageItem] All pre-checks passed. Proceeding with INSERT into package_items.`);
+  console.log(`[addPackageItem] VALUES: ID=${newItem.id}, PackageID=${newItem.package_id}, ProductID=${newItem.product_id}, Qty=${newItem.quantity}, Order=${newItem.display_order}`); // Log values before insert
 
   // Proceed with insert
   try {
