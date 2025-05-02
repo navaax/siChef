@@ -1,4 +1,4 @@
-{'use client';
+'use client';
 
 import * as React from 'react';
 import { useState, useEffect, useCallback } from 'react';
@@ -7,11 +7,19 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { useToast } from '@/hooks/use-toast';
 import { Loader2 } from 'lucide-react';
 
+// Importar componentes de gestión
 import ManageCategories from './components/manage-categories';
 import ManageProducts from './components/manage-products';
 import ManagePackages from './components/manage-packages';
 
-import { getCategories, getProductsByCategory, getModifiersByCategory, getAllPackages } from '@/services/product-service';
+// Importar servicios
+import {
+    getCategories,
+    getProductsByCategory,
+    getModifiersByCategory,
+    getAllPackages,
+    getAllProductList // Usar esta función para obtener productos y modificadores
+} from '@/services/product-service';
 import { getInventoryItems } from '@/services/inventory-service';
 import type { Category, Product, Package, InventoryItem } from '@/types/product-types';
 
@@ -21,12 +29,13 @@ export default function ProductSettingsPage() {
     const [error, setError] = useState<string | null>(null);
     const { toast } = useToast();
 
-    // State para almacenar los datos compartidos
+    // Estado para almacenar los datos compartidos
     const [allCategories, setAllCategories] = useState<Category[]>([]);
-    const [allProducts, setAllProducts] = useState<Product[]>([]);
+    const [allProducts, setAllProducts] = useState<Product[]>([]); // Almacena productos y modificadores
     const [allPackages, setAllPackages] = useState<Package[]>([]);
     const [allInventoryItems, setAllInventoryItems] = useState<InventoryItem[]>([]);
 
+    // Callback para recargar todos los datos
     const fetchData = useCallback(async () => {
         console.log("[ProductSettingsPage] Iniciando fetchData...");
         setIsLoading(true);
@@ -47,37 +56,14 @@ export default function ProductSettingsPage() {
             console.log(`[ProductSettingsPage] Obtenidos ${fetchedPackages.length} paquetes.`);
             setAllPackages(fetchedPackages);
 
-            console.log("[ProductSettingsPage] Obteniendo productos y modificadores...");
-            let fetchedProductsAndModifiers: Product[] = [];
-            const productCatIds = fetchedCategories.filter(c => c.type === 'producto').map(c => c.id);
-            const modifierCatIds = fetchedCategories.filter(c => c.type === 'modificador').map(c => c.id);
+             console.log("[ProductSettingsPage] Obteniendo todos los productos y modificadores...");
+            const productListRaw = await getAllProductList();
+            // Aquí se asume que getAllProductList puede devolver productos/modificadores (itemType='product') y paquetes (itemType='package')
+            const fetchedProductsAndModifiers = productListRaw.filter(item => item.itemType === 'product') as Product[];
 
-            console.log(`[ProductSettingsPage] IDs de categorías de producto: ${productCatIds.join(', ')}`);
-            console.log(`[ProductSettingsPage] IDs de categorías de modificador: ${modifierCatIds.join(', ')}`);
+             console.log(`[ProductSettingsPage] Obtenidos ${fetchedProductsAndModifiers.length} productos/modificadores.`);
+             setAllProducts(fetchedProductsAndModifiers);
 
-            const productPromises = productCatIds.map(catId =>
-                getProductsByCategory(catId).catch(err => {
-                    console.error(`[ProductSettingsPage] Error obteniendo productos para categoría ${catId}:`, err);
-                    toast({ variant: 'destructive', title: `Error Productos Cat ${catId}`, description: err instanceof Error ? err.message : 'Error desconocido' });
-                    return []; // Devuelve array vacío en caso de error para no romper Promise.all
-                })
-            );
-            const modifierPromises = modifierCatIds.map(catId =>
-                getModifiersByCategory(catId).catch(err => {
-                    console.error(`[ProductSettingsPage] Error obteniendo modificadores para categoría ${catId}:`, err);
-                    toast({ variant: 'destructive', title: `Error Modificadores Cat ${catId}`, description: err instanceof Error ? err.message : 'Error desconocido' });
-                    return [];
-                })
-            );
-
-            const [productResults, modifierResults] = await Promise.all([
-                Promise.all(productPromises),
-                Promise.all(modifierPromises)
-            ]);
-
-            fetchedProductsAndModifiers = [...productResults.flat(), ...modifierResults.flat()];
-            console.log(`[ProductSettingsPage] Obtenidos ${fetchedProductsAndModifiers.length} productos/modificadores en total.`);
-            setAllProducts(fetchedProductsAndModifiers);
 
             console.log("[ProductSettingsPage] fetchData completado exitosamente.");
 
@@ -96,14 +82,16 @@ export default function ProductSettingsPage() {
         }
     }, [toast]); // toast es dependencia de useCallback
 
+    // Ejecutar fetchData al montar el componente
     useEffect(() => {
         fetchData();
-    }, [fetchData]); // Ejecutar fetchData al montar
+    }, [fetchData]);
 
     const handleTabChange = (value: string) => {
         setActiveTab(value);
     };
 
+    // Renderizado de carga
     if (isLoading) {
         return (
             <div className="flex items-center justify-center h-full">
@@ -113,6 +101,7 @@ export default function ProductSettingsPage() {
         );
     }
 
+    // Renderizado de error
     if (error) {
          return (
             <div className="flex items-center justify-center h-full flex-col text-center">
@@ -122,7 +111,7 @@ export default function ProductSettingsPage() {
         );
     }
 
-
+    // Renderizado principal
     return (
         <div className="flex flex-col h-full">
             <Card className="flex-grow flex flex-col shadow-md">
@@ -142,16 +131,17 @@ export default function ProductSettingsPage() {
                             <ManageCategories initialData={allCategories} onDataChange={fetchData} />
                         </TabsContent>
                         <TabsContent value="products" className="flex-grow overflow-auto mt-0">
-                            <ManageProducts
+                             <ManageProducts
                                 categories={allCategories}
                                 inventoryItems={allInventoryItems}
-                                initialProducts={allProducts}
+                                initialProducts={allProducts} // Pasar productos y modificadores
                                 onDataChange={fetchData}
                             />
                         </TabsContent>
                         <TabsContent value="packages" className="flex-grow overflow-auto mt-0">
-                             <ManagePackages
-                                allProducts={allProducts} // Productos para añadir a paquetes
+                              <ManagePackages
+                                allProducts={allProducts.filter(p => p.categoryId && allCategories.find(c => c.id === p.categoryId)?.type === 'producto')} // Solo productos vendibles
+                                allCategories={allCategories}
                                 initialPackages={allPackages}
                                 onDataChange={fetchData}
                             />
