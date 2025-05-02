@@ -1,3 +1,4 @@
+// src/app/dashboard/product-settings/page.tsx
 'use client';
 
 import * as React from 'react';
@@ -16,7 +17,7 @@ import ManagePackages from './components/manage-packages';
 import {
     getCategories,
     getAllPackages,
-    getAllProductList // Para obtener productos y modificadores para pasarlos
+    getAllProductsAndModifiersList // Renamed function
 } from '@/services/product-service';
 import { getInventoryItems } from '@/services/inventory-service';
 import type { Category, Product, Package, InventoryItem } from '@/types/product-types';
@@ -37,7 +38,8 @@ export default function ProductSettingsPage() {
     // Callback para recargar todos los datos
     const fetchData = useCallback(async (showToast = false) => {
         console.log("[ProductSettingsPage] Iniciando fetchData...");
-        setIsInitialDataLoading(true); // Use initial load state
+        // No usar el loader global, cada componente puede manejar el suyo si es necesario
+        // setIsInitialDataLoading(true); // Use initial load state
         setError(null); // Resetear error
         try {
             console.log("[ProductSettingsPage] Obteniendo categorías...");
@@ -56,7 +58,7 @@ export default function ProductSettingsPage() {
             setAllPackages(fetchedPackages);
 
             console.log("[ProductSettingsPage] Obteniendo todos los productos y modificadores...");
-            const productListRaw = await getAllProductList();
+            const productListRaw = await getAllProductsAndModifiersList(); // Use renamed function
             const fetchedProductsAndMods = productListRaw as Product[]; // Assuming getAllProductList returns combined but we filter later if needed
             console.log(`[ProductSettingsPage] Obtenidos ${fetchedProductsAndMods.length} productos/modificadores.`);
             setAllProductsAndModifiers(fetchedProductsAndMods);
@@ -140,7 +142,7 @@ export default function ProductSettingsPage() {
                         </TabsContent>
                         <TabsContent value="packages" className="flex-grow overflow-auto mt-0">
                               <ManagePackages
-                                allProducts={allProductsAndModifiers} // Pasar todos los productos para seleccionar
+                                allProductsAndModifiers={allProductsAndModifiers} // Pasar todos los productos para seleccionar
                                 allCategories={allCategories} // Pasar todas las categorías para el selector de UI y de productos
                                 initialPackages={allPackages} // Pasar los paquetes existentes
                                 onDataChange={() => fetchData(true)} // Pasar la función de refresco
