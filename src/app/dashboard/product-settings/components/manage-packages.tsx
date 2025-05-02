@@ -6,6 +6,7 @@ import { useForm, type SubmitHandler } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { randomUUID } from 'crypto';
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from '@/components/ui/button';
@@ -475,7 +476,7 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
                                                       <AlertDialog>
                                                         <AlertDialogTrigger asChild>
                                                             <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" disabled={isDeleting === pkg.id} title="Eliminar Paquete">
-                                                               {isDeleting === pkg.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                                                                {isDeleting === pkg.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
                                                             </Button>
                                                         </AlertDialogTrigger>
                                                         <AlertDialogContent>
@@ -694,7 +695,9 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
                                                 <div className="space-y-3">
                                                     <div className="flex justify-between items-center">
                                                         <Label htmlFor={`min-${slot.id}`} className="font-medium">{slot.label}</Label>
-                                                        {isOverridden && <Badge variant="outline" className="text-blue-600 border-blue-500">Modificado</Badge>}
+                                                        {isOverridden && <Badge variant="outline" className="ml-2 text-blue-600 border-blue-500 text-xs px-1 py-0">
+                                                            {item.modifierOverrides.length} Regla(s)
+                                                        </Badge>}
                                                     </div>
                                                     <p className="text-xs text-muted-foreground">Default: Min {slot.min_quantity}, Max {slot.max_quantity}</p>
                                                     <div className="flex items-end gap-3"> {/* Use items-end */}
