@@ -201,18 +201,23 @@ export async function deleteCategory(id: string): Promise<void> {
 export async function addProduct(product: Omit<Product, 'id'>): Promise<Product> {
   const db = await getDb();
   const newProduct = { ...product, id: randomUUID() };
-  console.log("Adding Product (or Package):", JSON.stringify(newProduct, null, 2));
-  await db.run('INSERT INTO products (id, name, price, categoryId, imageUrl, inventory_item_id, inventory_consumed_per_unit) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    newProduct.id,
-    newProduct.name,
-    newProduct.price,
-    newProduct.categoryId,
-    newProduct.imageUrl ?? null, // Ensure null if undefined
-    newProduct.inventory_item_id ?? null, // Ensure null if undefined
-    newProduct.inventory_consumed_per_unit ?? null // Ensure null if undefined
-    );
-  console.log(`Product/Package added with ID: ${newProduct.id}`);
-  return newProduct;
+  console.log("[addProduct] Adding Product (or Package) - Attempting INSERT:", JSON.stringify(newProduct, null, 2));
+  try {
+    await db.run('INSERT INTO products (id, name, price, categoryId, imageUrl, inventory_item_id, inventory_consumed_per_unit) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      newProduct.id,
+      newProduct.name,
+      newProduct.price,
+      newProduct.categoryId,
+      newProduct.imageUrl ?? null, // Ensure null if undefined
+      newProduct.inventory_item_id ?? null, // Ensure null if undefined
+      newProduct.inventory_consumed_per_unit ?? null // Ensure null if undefined
+      );
+    console.log(`[addProduct] Product/Package successfully added with ID: ${newProduct.id}`);
+    return newProduct;
+  } catch (error) {
+    console.error(`[addProduct] Error inserting Product/Package with ID ${newProduct.id}:`, error); // Log the error
+    throw error; // Re-throw the error so the frontend knows it failed
+  }
 }
 
 export async function updateProduct(id: string, updates: Partial<Omit<Product, 'id'>>): Promise<void> {
@@ -289,26 +294,38 @@ export async function addPackageItem(item: Omit<PackageItem, 'id' | 'product_nam
   const db = await getDb();
   const newItem = { ...item, id: randomUUID() };
 
-  // Debugging: Check if package_id and product_id exist before insert
-  console.log(`[addPackageItem] Attempting to add item: PackageID=${newItem.package_id}, ProductID=${newItem.product_id}, Qty=${newItem.quantity}`);
-  const packageExists = await db.get('SELECT id FROM products WHERE id = ?', newItem.package_id);
-  const productExists = await db.get('SELECT id FROM products WHERE id = ?', newItem.product_id);
+  // Detailed Logging for Debugging FK Constraint
+  console.log(`[addPackageItem] START: Attempting to add item. Input Data:`, item);
+  console.log(`[addPackageItem] Generated newItem object:`, newItem);
 
+  // Pre-check if package_id exists in products table
+  const packageExists = await db.get('SELECT id, name FROM products WHERE id = ?', newItem.package_id);
   if (!packageExists) {
-    console.error(`[addPackageItem] FOREIGN KEY PRE-CHECK FAILED: Package with ID ${newItem.package_id} does not exist in products table.`);
-    throw new Error(`Package with ID ${newItem.package_id} does not exist.`);
+    const errorMsg = `[addPackageItem] FOREIGN KEY PRE-CHECK FAILED: Package (Product) with ID ${newItem.package_id} does not exist in products table. Cannot add item.`;
+    console.error(errorMsg);
+    throw new Error(errorMsg);
+  } else {
+     console.log(`[addPackageItem] Pre-check PASSED: Found package (Product) ID ${newItem.package_id} with name "${packageExists.name}".`);
   }
+
+  // Pre-check if product_id exists in products table
+  const productExists = await db.get('SELECT id, name FROM products WHERE id = ?', newItem.product_id);
   if (!productExists) {
-     console.error(`[addPackageItem] FOREIGN KEY PRE-CHECK FAILED: Product with ID ${newItem.product_id} does not exist in products table.`);
-    throw new Error(`Product with ID ${newItem.product_id} does not exist.`);
+     const errorMsg = `[addPackageItem] FOREIGN KEY PRE-CHECK FAILED: Product with ID ${newItem.product_id} does not exist in products table. Cannot add item.`;
+    console.error(errorMsg);
+    throw new Error(errorMsg);
+  } else {
+     console.log(`[addPackageItem] Pre-check PASSED: Found product ID ${newItem.product_id} with name "${productExists.name}".`);
   }
-  console.log(`[addPackageItem] Pre-check passed: Package ${newItem.package_id} and Product ${newItem.product_id} exist.`);
+
+  console.log(`[addPackageItem] All pre-checks passed. Proceeding with INSERT into package_items.`);
 
   // Proceed with insert
   try {
     await db.run('INSERT INTO package_items (id, package_id, product_id, quantity, display_order) VALUES (?, ?, ?, ?, ?)',
       newItem.id, newItem.package_id, newItem.product_id, newItem.quantity, newItem.display_order);
-    console.log(`[addPackageItem] Successfully inserted package item with ID ${newItem.id}`);
+    console.log(`[addPackageItem] SUCCESS: Inserted package item with ID ${newItem.id} linking Package ${newItem.package_id} and Product ${newItem.product_id}.`);
+
      // Return the newly created item structure (without product_name initially)
      return {
          id: newItem.id,
@@ -319,10 +336,15 @@ export async function addPackageItem(item: Omit<PackageItem, 'id' | 'product_nam
          // product_name is added later in the UI/calling function
      };
   } catch (error) {
-      console.error(`[addPackageItem] SQLITE INSERT ERROR for package_items: ID=${newItem.id}, PackageID=${newItem.package_id}, ProductID=${newItem.product_id}`, error);
-      throw error; // Re-throw the original error
+      console.error(`[addPackageItem] SQLITE INSERT ERROR for package_items: ID=${newItem.id}, PackageID=${newItem.package_id}, ProductID=${newItem.product_id}. Error details:`, error);
+      // Rethrowing the original error might be better for consistent error handling upstream
+      if (error instanceof Error && error.message.includes("FOREIGN KEY constraint failed")) {
+         throw new Error(`Database constraint error: Ensure package ID '${newItem.package_id}' and product ID '${newItem.product_id}' are valid. Original error: ${error.message}`);
+      }
+      throw error; // Re-throw the original error if it's not a specific FK issue we handled
   }
 }
+
 
 // TODO: Implement updatePackageItem
 

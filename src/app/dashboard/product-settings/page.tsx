@@ -591,11 +591,11 @@ const ManageProducts = () => {
                                 )}/>
                                 <FormField control={form.control} name="categoryId" render={({ field }) => (
                                     <FormItem><FormLabel>Categoría</FormLabel>
-                                        <Select onValueChange={field.onChange} value={field.value || ''}>
+                                        <Select onValueChange={field.onChange} value={field.value || '__NONE__'}>
                                             <FormControl><SelectTrigger><SelectValue placeholder="Selecciona categoría" /></SelectTrigger></FormControl>
                                             <SelectContent>
                                                  {/* Add a placeholder item */}
-                                                <SelectItem value="PLACEHOLDER_CAT" disabled>Selecciona una categoría</SelectItem>
+                                                <SelectItem value="__NONE__" disabled>Selecciona una categoría</SelectItem>
                                                 {productCategories.map(cat => (
                                                     <SelectItem key={cat.id} value={cat.id}>{cat.name} ({cat.type})</SelectItem>
                                                 ))}
@@ -762,11 +762,11 @@ const AddModifierSlotForm: React.FC<AddModifierSlotFormProps> = ({ modifierCateg
                 )}/>
                 <FormField control={form.control} name="linked_category_id" render={({ field }) => (
                      <FormItem className="flex-grow"> <FormLabel className="text-xs">Cat. Modificador</FormLabel>
-                         <Select onValueChange={field.onChange} value={field.value || ''}>
+                         <Select onValueChange={field.onChange} value={field.value || '__NONE__'}>
                              <FormControl><SelectTrigger><SelectValue placeholder="Selecciona" /></SelectTrigger></FormControl>
                              <SelectContent>
-                                 <SelectItem value="PLACEHOLDER_MOD_CAT" disabled>Selecciona categoría</SelectItem>
-                                 {modifierCategories.length === 0 && <SelectItem value="NONE_MOD_CAT" disabled>Crea una cat. 'modificador'</SelectItem>}
+                                 <SelectItem value="__NONE__" disabled>Selecciona categoría</SelectItem>
+                                 {modifierCategories.length === 0 && <SelectItem value="__NONE_AVAILABLE__" disabled>Crea una cat. 'modificador'</SelectItem>}
                                  {modifierCategories.map(cat => ( <SelectItem key={cat.id} value={cat.id}>{cat.name}</SelectItem> ))}
                              </SelectContent>
                          </Select><FormMessage className="text-xs"/></FormItem>
@@ -910,6 +910,7 @@ const ManagePackages = () => {
                  // Update the local state to reflect changes without full refetch if desired
                  setEditingPackage(prev => prev ? { ...prev, ...dataToSave } : null);
                  fetchPackageData(); // Refresh list in background
+                 // Keep the form open to continue editing items or adding new ones
             } else {
                  // Create the package product FIRST
                  console.log("Creating new package...");
@@ -920,12 +921,11 @@ const ManagePackages = () => {
                  // This ensures the subsequent addItem calls have the correct package_id
                  setEditingPackage(newPackage);
                  fetchPackageData(); // Refresh list in background
-                 // DO NOT CLOSE DIALOG - User needs to add items
-                 // return; // Prevent closing dialog - Keep open
+                 // Keep the form open
             }
 
-            // Maybe keep open to allow adding items right away?
-            // setIsFormOpen(false); // Decide whether to close or keep open
+            // Keep dialog open to allow adding items right away
+            // setIsFormOpen(false); // Do not close
 
         } catch (error) {
             const action = editingPackage?.id ? 'actualizar' : 'añadir';
@@ -954,7 +954,7 @@ const ManagePackages = () => {
      const handleAddPackageItemSubmit: SubmitHandler<AddPackageItemFormValues> = async (values) => {
          // Ensure we have a valid package ID (either from editing or after creation)
          if (!editingPackage || !editingPackage.id) {
-             console.error("Cannot add item: No valid package ID. editingPackage:", editingPackage);
+             console.error("Cannot add item: No valid package ID. Ensure package is saved first. editingPackage:", editingPackage);
              toast({ title: "Error", description: "Guarda la información básica del paquete antes de añadir productos.", variant: "destructive" });
              return;
          }
@@ -967,19 +967,30 @@ const ManagePackages = () => {
              display_order: currentPackageItems.length, // Simple order append
          };
 
-         console.log("Attempting to add package item:", JSON.stringify(newItemData, null, 2));
+         // Debugging: Check if product_id exists
+         const productToAdd = allProducts.find(p => p.id === values.product_id);
+         if (!productToAdd) {
+             console.error(`[handleAddPackageItemSubmit] Product with ID ${values.product_id} not found in allProducts list.`);
+             toast({ title: "Error Interno", description: `Producto con ID ${values.product_id} no encontrado.`, variant: "destructive" });
+             return;
+         }
+
+         console.log(`[handleAddPackageItemSubmit] Attempting to add item to package ${editingPackage.id}: Product ${productToAdd.name} (ID: ${values.product_id}), Qty: ${values.quantity}`);
+         console.log("[handleAddPackageItemSubmit] newItemData:", newItemData);
+
 
          setIsPackageItemsLoading(true);
          try {
+             // The addPackageItem service function already does pre-checks
              const addedItem = await addPackageItem(newItemData);
-             console.log("Successfully added item:", JSON.stringify(addedItem, null, 2));
-             // Update local state optimistically or refetch
-             const productName = allProducts.find(p => p.id === addedItem.product_id)?.name || 'Unknown';
-             setCurrentPackageItems(prev => [...prev, { ...addedItem, product_name: productName }]);
+             console.log("[handleAddPackageItemSubmit] Successfully added item:", JSON.stringify(addedItem, null, 2));
+
+             // Update local state optimistically
+             setCurrentPackageItems(prev => [...prev, { ...addedItem, product_name: productToAdd.name }]); // Use productToAdd for name
              addItemForm.reset(); // Clear the add item form
-             toast({ title: "Éxito", description: "Producto añadido al paquete." });
+             toast({ title: "Éxito", description: `"${productToAdd.name}" añadido al paquete.` });
          } catch (error) {
-             console.error("Error adding package item:", error); // Log detailed error
+             console.error("[handleAddPackageItemSubmit] Error adding package item:", error); // Log detailed error
              toast({ title: "Error", description: `No se pudo añadir el producto: ${error instanceof Error ? error.message : 'Error desconocido'}`, variant: "destructive" });
          } finally {
              setIsPackageItemsLoading(false);
@@ -989,12 +1000,17 @@ const ManagePackages = () => {
      const handleDeletePackageItem = async (packageItemId: string) => {
          if (!editingPackage) return;
 
+         // Find the item to get its name for the toast message
+         const itemToDelete = currentPackageItems.find(item => item.id === packageItemId);
+         const itemName = itemToDelete?.product_name || `Item ID ${packageItemId}`;
+
+
          setIsPackageItemsLoading(true);
          try {
              await deletePackageItem(packageItemId);
              // Update local state
              setCurrentPackageItems(prev => prev.filter(item => item.id !== packageItemId));
-             toast({ title: "Éxito", description: "Producto eliminado del paquete.", variant: 'destructive' });
+             toast({ title: "Éxito", description: `"${itemName}" eliminado del paquete.`, variant: 'destructive' });
          } catch (error) {
              toast({ title: "Error", description: `No se pudo eliminar el producto: ${error instanceof Error ? error.message : 'Error desconocido'}`, variant: "destructive" });
          } finally {
@@ -1103,11 +1119,11 @@ const ManagePackages = () => {
                                 )}/>
                                 <FormField control={packageForm.control} name="categoryId" render={({ field }) => (
                                     <FormItem><FormLabel>Categoría (de Paquetes)</FormLabel>
-                                        <Select onValueChange={field.onChange} value={field.value || ''}>
+                                        <Select onValueChange={field.onChange} value={field.value || '__NONE__'}>
                                             <FormControl><SelectTrigger><SelectValue placeholder="Selecciona categoría" /></SelectTrigger></FormControl>
                                             <SelectContent>
-                                                 <SelectItem value="PLACEHOLDER_PKG_CAT" disabled>Selecciona categoría</SelectItem>
-                                                 {packageCategories.length === 0 && <SelectItem value="NONE_PKG_CAT" disabled>Crea una categoría tipo paquete</SelectItem>}
+                                                 <SelectItem value="__NONE__" disabled>Selecciona categoría</SelectItem>
+                                                 {packageCategories.length === 0 && <SelectItem value="__NONE_AVAILABLE__" disabled>Crea una categoría tipo paquete</SelectItem>}
                                                 {packageCategories.map(cat => (
                                                     <SelectItem key={cat.id} value={cat.id}>{cat.name}</SelectItem>
                                                 ))}
@@ -1141,10 +1157,10 @@ const ManagePackages = () => {
                                         render={({ field }) => (
                                             <FormItem className="flex-grow">
                                                 <FormLabel className="text-xs">Producto a Añadir</FormLabel>
-                                                <Select onValueChange={field.onChange} value={field.value || ''}>
+                                                <Select onValueChange={field.onChange} value={field.value || '__NONE__'}>
                                                     <FormControl><SelectTrigger><SelectValue placeholder="Selecciona producto" /></SelectTrigger></FormControl>
                                                     <SelectContent>
-                                                         <SelectItem value="PLACEHOLDER_PROD" disabled>Selecciona producto</SelectItem>
+                                                         <SelectItem value="__NONE__" disabled>Selecciona producto</SelectItem>
                                                         {allProducts.map(prod => (
                                                             <SelectItem key={prod.id} value={prod.id}>{prod.name}</SelectItem>
                                                         ))}
@@ -1165,7 +1181,7 @@ const ManagePackages = () => {
                                             </FormItem>
                                         )}
                                     />
-                                    <Button type="submit" size="sm" disabled={isPackageItemsLoading}>
+                                    <Button type="submit" size="sm" disabled={isPackageItemsLoading || !editingPackage?.id}> {/* Also disable if no editingPackage ID */}
                                          {isPackageItemsLoading ? <Loader2 className="h-4 w-4 animate-spin"/> : <PlusCircle className="h-4 w-4" />}
                                     </Button>
                                 </form>
