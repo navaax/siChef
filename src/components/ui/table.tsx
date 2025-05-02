@@ -22,7 +22,7 @@ const TableHeader = React.forwardRef<
 >(({ className, children, ...props }, ref) => ( // Explicitly accept children
   // Ensure no space between the tag and the children prop
   <thead ref={ref} className={cn("[&_tr]:border-b", className)} {...props}>{children}</thead>
-))
+));
 TableHeader.displayName = "TableHeader"
 
 const TableBody = React.forwardRef<
