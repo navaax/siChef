@@ -15,8 +15,6 @@ import ManagePackages from './components/manage-packages';
 // Importar servicios
 import {
     getCategories,
-    getProductsByCategory, // Se usa internamente en ManageProducts, puede que no sea necesario aquí
-    getModifiersByCategory, // Se usa internamente en ManageProducts, puede que no sea necesario aquí
     getAllPackages,
     getAllProductList // Para obtener productos y modificadores para pasarlos
 } from '@/services/product-service';
@@ -25,7 +23,7 @@ import type { Category, Product, Package, InventoryItem } from '@/types/product-
 
 export default function ProductSettingsPage() {
     const [activeTab, setActiveTab] = useState("categories");
-    const [isLoading, setIsLoading] = useState(true);
+    // Removed global isLoading state
     const [error, setError] = useState<string | null>(null);
     const { toast } = useToast();
 
@@ -34,11 +32,12 @@ export default function ProductSettingsPage() {
     const [allProductsAndModifiers, setAllProductsAndModifiers] = useState<Product[]>([]); // Almacena productos y modificadores
     const [allPackages, setAllPackages] = useState<Package[]>([]);
     const [allInventoryItems, setAllInventoryItems] = useState<InventoryItem[]>([]);
+    const [isInitialDataLoading, setIsInitialDataLoading] = useState(true); // Separate state for initial load
 
     // Callback para recargar todos los datos
-    const fetchData = useCallback(async () => {
+    const fetchData = useCallback(async (showToast = false) => {
         console.log("[ProductSettingsPage] Iniciando fetchData...");
-        setIsLoading(true);
+        setIsInitialDataLoading(true); // Use initial load state
         setError(null); // Resetear error
         try {
             console.log("[ProductSettingsPage] Obteniendo categorías...");
@@ -57,14 +56,15 @@ export default function ProductSettingsPage() {
             setAllPackages(fetchedPackages);
 
             console.log("[ProductSettingsPage] Obteniendo todos los productos y modificadores...");
-            // Usamos getAllProductList y filtramos por itemType='product' como Product
             const productListRaw = await getAllProductList();
-            const fetchedProductsAndMods = productListRaw.filter(item => item.itemType === 'product') as Product[];
+            const fetchedProductsAndMods = productListRaw as Product[]; // Assuming getAllProductList returns combined but we filter later if needed
             console.log(`[ProductSettingsPage] Obtenidos ${fetchedProductsAndMods.length} productos/modificadores.`);
             setAllProductsAndModifiers(fetchedProductsAndMods);
 
-
             console.log("[ProductSettingsPage] fetchData completado exitosamente.");
+            if (showToast) {
+                toast({ title: "Datos Actualizados", description: "La información de productos ha sido refrescada." });
+            }
 
         } catch (err) {
             console.error("[ProductSettingsPage] Error general en fetchData:", err);
@@ -77,7 +77,7 @@ export default function ProductSettingsPage() {
             });
         } finally {
             console.log("[ProductSettingsPage] Finalizando fetchData, isLoading=false.");
-            setIsLoading(false);
+            setIsInitialDataLoading(false); // Set initial load state to false
         }
     }, [toast]); // toast es dependencia de useCallback
 
@@ -90,8 +90,8 @@ export default function ProductSettingsPage() {
         setActiveTab(value);
     };
 
-    // Renderizado de carga
-    if (isLoading) {
+    // Renderizado de carga inicial
+    if (isInitialDataLoading) {
         return (
             <div className="flex items-center justify-center h-full">
                 <Loader2 className="h-16 w-16 animate-spin text-primary" />
@@ -105,7 +105,7 @@ export default function ProductSettingsPage() {
          return (
             <div className="flex items-center justify-center h-full flex-col text-center">
                 <p className="text-destructive text-lg mb-4">{error}</p>
-                <Button onClick={fetchData}>Intentar de Nuevo</Button>
+                <Button onClick={() => fetchData(true)}>Intentar de Nuevo</Button>
             </div>
         );
     }
@@ -126,23 +126,24 @@ export default function ProductSettingsPage() {
                             <TabsTrigger value="packages">Paquetes</TabsTrigger>
                         </TabsList>
 
+                        {/* Cada componente de contenido maneja su propio estado interno si es necesario */}
                         <TabsContent value="categories" className="flex-grow overflow-auto mt-0">
-                            <ManageCategories initialData={allCategories} onDataChange={fetchData} />
+                            <ManageCategories initialData={allCategories} onDataChange={() => fetchData(true)} />
                         </TabsContent>
                         <TabsContent value="products" className="flex-grow overflow-auto mt-0">
                              <ManageProducts
                                 categories={allCategories}
                                 inventoryItems={allInventoryItems}
                                 initialProducts={allProductsAndModifiers} // Pasar productos y modificadores
-                                onDataChange={fetchData}
+                                onDataChange={() => fetchData(true)}
                             />
                         </TabsContent>
                         <TabsContent value="packages" className="flex-grow overflow-auto mt-0">
                               <ManagePackages
-                                allProducts={allProductsAndModifiers.filter(p => p.categoryId && allCategories.find(c => c.id === p.categoryId)?.type === 'producto')} // Solo productos vendibles para añadir a paquetes
-                                allCategories={allCategories} // Pasar todas las categorías para el selector de UI
+                                allProducts={allProductsAndModifiers} // Pasar todos los productos para seleccionar
+                                allCategories={allCategories} // Pasar todas las categorías para el selector de UI y de productos
                                 initialPackages={allPackages} // Pasar los paquetes existentes
-                                onDataChange={fetchData} // Pasar la función de refresco
+                                onDataChange={() => fetchData(true)} // Pasar la función de refresco
                             />
                         </TabsContent>
                     </Tabs>

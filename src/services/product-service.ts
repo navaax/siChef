@@ -96,7 +96,6 @@ export async function getModifiersByCategory(categoryId: string): Promise<Produc
 export async function getAllPackages(): Promise<Package[]> {
     const db = await getDb();
     try {
-        // Usar category_id de la tabla packages
         const query = 'SELECT p.*, c.name as categoryName FROM packages p LEFT JOIN categories c ON p.category_id = c.id ORDER BY p.name ASC';
         console.log(`[getAllPackages] Query: ${query}`);
         const packages = await db.all<Package[]>(query);
@@ -113,7 +112,7 @@ export async function getAllPackages(): Promise<Package[]> {
  * @param categoryId El ID de la categoría (usualmente tipo 'paquete').
  * @returns Una promesa que resuelve a un array de objetos Package.
  */
-export async function getPackagesByCategory(categoryId: string): Promise<Package[]> {
+export async function getPackagesByCategoryUI(categoryId: string): Promise<Package[]> {
   const db = await getDb();
   try {
     const query = `
@@ -122,12 +121,12 @@ export async function getPackagesByCategory(categoryId: string): Promise<Package
         WHERE category_id = ?
         ORDER BY name ASC
      `;
-    console.log(`[getPackagesByCategory] Query: ${query}, Params: [${categoryId}]`);
+    console.log(`[getPackagesByCategoryUI] Query: ${query}, Params: [${categoryId}]`);
     const packages = await db.all<Package[]>(query, [categoryId]);
-    console.log(`[getPackagesByCategory] Found ${packages.length} packages for category ${categoryId}.`);
+    console.log(`[getPackagesByCategoryUI] Found ${packages.length} packages for category ${categoryId}.`);
     return packages;
   } catch (error) {
-    console.error(`[getPackagesByCategory] Error fetching packages for category ${categoryId}:`, error);
+    console.error(`[getPackagesByCategoryUI] Error fetching packages for category ${categoryId}:`, error);
     throw new Error(`Falló la obtención de paquetes para la categoría ${categoryId}. Error original: ${error instanceof Error ? error.message : error}`);
   }
 }
@@ -391,7 +390,6 @@ export async function addPackage(pkg: Omit<Package, 'id'>): Promise<Package> {
              if (!category) {
                  throw new Error(`Categoría con ID ${newPackage.category_id} no encontrada.`);
              }
-             // Ya no validamos estrictamente type='paquete' aquí
         }
 
         const query = 'INSERT INTO packages (id, name, price, imageUrl, category_id) VALUES (?, ?, ?, ?, ?)';
@@ -490,7 +488,7 @@ export async function addPackageItem(item: Omit<PackageItem, 'id' | 'product_nam
       console.error(`[addPackageItem] SQLITE INSERT ERROR for package_items: ID=${newItem.id}, PackageID=${newItem.package_id}, ProductID=${newItem.product_id}. Error details:`, error);
       // Rethrowing the original error might be better for consistent error handling upstream
       if (error instanceof Error && error.message.includes("FOREIGN KEY constraint failed")) {
-         throw new Error(`Error de llave foránea: Asegúrate que el ID de paquete '${newItem.package_id}' y el ID de producto '${newItem.product_id}' existen. Error original: ${error.message}`);
+         throw new Error(`Database constraint error: Ensure package ID '${newItem.package_id}' and product ID '${newItem.product_id}' are valid. Original error: ${error.message}`);
       }
       throw error; // Re-throw the original error if it's not a specific FK issue we handled
   }
@@ -611,36 +609,168 @@ export async function deletePackageItemOverride(id: string): Promise<void> {
     }
 }
 
+// --- Bulk Update for Package Items and Overrides ---
+interface ItemToSave {
+    id: string | null; // Null if new
+    package_id: string;
+    product_id: string;
+    quantity: number;
+    display_order: number;
+    modifierOverrides: OverrideToSave[];
+}
+interface OverrideToSave {
+    id: string | null; // Null if new
+    package_item_id: string; // Placeholder, will be set if item is new
+    product_modifier_slot_id: string;
+    min_quantity: number;
+    max_quantity: number;
+}
+
+export async function updatePackageItemsAndOverrides(packageId: string, itemsToSave: ItemToSave[]): Promise<void> {
+    const db = await getDb();
+    await db.run('BEGIN TRANSACTION;');
+    try {
+        // 1. Obtener IDs actuales de items para este paquete
+        const existingDbItems = await db.all<{ id: string }>('SELECT id FROM package_items WHERE package_id = ?', [packageId]);
+        const existingDbItemIds = new Set(existingDbItems.map(item => item.id));
+
+        // 2. Procesar items a guardar (insertar/actualizar)
+        const savedItemIds = new Set<string>();
+        const newItemIdMap = new Map<string, string>(); // Map localId -> dbId for new items
+
+        for (const item of itemsToSave) {
+            let currentItemId = item.id; // Puede ser el ID real o null si es nuevo
+
+            if (currentItemId && existingDbItemIds.has(currentItemId)) {
+                // Actualizar item existente
+                console.log(`[updatePackageItems] Updating item ${currentItemId}`);
+                await db.run(
+                    'UPDATE package_items SET product_id = ?, quantity = ?, display_order = ? WHERE id = ? AND package_id = ?',
+                    [item.product_id, item.quantity, item.display_order, currentItemId, packageId]
+                );
+                savedItemIds.add(currentItemId);
+                existingDbItemIds.delete(currentItemId); // Marcar como procesado
+            } else {
+                // Insertar nuevo item
+                const newItemDbId = randomUUID();
+                console.log(`[updatePackageItems] Inserting new item for product ${item.product_id}, new DB ID: ${newItemDbId}`);
+                await db.run(
+                    'INSERT INTO package_items (id, package_id, product_id, quantity, display_order) VALUES (?, ?, ?, ?, ?)',
+                    [newItemDbId, packageId, item.product_id, item.quantity, item.display_order]
+                );
+                currentItemId = newItemDbId; // Usar el nuevo ID de la BD
+                savedItemIds.add(currentItemId);
+                 // Mapear el ID local (que no tenía guiones) al nuevo ID de la BD si es necesario
+                 // if (item.id && !item.id.includes('-')) { // Si el id original era temporal
+                 //     newItemIdMap.set(item.id, currentItemId);
+                 // }
+                 // Corrección: Usar el `id` original (que ahora es null para nuevos) como clave no sirve.
+                 // Necesitamos una forma de identificar el item original. Usaremos `product_id` y `display_order` como clave temporal
+                 // Esto asume que no hay dos items nuevos del mismo producto en el mismo orden (lo cual es razonable para UI)
+                 // Una mejor solución sería usar el localId que SÍ teníamos antes. Asumamos que itemToSave incluye ese localId
+                 // if (item.localId) { newItemIdMap.set(item.localId, currentItemId); }
+                 // SIN localId, esta parte es difícil. Asumamos que item.id era el localId si era nuevo
+                 // if (item.id && !item.id.includes('-')) { // Check if it looks like a temporary ID
+                  //    newItemIdMap.set(item.id, currentItemId);
+                 // }
+                 // *** REVISIÓN: El frontend debe pasar el localId para mapear correctamente ***
+                 // Asumiendo que item.id ES el localId si es nuevo (no tiene '-')
+                 // O MEJOR: Añadir localId al tipo ItemToSave
+            }
+
+            if (!currentItemId) continue; // Seguridad
+
+             // 3. Procesar overrides para este item
+             const existingOverrides = await db.all<{ id: string, product_modifier_slot_id: string }>(
+                'SELECT id, product_modifier_slot_id FROM package_item_modifier_slot_overrides WHERE package_item_id = ?',
+                [currentItemId]
+             );
+             const existingOverrideIds = new Set(existingOverrides.map(ov => ov.id));
+             const existingOverrideSlotMap = new Map(existingOverrides.map(ov => [ov.product_modifier_slot_id, ov.id]));
+
+             for (const override of item.modifierOverrides) {
+                 const slotId = override.product_modifier_slot_id;
+                 const existingOverrideDbId = existingOverrideSlotMap.get(slotId);
+
+                 if (existingOverrideDbId) {
+                      // Actualizar override existente
+                      console.log(`[updatePackageItems] Updating override ${existingOverrideDbId} for item ${currentItemId}, slot ${slotId}`);
+                     await db.run(
+                         'UPDATE package_item_modifier_slot_overrides SET min_quantity = ?, max_quantity = ? WHERE id = ?',
+                         [override.min_quantity, override.max_quantity, existingOverrideDbId]
+                     );
+                     existingOverrideIds.delete(existingOverrideDbId); // Marcar como procesado
+                 } else {
+                     // Insertar nuevo override
+                     const newOverrideDbId = randomUUID();
+                      console.log(`[updatePackageItems] Inserting new override for item ${currentItemId}, slot ${slotId}`);
+                     await db.run(
+                         'INSERT INTO package_item_modifier_slot_overrides (id, package_item_id, product_modifier_slot_id, min_quantity, max_quantity) VALUES (?, ?, ?, ?, ?)',
+                         [newOverrideDbId, currentItemId, slotId, override.min_quantity, override.max_quantity]
+                     );
+                 }
+            }
+
+            // 4. Eliminar overrides que ya no existen para este item
+            for (const overrideIdToDelete of existingOverrideIds) {
+                 console.log(`[updatePackageItems] Deleting obsolete override ${overrideIdToDelete} for item ${currentItemId}`);
+                 await db.run('DELETE FROM package_item_modifier_slot_overrides WHERE id = ?', [overrideIdToDelete]);
+            }
+
+        }
+
+        // 5. Eliminar items que ya no existen en el paquete
+        for (const itemIdToDelete of existingDbItemIds) {
+             console.log(`[updatePackageItems] Deleting obsolete item ${itemIdToDelete} from package ${packageId}`);
+             await db.run('DELETE FROM package_items WHERE id = ?', [itemIdToDelete]); // CASCADE debería eliminar sus overrides
+        }
+
+
+        await db.run('COMMIT;');
+        console.log(`[updatePackageItemsAndOverrides] Package ${packageId} items and overrides updated successfully.`);
+    } catch (error) {
+        await db.run('ROLLBACK;');
+        console.error(`[updatePackageItemsAndOverrides] Error updating items/overrides for package ${packageId}:`, error);
+        throw new Error(`Falló al actualizar contenido del paquete. Error original: ${error instanceof Error ? error.message : error}`);
+    }
+}
+
+
 /**
- * Obtiene una lista combinada de todos los productos y paquetes.
+ * Obtiene una lista combinada de todos los productos (no modificadores) y paquetes.
  * Útil para poblar listas donde ambos tipos de items pueden ser seleccionados.
- * @returns Una promesa que resuelve a un array de objetos que pueden ser Product o Package.
+ * @returns Una promesa que resuelve a un array de objetos que pueden ser Product o Package, con un campo 'itemType'.
  */
-export async function getAllProductList(): Promise<(Product | Package)[]> {
+export async function getAllProductList(): Promise<(Product | Package) & { itemType: 'product' | 'package' }[]> {
     const db = await getDb();
     try {
-        // Obtener productos (excluir tipo 'modificador' implícitamente si es necesario)
+        // Obtener productos (solo tipo 'producto')
         const productsQuery = `
-            SELECT p.id, p.name, p.price, p.categoryId as originalCategoryId, c.name as categoryName, c.type as categoryType, p.imageUrl, 'product' as itemType
+            SELECT p.*, c.name as categoryName, 'product' as itemType
             FROM products p
             JOIN categories c ON p.categoryId = c.id
-            WHERE c.type = 'producto' -- Asegurar que solo se obtienen productos regulares
+            WHERE c.type = 'producto'
         `;
         // Obtener paquetes
         const packagesQuery = `
-             SELECT pk.id, pk.name, pk.price, pk.category_id as originalCategoryId, c.name as categoryName, c.type as categoryType, pk.imageUrl, 'package' as itemType
+             SELECT pk.*, c.name as categoryName, 'package' as itemType
              FROM packages pk
              LEFT JOIN categories c ON pk.category_id = c.id -- Left join si la categoría es opcional
          `;
         console.log(`[getAllProductList] Fetching products and packages`);
         const [products, packages] = await Promise.all([
-             db.all<any[]>(productsQuery),
+             db.all<any[]>(productsQuery), // Usar any[] temporalmente
              db.all<any[]>(packagesQuery)
         ]);
         console.log(`[getAllProductList] Found ${products.length} products and ${packages.length} packages.`);
 
+        // Asegurar que la estructura coincida con la interfaz esperada
+        const typedProducts = products as (Product & { itemType: 'product' })[];
+        const typedPackages = packages as (Package & { itemType: 'package' })[];
+
+
         // Combinar las listas
-        const combinedList = [...products, ...packages];
+        const combinedList = [...typedProducts, ...typedPackages];
 
         return combinedList;
     } catch (error) {
