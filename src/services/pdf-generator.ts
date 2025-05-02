@@ -1,226 +1,285 @@
+import type { CashSessionDetail } from "@/types/cash-register-types"; // Importar si se usan detalles
+
 /**
- * Represents the sales report data.
+ * Representa los datos del reporte de ventas.
  */
 export interface SalesReport {
   /**
-   * The name of the business.
+   * El nombre del negocio.
    */
   businessName: string;
   /**
-   * The logo of the business (as a URL or base64 encoded image).
+   * El logo del negocio (como URL o imagen codificada en base64).
    */
   logo: string;
   /**
-   * The date when the report was generated.
+   * La fecha en que se generó el reporte.
    */
   reportDate: string;
   /**
-   * The user who generated the report.
+   * El usuario que generó el reporte.
    */
   user: string;
   /**
-   * The starting cash amount in the register.
+   * El monto inicial de efectivo en caja.
    */
   startingCash: number;
   /**
-   * The total sales amount.
+   * El monto total de ventas (solo completadas).
    */
   totalSales: number;
   /**
-   * The total sales amount from cash payments.
+   * El monto total de ventas pagadas en efectivo.
    */
   cashSales: number;
   /**
-   * The total sales amount from card payments.
+   * El monto total de ventas pagadas con tarjeta.
    */
   cardSales: number;
   /**
-   * The expected cash amount in the register.
+   * El monto total de gastos registrados.
+   */
+  totalExpenses: number;
+  /**
+   * El monto total de propinas registradas (en efectivo).
+   */
+  totalTips: number;
+  /**
+   * El monto de préstamos o retiros de caja.
+   */
+  loansWithdrawalsAmount: number;
+  /**
+   * El motivo del préstamo o retiro.
+   */
+  loansWithdrawalsReason: string;
+   /**
+   * El monto final de efectivo contado.
+   */
+  endingCash: number;
+  /**
+   * El monto de efectivo que se esperaba tener en caja.
+   * Calculado como: startingCash + cashSales - totalExpenses - loansWithdrawalsAmount + totalTips
    */
   expectedCashInRegister: number;
   /**
-   * The sales history data.
+   * La diferencia entre el efectivo contado y el esperado.
+   * Calculado como: endingCash - expectedCashInRegister
+   */
+  calculatedDifference: number;
+  /**
+   * Los datos del historial de ventas (solo órdenes completadas).
    */
   salesHistory: SalesHistoryItem[];
+  /**
+   * Opcional: Detalles de denominación inicial.
+   */
+  // startDenominations?: CashSessionDetail[];
+  /**
+   * Opcional: Detalles de denominación final.
+   */
+  // endDenominations?: CashSessionDetail[];
+
 }
 
 /**
- * Represents a single item in the sales history.
+ * Representa un solo item en el historial de ventas.
  */
 export interface SalesHistoryItem {
   /**
-   * The order number.
+   * El número de pedido.
    */
   orderNumber: string;
   /**
-   * The order ID.
+   * El ID del pedido.
    */
   orderId: string;
   /**
-   * The customer's name.
+   * El nombre del cliente.
    */
   customer: string;
   /**
-   * The subtotal of the order.
+   * El subtotal del pedido.
    */
   subtotal: number;
   /**
-   * The total amount of the order.
+   * El monto total del pedido.
    */
   total: number;
   /**
-   * The payment method used for the order.
+   * El método de pago usado para el pedido.
    */
   paymentMethod: string;
   /**
-   * The status of the order.
+   * El estado del pedido.
    */
   status: string;
 }
 
 /**
- * Asynchronously generates a PDF sales report.
+ * Genera asíncronamente un reporte de ventas en PDF.
  *
- * IMPORTANT: This function currently returns an empty PDF.
- * You need to implement the actual PDF generation logic using a library
- * like jsPDF, PDFKit (server-side), or a dedicated PDF service.
+ * IMPORTANTE: Esta función actualmente devuelve un PDF vacío.
+ * Necesitas implementar la lógica real de generación de PDF usando una librería
+ * como jsPDF, PDFKit (lado del servidor), o un servicio de PDF dedicado.
  *
- * @param reportData The data to include in the sales report.
- * @returns A promise that resolves to a PDF document as a byte array.
+ * @param reportData Los datos a incluir en el reporte de ventas.
+ * @returns Una promesa que resuelve a un documento PDF como un array de bytes.
  */
 export async function generateSalesReport(reportData: SalesReport): Promise<Uint8Array> {
-  // TODO: Implement PDF generation using a library like jsPDF or PDFKit.
-  // This is a stub, replace with actual PDF generation logic.
+  // TODO: Implementar generación de PDF usando una librería como jsPDF o PDFKit.
+  // Esto es un stub, reemplazar con lógica real de generación de PDF.
 
-  console.log('--- Generating PDF Sales Report ---');
-  console.log('Business Name:', reportData.businessName);
-  console.log('Report Date:', reportData.reportDate);
-  console.log('User:', reportData.user);
+  console.log('--- Generando Reporte de Ventas PDF ---');
+  console.log('Nombre Negocio:', reportData.businessName);
+  console.log('Fecha Reporte:', reportData.reportDate);
+  console.log('Usuario:', reportData.user);
   console.log('-----------------------------------');
-  console.log('Starting Cash:', reportData.startingCash);
-  console.log('Total Sales:', reportData.totalSales);
-  console.log('Cash Sales:', reportData.cashSales);
-  console.log('Card Sales:', reportData.cardSales);
-  console.log('Expected Cash:', reportData.expectedCashInRegister);
+  console.log('Fondo Inicial:', reportData.startingCash);
+  console.log('Ventas Totales:', reportData.totalSales);
+  console.log('Ventas Efectivo:', reportData.cashSales);
+  console.log('Ventas Tarjeta:', reportData.cardSales);
+  console.log('Gastos:', reportData.totalExpenses);
+  console.log('Propinas:', reportData.totalTips);
+  console.log('Préstamos/Retiros:', reportData.loansWithdrawalsAmount, `(${reportData.loansWithdrawalsReason || 'Sin motivo'})`);
   console.log('-----------------------------------');
-  console.log('Sales History:');
+  console.log('Efectivo Esperado:', reportData.expectedCashInRegister);
+  console.log('Efectivo Contado:', reportData.endingCash);
+  console.log('Diferencia:', reportData.calculatedDifference);
+  console.log('-----------------------------------');
+  console.log('Historial de Ventas:');
 
-  console.log('\n--- Cash Payments ---');
+  console.log('\n--- Pagos en Efectivo ---');
   reportData.salesHistory
     .filter(item => item.paymentMethod === 'cash')
     .forEach(item => {
-      console.log(`  #${item.orderNumber} (${item.orderId}) - ${item.customer} - Sub: ${item.subtotal} - Total: ${item.total} - ${item.status}`);
+      console.log(`  #${item.orderNumber} (${item.orderId.substring(0,8)}) - ${item.customer} - Sub: ${item.subtotal} - Total: ${item.total} - ${item.status}`);
     });
 
-   console.log('\n--- Card Payments ---');
+   console.log('\n--- Pagos con Tarjeta ---');
     reportData.salesHistory
         .filter(item => item.paymentMethod === 'card')
         .forEach(item => {
-            console.log(`  #${item.orderNumber} (${item.orderId}) - ${item.customer} - Sub: ${item.subtotal} - Total: ${item.total} - ${item.status}`);
+            console.log(`  #${item.orderNumber} (${item.orderId.substring(0,8)}) - ${item.customer} - Sub: ${item.subtotal} - Total: ${item.total} - ${item.status}`);
         });
 
   console.log('-----------------------------------');
-  console.warn('PDF Generation is not implemented. Returning empty PDF.');
+  console.warn('Generación de PDF no implementada. Devolviendo PDF vacío.');
 
 
-  // Placeholder return value - Replace with actual PDF bytes
+  // Valor de retorno placeholder - Reemplazar con bytes reales del PDF
   return new Uint8Array();
 }
 
 /**
- * Example using jsPDF (Client-Side):
+ * Ejemplo usando jsPDF (Lado del Cliente):
  *
  * import { jsPDF } from "jspdf";
- * import autoTable from 'jspdf-autotable'; // Needs npm install jspdf jspdf-autotable
+ * import autoTable from 'jspdf-autotable'; // Necesita npm install jspdf jspdf-autotable
+ * import { formatCurrency } from '@/lib/utils'; // Importar tu helper
  *
  * export async function generateSalesReport(reportData: SalesReport): Promise<Uint8Array> {
  *    const doc = new jsPDF();
  *    const pageHeight = doc.internal.pageSize.height || doc.internal.pageSize.getHeight();
  *    const pageWidth = doc.internal.pageSize.width || doc.internal.pageSize.getWidth();
- *    let currentY = 15; // Start position
+ *    let currentY = 15; // Posición inicial
+ *    const margin = 14;
  *
- *    // Header
+ *    // Encabezado
  *    doc.setFontSize(18);
  *    doc.text(reportData.businessName, pageWidth / 2, currentY, { align: 'center' });
  *    currentY += 8;
  *    doc.setFontSize(10);
- *    doc.text(`Report Date: ${reportData.reportDate}`, pageWidth / 2, currentY, { align: 'center' });
+ *    doc.text(`Reporte de Ventas - Fecha: ${reportData.reportDate}`, pageWidth / 2, currentY, { align: 'center' });
  *    currentY += 5;
- *    doc.text(`Generated by: ${reportData.user}`, pageWidth / 2, currentY, { align: 'center' });
+ *    doc.text(`Generado por: ${reportData.user}`, pageWidth / 2, currentY, { align: 'center' });
  *    currentY += 10;
  *
- *    // Summary Section
+ *    // Sección de Resumen Financiero
  *    doc.setFontSize(12);
- *    doc.text("Sales Summary", 14, currentY);
+ *    doc.text("Resumen Financiero", margin, currentY);
  *    currentY += 7;
  *    doc.setFontSize(10);
- *    doc.text(`Starting Cash: ${formatCurrency(reportData.startingCash)}`, 14, currentY);
- *    doc.text(`Total Sales: ${formatCurrency(reportData.totalSales)}`, pageWidth / 2, currentY);
+ *    const summaryCol1X = margin;
+ *    const summaryCol2X = pageWidth / 2;
+ *
+ *    doc.text(`Fondo Inicial:`, summaryCol1X, currentY);
+ *    doc.text(`${formatCurrency(reportData.startingCash)}`, summaryCol2X, currentY, {align: 'right'});
  *    currentY += 5;
- *    doc.text(`Cash Sales: ${formatCurrency(reportData.cashSales)}`, 14, currentY);
- *    doc.text(`Card Sales: ${formatCurrency(reportData.cardSales)}`, pageWidth / 2, currentY);
+ *    doc.text(`Ventas Efectivo:`, summaryCol1X, currentY);
+ *    doc.text(`+ ${formatCurrency(reportData.cashSales)}`, summaryCol2X, currentY, {align: 'right'});
  *    currentY += 5;
- *    doc.setFontSize(11).setFont(undefined, 'bold');
- *    doc.text(`Expected Cash in Register: ${formatCurrency(reportData.expectedCashInRegister)}`, 14, currentY);
- *    doc.setFont(undefined, 'normal');
- *    currentY += 10;
+ *    doc.text(`Ventas Tarjeta:`, summaryCol1X, currentY);
+ *     doc.text(`${formatCurrency(reportData.cardSales)}`, summaryCol2X, currentY, {align: 'right'}); // No sumar al efectivo esperado
+ *    currentY += 5;
+ *     doc.text(`Gastos (-):`, summaryCol1X, currentY);
+ *     doc.text(`- ${formatCurrency(reportData.totalExpenses)}`, summaryCol2X, currentY, {align: 'right'});
+ *     currentY += 5;
+ *     doc.text(`Propinas (+):`, summaryCol1X, currentY);
+ *     doc.text(`+ ${formatCurrency(reportData.totalTips)}`, summaryCol2X, currentY, {align: 'right'});
+ *     currentY += 5;
+ *     doc.text(`Préstamos/Retiros (-):`, summaryCol1X, currentY);
+ *     doc.text(`- ${formatCurrency(reportData.loansWithdrawalsAmount)}`, summaryCol2X, currentY, {align: 'right'});
+ *     if(reportData.loansWithdrawalsReason) {
+ *          currentY += 4;
+ *          doc.setFontSize(8);
+ *          doc.text(`   Motivo: ${reportData.loansWithdrawalsReason}`, summaryCol1X, currentY);
+ *          doc.setFontSize(10);
+ *     }
+ *     currentY += 7;
  *
- *    // Sales History Table (using jspdf-autotable)
- *    const head = [['#', 'ID', 'Customer', 'Subtotal', 'Total', 'Payment', 'Status']];
- *    const bodyCash = reportData.salesHistory
- *        .filter(item => item.paymentMethod === 'cash')
- *        .map(item => [
- *            item.orderNumber,
- *            item.orderId,
- *            item.customer,
- *            formatCurrency(item.subtotal),
- *            formatCurrency(item.total),
- *            item.paymentMethod,
- *            item.status
- *        ]);
+ *     // Línea separadora
+ *     doc.setDrawColor(180); // Gris claro
+ *     doc.line(margin, currentY, pageWidth - margin, currentY);
+ *     currentY += 5;
  *
- *     const bodyCard = reportData.salesHistory
- *        .filter(item => item.paymentMethod === 'card')
- *        .map(item => [
- *             item.orderNumber,
- *            item.orderId,
- *            item.customer,
- *            formatCurrency(item.subtotal),
- *            formatCurrency(item.total),
- *            item.paymentMethod,
- *            item.status
- *        ]);
+ *     doc.setFont(undefined, 'bold');
+ *     doc.text(`Efectivo Esperado:`, summaryCol1X, currentY);
+ *     doc.text(`${formatCurrency(reportData.expectedCashInRegister)}`, summaryCol2X, currentY, {align: 'right'});
+ *     currentY += 5;
+ *     doc.text(`Efectivo Contado:`, summaryCol1X, currentY);
+ *     doc.text(`${formatCurrency(reportData.endingCash)}`, summaryCol2X, currentY, {align: 'right'});
+ *     currentY += 7;
  *
- *      if (bodyCash.length > 0) {
- *          doc.setFontSize(12).text("Cash Payments", 14, currentY);
- *          currentY += 5;
- *          autoTable(doc, {
- *              head: head,
- *              body: bodyCash,
- *              startY: currentY,
- *              theme: 'grid',
- *              headStyles: { fillColor: [0, 128, 128] }, // Teal header
- *              didDrawPage: (data) => { currentY = data.cursor?.y || currentY; } // Update Y after table draw
- *          });
- *          currentY += 10; // Add space after table
- *       }
+ *      doc.setFontSize(12);
+ *      doc.text(`Diferencia:`, summaryCol1X, currentY);
+ *      const diffColor = reportData.calculatedDifference === 0 ? [0, 0, 0] : reportData.calculatedDifference > 0 ? [0, 100, 0] : [200, 0, 0]; // Negro, Verde, Rojo
+ *      doc.setTextColor(diffColor[0], diffColor[1], diffColor[2]);
+ *      doc.text(`${formatCurrency(reportData.calculatedDifference)} ${reportData.calculatedDifference === 0 ? '' : reportData.calculatedDifference > 0 ? '(Sobrante)' : '(Faltante)'}`, summaryCol2X, currentY, {align: 'right'});
+ *      doc.setTextColor(0, 0, 0); // Resetear color
+ *      doc.setFont(undefined, 'normal');
+ *      currentY += 10;
  *
- *        if (bodyCard.length > 0) {
- *          doc.setFontSize(12).text("Card Payments", 14, currentY);
- *          currentY += 5;
- *          autoTable(doc, {
- *              head: head,
- *              body: bodyCard,
- *              startY: currentY,
- *              theme: 'grid',
- *              headStyles: { fillColor: [0, 128, 128] }, // Teal header
- *              didDrawPage: (data) => { currentY = data.cursor?.y || currentY; }
- *          });
- *          currentY += 10;
- *        }
+ *    // Tabla de Historial de Ventas (usando jspdf-autotable)
+ *    const head = [['#', 'Cliente', 'Subtotal', 'Total', 'Pago', 'Estado']];
+ *    const body = reportData.salesHistory.map(item => [
+ *        item.orderNumber,
+ *        item.customer,
+ *        formatCurrency(item.subtotal),
+ *        formatCurrency(item.total),
+ *        item.paymentMethod,
+ *        item.status
+ *    ]);
  *
+ *    doc.setFontSize(12);
+ *    doc.text("Detalle de Ventas Completadas", margin, currentY);
+ *    currentY += 5;
  *
- *    // Return PDF bytes
+ *    autoTable(doc, {
+ *        head: head,
+ *        body: body,
+ *        startY: currentY,
+ *        theme: 'grid',
+ *        headStyles: { fillColor: [0, 128, 128] }, // Encabezado Teal
+ *        styles: { fontSize: 8 },
+ *        columnStyles: {
+ *             2: { halign: 'right' }, // Subtotal
+ *             3: { halign: 'right' }, // Total
+ *        },
+ *        didDrawPage: (data) => { currentY = data.cursor?.y || currentY; } // Actualizar Y después de dibujar tabla
+ *    });
+ *    // currentY se actualiza dentro de didDrawPage
+ *
+ *    // Devolver bytes del PDF
  *    return doc.output('arraybuffer');
  * }
  *

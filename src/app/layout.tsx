@@ -3,6 +3,7 @@ import { Inter } from 'next/font/google'; // Using Inter instead of Geist for br
 import './globals.css';
 import { Toaster } from "@/components/ui/toaster";
 import { AuthProvider } from '@/contexts/auth-context'; // Import AuthProvider
+import { CashRegisterProvider } from '@/contexts/cash-register-context'; // Import CashRegisterProvider
 
 const inter = Inter({ subsets: ['latin'] });
 
@@ -20,8 +21,10 @@ export default function RootLayout({
     <html lang="en">
       <body className={`${inter.className} antialiased`}>
         <AuthProvider> {/* Wrap children with AuthProvider */}
-          {children}
-          <Toaster />
+          <CashRegisterProvider> {/* Wrap with CashRegisterProvider */}
+            {children}
+            <Toaster />
+          </CashRegisterProvider>
         </AuthProvider>
       </body>
     </html>

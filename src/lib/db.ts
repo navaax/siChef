@@ -11,29 +11,33 @@ let db: Database | null = null;
 export async function getDb(): Promise<Database> {
   if (!db) {
     try {
-      console.log(`[DB] Attempting to open database at: ${dbPath}`);
+      console.log(`[DB] Intentando abrir la base de datos en: ${dbPath}`);
+      // Add verbose logging for sqlite3 driver
+      // const verboseSqlite3 = sqlite3.verbose();
       const newDb = await open({
         filename: dbPath,
-        driver: sqlite3.Database
+        driver: sqlite3.Database // Use the imported class directly
+        // driver: verboseSqlite3.Database // Use verbose driver for more logs
       });
       db = newDb;
-      console.log("[DB] Database opened successfully.");
+      console.log("[DB] Base de datos abierta exitosamente.");
       await initializeDb(db); // Asegurar que el esquema se cree/actualice en la primera conexión
     } catch (error) {
-      console.error("[DB] Failed to open database:", error);
+      console.error("[DB] Falló al abrir la base de datos:", error);
       throw error; // Re-lanzar el error para indicar fallo
     }
   }
   return db;
 }
 
+
 async function initializeDb(dbInstance: Database): Promise<void> {
-  console.log("[DB] Initializing database schema...");
+  console.log("[DB] Inicializando esquema de base de datos...");
   // Usar PRAGMA foreign_keys=ON; para forzar restricciones de clave foránea
   await dbInstance.exec('PRAGMA foreign_keys=ON;');
-  console.log("[DB] PRAGMA foreign_keys=ON executed.");
+  console.log("[DB] PRAGMA foreign_keys=ON ejecutado.");
 
-  // Crear tablas si no existen
+  // --- Creación de Tablas ---
   await dbInstance.exec(`
     CREATE TABLE IF NOT EXISTS categories (
       id TEXT PRIMARY KEY,
@@ -63,96 +67,91 @@ async function initializeDb(dbInstance: Database): Promise<void> {
     );
 
     CREATE TABLE IF NOT EXISTS packages (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        price REAL NOT NULL,
-        imageUrl TEXT,
-        category_id TEXT, -- Opcional: Para agrupación UI
-        FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE SET NULL
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      price REAL NOT NULL,
+      imageUrl TEXT,
+      category_id TEXT, -- Opcional: Para agrupación UI (puede ser NULL)
+      FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE SET NULL
     );
 
+
     CREATE TABLE IF NOT EXISTS package_items (
-        id TEXT PRIMARY KEY,
-        package_id TEXT NOT NULL,
-        product_id TEXT NOT NULL,
-        quantity INTEGER NOT NULL DEFAULT 1,
-        display_order INTEGER DEFAULT 0,
-        FOREIGN KEY (package_id) REFERENCES packages(id) ON DELETE CASCADE,
-        FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+      id TEXT PRIMARY KEY,
+      package_id TEXT NOT NULL,
+      product_id TEXT NOT NULL,
+      quantity INTEGER NOT NULL DEFAULT 1,
+      display_order INTEGER DEFAULT 0,
+      FOREIGN KEY (package_id) REFERENCES packages(id) ON DELETE CASCADE,
+      FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
     );
 
     CREATE TABLE IF NOT EXISTS product_modifier_slots (
       id TEXT PRIMARY KEY,
       product_id TEXT NOT NULL,
       label TEXT NOT NULL,
-      linked_category_id TEXT NOT NULL, -- Categoría de donde provienen las opciones (tipo 'modificador')
+      linked_category_id TEXT NOT NULL,
       min_quantity INTEGER NOT NULL DEFAULT 0,
       max_quantity INTEGER NOT NULL DEFAULT 1,
       FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE,
       FOREIGN KEY (linked_category_id) REFERENCES categories(id) ON DELETE CASCADE
     );
 
-    -- NUEVA TABLA: Almacena las opciones específicas permitidas para un slot de modificador
     CREATE TABLE IF NOT EXISTS product_modifier_slot_options (
       id TEXT PRIMARY KEY,
       product_modifier_slot_id TEXT NOT NULL,
-      modifier_product_id TEXT NOT NULL, -- El producto específico (tipo modificador) permitido
+      modifier_product_id TEXT NOT NULL,
       FOREIGN KEY (product_modifier_slot_id) REFERENCES product_modifier_slots(id) ON DELETE CASCADE,
       FOREIGN KEY (modifier_product_id) REFERENCES products(id) ON DELETE CASCADE,
-      UNIQUE (product_modifier_slot_id, modifier_product_id) -- Asegura que un producto no se añada dos veces al mismo slot
+      UNIQUE (product_modifier_slot_id, modifier_product_id)
     );
 
     CREATE TABLE IF NOT EXISTS package_item_modifier_slot_overrides (
-        id TEXT PRIMARY KEY,
-        package_item_id TEXT NOT NULL,
-        product_modifier_slot_id TEXT NOT NULL,
-        min_quantity INTEGER NOT NULL,
-        max_quantity INTEGER NOT NULL,
-        FOREIGN KEY (package_item_id) REFERENCES package_items(id) ON DELETE CASCADE,
-        FOREIGN KEY (product_modifier_slot_id) REFERENCES product_modifier_slots(id) ON DELETE CASCADE,
-        UNIQUE (package_item_id, product_modifier_slot_id)
+      id TEXT PRIMARY KEY,
+      package_item_id TEXT NOT NULL,
+      product_modifier_slot_id TEXT NOT NULL,
+      min_quantity INTEGER NOT NULL,
+      max_quantity INTEGER NOT NULL,
+      FOREIGN KEY (package_item_id) REFERENCES package_items(id) ON DELETE CASCADE,
+      FOREIGN KEY (product_modifier_slot_id) REFERENCES product_modifier_slots(id) ON DELETE CASCADE,
+      UNIQUE (package_item_id, product_modifier_slot_id)
+    );
+
+    -- NUEVAS TABLAS PARA CAJA --
+    CREATE TABLE IF NOT EXISTS cash_sessions (
+      id TEXT PRIMARY KEY,
+      user_id TEXT, -- Quién abrió o cerró? Puede ser null si es general
+      start_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+      end_time DATETIME,
+      starting_cash REAL NOT NULL DEFAULT 0,
+      ending_cash REAL, -- Conteo final
+      total_cash_sales REAL, -- Calculado de órdenes completadas
+      total_card_sales REAL, -- Calculado de órdenes completadas
+      total_expenses REAL DEFAULT 0,
+      total_tips REAL DEFAULT 0,
+      loans_withdrawals_amount REAL DEFAULT 0,
+      loans_withdrawals_reason TEXT,
+      calculated_difference REAL, -- (ending_cash - (starting_cash + cash_sales - expenses - loans + tips))
+      status TEXT NOT NULL CHECK(status IN ('open', 'closed')) DEFAULT 'open'
+      -- FOREIGN KEY (user_id) REFERENCES users(id) -- Si hubiera tabla de usuarios
+    );
+
+    CREATE TABLE IF NOT EXISTS cash_session_details (
+       id TEXT PRIMARY KEY,
+       cash_session_id TEXT NOT NULL,
+       type TEXT NOT NULL CHECK(type IN ('start', 'end')), -- Indica si es conteo inicial o final
+       denomination_value REAL NOT NULL, -- e.g., 500, 200, 0.50
+       quantity INTEGER NOT NULL,
+       subtotal REAL NOT NULL, -- quantity * denomination_value
+       FOREIGN KEY (cash_session_id) REFERENCES cash_sessions(id) ON DELETE CASCADE
     );
   `);
-
-  console.log("[DB] Basic tables created or verified.");
+  console.log("[DB] Tablas básicas creadas o verificadas.");
 
   // --- Intentar añadir columnas nuevas si no existen (Mejor esfuerzo para BD existentes) ---
-  const columnsToAdd = [
-    { table: 'categories', column: 'type', definition: "TEXT CHECK(type IN ('producto', 'modificador', 'paquete')) DEFAULT 'producto'" },
-    { table: 'products', column: 'inventory_item_id', definition: 'TEXT' },
-    { table: 'products', column: 'inventory_consumed_per_unit', definition: 'REAL DEFAULT 1' },
-    { table: 'packages', column: 'category_id', definition: 'TEXT' }, // Asegurar que esta columna exista
-  ];
+  // No se necesitan nuevas columnas en tablas existentes para esta feature por ahora
 
-  for (const { table, column, definition } of columnsToAdd) {
-    try {
-      await dbInstance.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition};`);
-      console.log(`[DB] Attempted to add column '${column}' to table '${table}'.`);
-    } catch (error: any) {
-      // Ignorar error si la columna ya existe
-      if (!error.message?.includes('duplicate column name')) {
-        console.warn(`[DB] Warning adding column '${column}' to table '${table}' (might already exist or other issue):`, error.message);
-      } else {
-        // console.log(`[DB] Column '${column}' already exists in table '${table}'.`);
-      }
-    }
-  }
-
-   // Añadir FK para packages.category_id si no existe (manejo de errores simple)
-   /* // Esto es más complejo y propenso a errores si la tabla ya tiene datos que violan la FK.
-      // Se asume que la creación inicial de la tabla ya incluye la FK.
-   try {
-       await dbInstance.exec(`
-           -- No se puede añadir FK con ALTER TABLE en SQLite de forma simple y segura
-           -- Se asume que la tabla se creó correctamente con la FK
-       `);
-   } catch (error: any) {
-       console.warn("[DB] Could not ensure foreign key on packages.category_id (might require manual migration):", error.message);
-   }
-   */
-
-
-  console.log("[DB] Database schema initialized/verified.");
+  console.log("[DB] Esquema de base de datos inicializado/verificado.");
 }
 
 // Ejemplo de cómo cerrar la base de datos (opcional, depende del ciclo de vida de la app)
@@ -160,6 +159,6 @@ export async function closeDb(): Promise<void> {
   if (db) {
     await db.close();
     db = null;
-    console.log("[DB] Database connection closed.");
+    console.log("[DB] Conexión de base de datos cerrada.");
   }
 }
