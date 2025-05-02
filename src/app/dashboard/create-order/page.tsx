@@ -15,16 +15,17 @@ import { PlusCircle, MinusCircle, ChevronLeft, Save, Printer, Trash2, Loader2, P
 import { useToast } from "@/hooks/use-toast";
 import Image from 'next/image'; // Para imágenes de productos
 import { cn } from '@/lib/utils'; // Importar utilidad cn
+import { format } from 'date-fns';
 import {
     getCategories,
     getProductsByCategory,
     getProductById,
     getModifierSlotsForProduct,
-    getPackagesByCategoryUI, // Fetches packages by their UI category - RENAMED
+    getPackagesByCategoryUI, // Fetches packages by their UI category
     getPackageById, // Fetch single package by ID
     getItemsForPackage,
     getOverridesForPackageItem,
-    getModifiersByCategory, // Import this
+    getModifiersByCategory, // Importar esto
 } from '@/services/product-service';
 import { adjustInventoryStock, getInventoryItems } from '@/services/inventory-service'; // Se agregó ajuste y obtención de inventario
 import type {
@@ -41,8 +42,8 @@ import type {
     InventoryItem,
     ProductModifierSlotOption // Asegurarse que este tipo esté importado
 } from '@/types/product-types';
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog"
-import { buttonVariants } from "@/components/ui/button" // Importar buttonVariants
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
+import { buttonVariants } from "@/components/ui/button"; // Importar buttonVariants
 
 // Capacitor (Importación conceptual - ¡Necesita un plugin real!)
 // import { Plugins } from '@capacitor/core';
@@ -146,7 +147,7 @@ export default function CreateOrderPage() {
     try {
         // Obtener productos regulares (el servicio filtra paquetes y modificadores)
         const fetchedProducts = await getProductsByCategory(categoryId);
-        // Obtener paquetes vinculados a esta categoría UI - UPDATED function name
+        // Obtener paquetes vinculados a esta categoría UI
         const fetchedPackages = await getPackagesByCategoryUI(categoryId);
 
         setProducts(fetchedProducts);
@@ -771,29 +772,35 @@ export default function CreateOrderPage() {
         setIsLoading(prev => ({ ...prev, printing: true }));
         toast({ title: "Imprimiendo...", description: "Enviando comanda a la impresora..." });
 
+        // Obtener la impresora seleccionada de localStorage
+        const selectedPrinterId = localStorage.getItem('siChefSettings_selectedPrinter');
+
         console.log("--- INICIO COMANDA (SIMULADO) ---");
+        console.log(`Impresora Destino: ${selectedPrinterId || 'Ninguna seleccionada (usando predeterminada?)'}`);
         console.log(receiptText);
         console.log("--- FIN COMANDA (SIMULADO) ---");
+
+        if (!selectedPrinterId) {
+             toast({
+                variant: "destructive",
+                title: "Impresora no Configurada",
+                description: "Ve a Configuraciones para seleccionar una impresora.",
+            });
+             setIsLoading(prev => ({ ...prev, printing: false }));
+            return; // Detener si no hay impresora
+        }
 
         // --- Inicio: Lógica de Capacitor (¡Requiere Plugin!) ---
         /*
         if (typeof window !== 'undefined' && window.Capacitor?.isNativePlatform()) {
             try {
-                // Asumiendo que existe un plugin 'PrinterPlugin'
+                // Asumiendo que existe un plugin 'PrinterPlugin' y que puedes imprimir por ID/Dirección
                 // const { PrinterPlugin } = Plugins;
                 // if (!PrinterPlugin) throw new Error("Plugin de impresora no disponible.");
 
-                // 1. Buscar impresoras (ej. Bluetooth) - La implementación depende del plugin
-                // const discovered = await PrinterPlugin.discoverPrinters({ types: ['bluetooth'] });
-                // if (!discovered || discovered.printers.length === 0) {
-                //   throw new Error("No se encontraron impresoras Bluetooth.");
-                // }
-                // const targetPrinter = discovered.printers[0]; // Seleccionar la primera encontrada (o permitir selección)
-                // console.log("Usando impresora:", targetPrinter);
-
-                // 2. Imprimir el texto
+                // Aquí usarías selectedPrinterId (que puede ser una dirección IP, MAC, etc.)
                 // await PrinterPlugin.print({
-                //   printerId: targetPrinter.id, // ID de la impresora encontrada
+                //   printerId: selectedPrinterId,
                 //   content: receiptText,
                 //   contentType: 'text' // O 'escpos' si generas comandos ESC/POS
                 // });
@@ -801,25 +808,25 @@ export default function CreateOrderPage() {
                 // Simulación para desarrollo web
                 await new Promise(resolve => setTimeout(resolve, 1500)); // Simular espera
 
-                toast({ title: "Impresión Exitosa", description: "Comanda enviada correctamente (simulado)." });
+                toast({ title: "Impresión Exitosa", description: `Comanda enviada a ${selectedPrinterId} (simulado).` });
 
             } catch (error) {
                 console.error("Error al imprimir con Capacitor:", error);
                 toast({
                     variant: "destructive",
                     title: "Error de Impresión",
-                    description: `No se pudo imprimir. ${error instanceof Error ? error.message : 'Error desconocido'}`,
+                    description: `No se pudo imprimir en ${selectedPrinterId}. ${error instanceof Error ? error.message : 'Error desconocido'}`,
                 });
             }
         } else {
             console.warn("Capacitor no disponible o no es plataforma nativa. Impresión simulada en consola.");
             await new Promise(resolve => setTimeout(resolve, 1000)); // Simular espera
-             toast({ title: "Impresión Simulada", description: "Comanda mostrada en consola." });
+             toast({ title: "Impresión Simulada", description: `Comanda para ${selectedPrinterId} mostrada en consola.` });
         }
         */
          // Simulación simple sin Capacitor por ahora
          await new Promise(resolve => setTimeout(resolve, 1000));
-         toast({ title: "Impresión Simulada", description: "Comanda mostrada en consola." });
+         toast({ title: "Impresión Simulada", description: `Comanda para ${selectedPrinterId} mostrada en consola.` });
 
         // --- Fin: Lógica de Capacitor ---
 
@@ -878,7 +885,7 @@ export default function CreateOrderPage() {
                 allProductIds.add(item.id);
                 item.selectedModifiers.forEach(mod => allProductIds.add(mod.productId));
              } else if (item.type === 'package' && item.packageItems) {
-                // No añadir el ID del paquete en sí a menos que consuma inventario directamente (lo cual no hace ahora)
+                // No añadir el ID del paquete en sí a menos que consuma inventario directly (lo cual no hace ahora)
                 item.packageItems.forEach(pkgItem => {
                      allProductIds.add(pkgItem.productId); // IDs de producto dentro del paquete
                      pkgItem.selectedModifiers.forEach(mod => allProductIds.add(mod.productId)); // IDs de modificador dentro del item de paquete
