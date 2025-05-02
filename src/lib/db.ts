@@ -3,7 +3,7 @@ import sqlite3 from 'sqlite3';
 import { open, type Database } from 'sqlite';
 import path from 'path';
 
-// Ensure the database file path is correct, especially in production builds
+// Asegurar que la ruta del archivo de la base de datos sea correcta, especialmente en builds de producción
 const dbPath = path.join(process.cwd(), 'sichef.db');
 
 let db: Database | null = null;
@@ -11,30 +11,33 @@ let db: Database | null = null;
 export async function getDb(): Promise<Database> {
   if (!db) {
     try {
+      console.log(`[DB] Attempting to open database at: ${dbPath}`);
       const newDb = await open({
         filename: dbPath,
         driver: sqlite3.Database
       });
       db = newDb;
-      await initializeDb(db); // Ensure schema is created/updated on first connect
+      console.log("[DB] Database opened successfully.");
+      await initializeDb(db); // Asegurar que el esquema se cree/actualice en la primera conexión
     } catch (error) {
-      console.error("Failed to open database:", error);
-      throw error; // Re-throw the error to indicate failure
+      console.error("[DB] Failed to open database:", error);
+      throw error; // Re-lanzar el error para indicar fallo
     }
   }
   return db;
 }
 
 async function initializeDb(dbInstance: Database): Promise<void> {
-  // Use PRAGMA foreign_keys=ON; for enforcing foreign key constraints
+  console.log("[DB] Initializing database schema...");
+  // Usar PRAGMA foreign_keys=ON; para forzar restricciones de clave foránea
   await dbInstance.exec('PRAGMA foreign_keys=ON;');
+  console.log("[DB] PRAGMA foreign_keys=ON executed.");
 
-  // Create tables if they don't exist
+  // Crear tablas si no existen
   await dbInstance.exec(`
     CREATE TABLE IF NOT EXISTS categories (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
-      -- Type is kept for potential UI grouping, but not for package identification
       type TEXT NOT NULL CHECK(type IN ('producto', 'modificador', 'paquete')) DEFAULT 'producto',
       imageUrl TEXT
     );
@@ -59,40 +62,46 @@ async function initializeDb(dbInstance: Database): Promise<void> {
       FOREIGN KEY (inventory_item_id) REFERENCES inventory_items(id) ON DELETE SET NULL
     );
 
-    -- Defines slots on a product where modifiers (from another category) can be chosen
+    CREATE TABLE IF NOT EXISTS packages (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        price REAL NOT NULL,
+        imageUrl TEXT,
+        category_id TEXT, -- Opcional: Para agrupación UI
+        FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS package_items (
+        id TEXT PRIMARY KEY,
+        package_id TEXT NOT NULL,
+        product_id TEXT NOT NULL,
+        quantity INTEGER NOT NULL DEFAULT 1,
+        display_order INTEGER DEFAULT 0,
+        FOREIGN KEY (package_id) REFERENCES packages(id) ON DELETE CASCADE,
+        FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+    );
+
     CREATE TABLE IF NOT EXISTS product_modifier_slots (
       id TEXT PRIMARY KEY,
       product_id TEXT NOT NULL,
       label TEXT NOT NULL,
-      linked_category_id TEXT NOT NULL,
+      linked_category_id TEXT NOT NULL, -- Categoría de donde provienen las opciones (tipo 'modificador')
       min_quantity INTEGER NOT NULL DEFAULT 0,
       max_quantity INTEGER NOT NULL DEFAULT 1,
       FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE,
       FOREIGN KEY (linked_category_id) REFERENCES categories(id) ON DELETE CASCADE
     );
 
-    -- *** NEW: packages table ***
-    CREATE TABLE IF NOT EXISTS packages (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        price REAL NOT NULL,
-        imageUrl TEXT
-        -- categoryId TEXT, -- Optional: For UI grouping, can be added later if needed
-        -- FOREIGN KEY (categoryId) REFERENCES categories(id) ON DELETE SET NULL
+    -- NUEVA TABLA: Almacena las opciones específicas permitidas para un slot de modificador
+    CREATE TABLE IF NOT EXISTS product_modifier_slot_options (
+      id TEXT PRIMARY KEY,
+      product_modifier_slot_id TEXT NOT NULL,
+      modifier_product_id TEXT NOT NULL, -- El producto específico (tipo modificador) permitido
+      FOREIGN KEY (product_modifier_slot_id) REFERENCES product_modifier_slots(id) ON DELETE CASCADE,
+      FOREIGN KEY (modifier_product_id) REFERENCES products(id) ON DELETE CASCADE,
+      UNIQUE (product_modifier_slot_id, modifier_product_id) -- Asegura que un producto no se añada dos veces al mismo slot
     );
 
-    -- Items included within a package
-    CREATE TABLE IF NOT EXISTS package_items (
-        id TEXT PRIMARY KEY,
-        package_id TEXT NOT NULL, -- *** UPDATED: References packages table ***
-        product_id TEXT NOT NULL,
-        quantity INTEGER NOT NULL DEFAULT 1,
-        display_order INTEGER DEFAULT 0,
-        FOREIGN KEY (package_id) REFERENCES packages(id) ON DELETE CASCADE, -- *** UPDATED FK ***
-        FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
-    );
-
-    -- Overrides the default modifier slot rules for a specific item *within a package*
     CREATE TABLE IF NOT EXISTS package_item_modifier_slot_overrides (
         id TEXT PRIMARY KEY,
         package_item_id TEXT NOT NULL,
@@ -103,49 +112,54 @@ async function initializeDb(dbInstance: Database): Promise<void> {
         FOREIGN KEY (product_modifier_slot_id) REFERENCES product_modifier_slots(id) ON DELETE CASCADE,
         UNIQUE (package_item_id, product_modifier_slot_id)
     );
-
   `);
 
-  // --- Attempt to add new columns if they don't exist (Best effort for existing DBs) ---
+  console.log("[DB] Basic tables created or verified.");
 
-   // Attempt to add 'type' column to categories if it doesn't exist
-   // This might not be strictly necessary anymore but kept for potential UI grouping
-  try {
-    await dbInstance.exec(`ALTER TABLE categories ADD COLUMN type TEXT CHECK(type IN ('producto', 'modificador', 'paquete')) DEFAULT 'producto';`);
-    console.log("Attempted to add 'type' column to 'categories' table (if it didn't exist).");
-  } catch (error: any) {
-    if (!error.message?.includes('duplicate column name')) {
-      console.warn("Warning adding 'type' column to categories (might already exist or other issue):", error.message);
-    }
-  }
+  // --- Intentar añadir columnas nuevas si no existen (Mejor esfuerzo para BD existentes) ---
+  const columnsToAdd = [
+    { table: 'categories', column: 'type', definition: "TEXT CHECK(type IN ('producto', 'modificador', 'paquete')) DEFAULT 'producto'" },
+    { table: 'products', column: 'inventory_item_id', definition: 'TEXT' },
+    { table: 'products', column: 'inventory_consumed_per_unit', definition: 'REAL DEFAULT 1' },
+    { table: 'packages', column: 'category_id', definition: 'TEXT' }, // Asegurar que esta columna exista
+  ];
 
-  // Attempt to add inventory columns to products if they don't exist
-  try {
-    await dbInstance.exec(`ALTER TABLE products ADD COLUMN inventory_item_id TEXT;`);
-    console.log("Attempted to add 'inventory_item_id' column to 'products' table (if it didn't exist).");
-  } catch (error: any) {
-    if (!error.message?.includes('duplicate column name')) {
-        console.warn("Warning adding 'inventory_item_id' column to products (might already exist):", error.message);
-    }
-  }
-   try {
-     await dbInstance.exec(`ALTER TABLE products ADD COLUMN inventory_consumed_per_unit REAL DEFAULT 1;`);
-     console.log("Attempted to add 'inventory_consumed_per_unit' column to 'products' table (if it didn't exist).");
-   } catch (error: any) {
+  for (const { table, column, definition } of columnsToAdd) {
+    try {
+      await dbInstance.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition};`);
+      console.log(`[DB] Attempted to add column '${column}' to table '${table}'.`);
+    } catch (error: any) {
+      // Ignorar error si la columna ya existe
       if (!error.message?.includes('duplicate column name')) {
-          console.warn("Warning adding 'inventory_consumed_per_unit' column to products (might already exist):", error.message);
+        console.warn(`[DB] Warning adding column '${column}' to table '${table}' (might already exist or other issue):`, error.message);
+      } else {
+        // console.log(`[DB] Column '${column}' already exists in table '${table}'.`);
       }
+    }
+  }
+
+   // Añadir FK para packages.category_id si no existe (manejo de errores simple)
+   /* // Esto es más complejo y propenso a errores si la tabla ya tiene datos que violan la FK.
+      // Se asume que la creación inicial de la tabla ya incluye la FK.
+   try {
+       await dbInstance.exec(`
+           -- No se puede añadir FK con ALTER TABLE en SQLite de forma simple y segura
+           -- Se asume que la tabla se creó correctamente con la FK
+       `);
+   } catch (error: any) {
+       console.warn("[DB] Could not ensure foreign key on packages.category_id (might require manual migration):", error.message);
    }
+   */
 
 
-  console.log("Database schema initialized/verified.");
+  console.log("[DB] Database schema initialized/verified.");
 }
 
-// Example of how to close the database (optional, depends on app lifecycle)
+// Ejemplo de cómo cerrar la base de datos (opcional, depende del ciclo de vida de la app)
 export async function closeDb(): Promise<void> {
   if (db) {
     await db.close();
     db = null;
-    console.log("Database connection closed.");
+    console.log("[DB] Database connection closed.");
   }
 }

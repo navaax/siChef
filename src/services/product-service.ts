@@ -8,7 +8,8 @@ import type {
     Package,
     ProductModifierSlot,
     PackageItem,
-    PackageItemModifierSlotOverride
+    PackageItemModifierSlotOverride,
+    ProductModifierSlotOption // Importar el nuevo tipo
 } from '@/types/product-types';
 import { randomUUID } from 'crypto';
 
@@ -104,7 +105,7 @@ export async function getAllPackages(): Promise<Package[]> {
             ORDER BY p.name ASC
         `;
         console.log(`[getAllPackages] Query: ${query}`);
-        const packages = await db.all<Package[]>(query); // No se necesitan parámetros aquí
+        const packages = await db.all<Package[]>(query);
         console.log(`[getAllPackages] Found ${packages.length} packages.`);
         return packages;
     } catch (error) {
@@ -179,28 +180,73 @@ export async function getPackageById(packageId: string): Promise<Package | null>
 
 
 /**
- * Obtiene los slots modificadores definidos para un producto específico.
+ * Obtiene los slots modificadores definidos para un producto específico, incluyendo sus opciones permitidas.
  * @param productId El ID del producto.
- * @returns Una promesa que resuelve a un array de objetos ProductModifierSlot.
+ * @returns Una promesa que resuelve a un array de objetos ProductModifierSlot, cada uno potencialmente con un array `allowedOptions`.
  */
 export async function getModifierSlotsForProduct(productId: string): Promise<ProductModifierSlot[]> {
   const db = await getDb();
   try {
-    const query = `
+    // 1. Obtener los slots base
+    const slotQuery = `
       SELECT *
       FROM product_modifier_slots
       WHERE product_id = ?
       ORDER BY label ASC
     `;
-    console.log(`[getModifierSlotsForProduct] Query: ${query}, Params: [${productId}]`);
-    const slots = await db.all<ProductModifierSlot[]>(query, [productId]);
-    console.log(`[getModifierSlotsForProduct] Found ${slots.length} slots for product ${productId}.`);
-    return slots;
+    console.log(`[getModifierSlotsForProduct] Query Slots: ${slotQuery}, Params: [${productId}]`);
+    const slots = await db.all<ProductModifierSlot[]>(slotQuery, [productId]);
+    console.log(`[getModifierSlotsForProduct] Found ${slots.length} base slots for product ${productId}.`);
+
+    // 2. Para cada slot, obtener sus opciones específicas permitidas (si existen)
+    const slotsWithOptionsPromises = slots.map(async (slot) => {
+      const options = await getModifierSlotOptions(slot.id);
+      // Si hay opciones específicas, las adjuntamos; de lo contrario, allowedOptions será undefined o un array vacío.
+      // La lógica para obtener *todas* las opciones de la categoría vinculada se moverá al frontend si allowedOptions está vacío.
+      return { ...slot, allowedOptions: options.length > 0 ? options : undefined };
+    });
+
+    const slotsWithOptions = await Promise.all(slotsWithOptionsPromises);
+    console.log(`[getModifierSlotsForProduct] Slots with options prepared for product ${productId}.`);
+    return slotsWithOptions;
+
   } catch (error) {
     console.error(`[getModifierSlotsForProduct] Error fetching modifier slots for product ${productId}:`, error);
     throw new Error(`Falló la obtención de slots modificadores para el producto ${productId}. Error original: ${error instanceof Error ? error.message : error}`);
   }
 }
+
+
+/**
+ * Obtiene las opciones de modificador *específicas* permitidas para un slot de modificador.
+ * @param productModifierSlotId El ID del slot de modificador.
+ * @returns Una promesa que resuelve a un array de ProductModifierSlotOption.
+ */
+export async function getModifierSlotOptions(productModifierSlotId: string): Promise<ProductModifierSlotOption[]> {
+    const db = await getDb();
+    try {
+        const query = `
+            SELECT
+                pmso.id,
+                pmso.product_modifier_slot_id,
+                pmso.modifier_product_id,
+                p.name as modifier_product_name,
+                p.price as modifier_product_price
+            FROM product_modifier_slot_options pmso
+            JOIN products p ON pmso.modifier_product_id = p.id
+            WHERE pmso.product_modifier_slot_id = ?
+            ORDER BY p.name ASC
+        `;
+        console.log(`[getModifierSlotOptions] Query: ${query}, Params: [${productModifierSlotId}]`);
+        const options = await db.all<ProductModifierSlotOption[]>(query, [productModifierSlotId]);
+        console.log(`[getModifierSlotOptions] Found ${options.length} specific options for slot ${productModifierSlotId}.`);
+        return options;
+    } catch (error) {
+        console.error(`[getModifierSlotOptions] Error fetching options for slot ${productModifierSlotId}:`, error);
+        throw new Error(`Falló la obtención de opciones para el slot ${productModifierSlotId}. Error original: ${error instanceof Error ? error.message : error}`);
+    }
+}
+
 
 /**
  * Obtiene los items (productos) incluidos en la definición de un paquete específico.
@@ -371,7 +417,8 @@ export async function updateProduct(id: string, updates: Partial<Omit<Product, '
     }
 }
 
-
+// OJO: Al eliminar un producto, también se eliminarán las opciones de slot que lo referencien
+// y los items de paquete que lo contengan, debido a ON DELETE CASCADE.
 export async function deleteProduct(id: string): Promise<void> {
     const db = await getDb();
     try {
@@ -379,8 +426,9 @@ export async function deleteProduct(id: string): Promise<void> {
          console.log(`[deleteProduct] Query: ${query}, Params: [${id}]`);
         const result = await db.run(query, [id]);
         // No lanzar error si el producto no se encuentra, simplemente no se eliminó nada.
+        console.log(`[deleteProduct] Product ${id} deleted (or did not exist). Changes: ${result.changes}`);
+        // No es necesario lanzar error si changes === 0
         // if (result.changes === 0) throw new Error(`Producto con id ${id} no encontrado.`);
-         console.log(`[deleteProduct] Product ${id} deleted successfully (or did not exist). Changes: ${result.changes}`);
     } catch (error) {
          console.error(`[deleteProduct] Error deleting product ${id}:`, error);
         throw new Error(`Falló al eliminar producto. Error original: ${error instanceof Error ? error.message : error}`);
@@ -502,9 +550,9 @@ export async function addPackageItem(item: Omit<PackageItem, 'id' | 'product_nam
       console.error(`[addPackageItem] SQLITE INSERT ERROR for package_items: ID=${newItem.id}, PackageID=${newItem.package_id}, ProductID=${newItem.product_id}. Error details:`, error);
       // Rethrowing the original error might be better for consistent error handling upstream
       if (error instanceof Error && error.message.includes("FOREIGN KEY constraint failed")) {
-         throw new Error(`Database constraint error: Ensure package ID '${newItem.package_id}' and product ID '${newItem.product_id}' are valid. Original error: ${error.message}`);
+         throw new Error(`Error de Base de Datos: Asegúrate que el ID de paquete '${newItem.package_id}' y el ID de producto '${newItem.product_id}' son válidos. Error original: ${error.message}`);
       }
-      throw error; // Re-throw the original error if it's not a specific FK issue we handled
+      throw error; // Re-lanzar el error original si no es un problema específico de FK que manejamos
   }
 }
 
@@ -523,11 +571,11 @@ export async function deletePackageItem(id: string): Promise<void> {
 }
 
 // --- CRUD Slot Modificador ---
-export async function addModifierSlot(slot: Omit<ProductModifierSlot, 'id'>): Promise<ProductModifierSlot> {
+export async function addModifierSlot(slot: Omit<ProductModifierSlot, 'id' | 'allowedOptions'>): Promise<ProductModifierSlot> {
   const db = await getDb();
   const newSlot = { ...slot, id: randomUUID() };
   try {
-    // Validate linked_category_id exists and is of type 'modificador'
+    // Validar que linked_category_id existe y es de tipo 'modificador'
     const category = await db.get('SELECT type FROM categories WHERE id = ?', [newSlot.linked_category_id]);
     if (!category) {
       throw new Error(`Categoría vinculada con ID ${newSlot.linked_category_id} no encontrada.`);
@@ -541,13 +589,16 @@ export async function addModifierSlot(slot: Omit<ProductModifierSlot, 'id'>): Pr
     console.log(`[addModifierSlot] Query: ${query}, Params: ${JSON.stringify(params)}`);
     await db.run(query, params);
     console.log(`[addModifierSlot] Modifier slot ${newSlot.id} added successfully.`);
-    return newSlot;
+    // Devuelve el slot sin allowedOptions; estas se gestionan por separado
+    return { id: newSlot.id, ...slot };
   } catch (error) {
       console.error(`[addModifierSlot] Error adding modifier slot for product ${newSlot.product_id}:`, error);
        throw new Error(`Falló al añadir slot modificador. Error original: ${error instanceof Error ? error.message : error}`);
   }
 }
 
+// OJO: Al eliminar un slot, también se eliminarán las opciones y overrides que lo referencien
+// debido a ON DELETE CASCADE.
 export async function deleteModifierSlot(id: string): Promise<void> {
     const db = await getDb();
     try {
@@ -562,6 +613,56 @@ export async function deleteModifierSlot(id: string): Promise<void> {
     }
 }
 
+
+// --- CRUD Opciones Específicas de Slot Modificador ---
+export async function addModifierSlotOption(option: Omit<ProductModifierSlotOption, 'id' | 'modifier_product_name' | 'modifier_product_price'>): Promise<ProductModifierSlotOption> {
+    const db = await getDb();
+    const newOption = { ...option, id: randomUUID() };
+    try {
+        // Validar que el slot existe
+        const slotExists = await db.get('SELECT id FROM product_modifier_slots WHERE id = ?', [newOption.product_modifier_slot_id]);
+        if (!slotExists) throw new Error(`Slot modificador con ID ${newOption.product_modifier_slot_id} no encontrado.`);
+
+        // Validar que el producto modificador existe y es de tipo 'modificador'
+        const modifierProd = await db.get(`
+            SELECT c.type
+            FROM products p
+            JOIN categories c ON p.categoryId = c.id
+            WHERE p.id = ?
+        `, [newOption.modifier_product_id]);
+        if (!modifierProd) throw new Error(`Producto modificador con ID ${newOption.modifier_product_id} no encontrado.`);
+        if (modifierProd.type !== 'modificador') throw new Error(`Producto ${newOption.modifier_product_id} no es de tipo 'modificador'.`);
+
+
+        const query = 'INSERT INTO product_modifier_slot_options (id, product_modifier_slot_id, modifier_product_id) VALUES (?, ?, ?)';
+        const params = [newOption.id, newOption.product_modifier_slot_id, newOption.modifier_product_id];
+        console.log(`[addModifierSlotOption] Query: ${query}, Params: ${JSON.stringify(params)}`);
+        await db.run(query, params);
+        console.log(`[addModifierSlotOption] Option ${newOption.modifier_product_id} added to slot ${newOption.product_modifier_slot_id}.`);
+        // Devolver la opción insertada (sin nombre/precio, se obtienen al leer)
+        return newOption;
+    } catch (error) {
+        console.error(`[addModifierSlotOption] Error adding option ${newOption.modifier_product_id} to slot ${newOption.product_modifier_slot_id}:`, error);
+        if (error instanceof Error && error.message.includes('UNIQUE constraint failed')) {
+           throw new Error(`La opción ya existe en este grupo.`);
+        }
+        throw new Error(`Falló al añadir opción al slot. Error original: ${error instanceof Error ? error.message : error}`);
+    }
+}
+
+export async function deleteModifierSlotOption(id: string): Promise<void> {
+    const db = await getDb();
+    try {
+        const query = 'DELETE FROM product_modifier_slot_options WHERE id = ?';
+         console.log(`[deleteModifierSlotOption] Query: ${query}, Params: [${id}]`);
+        const result = await db.run(query, [id]);
+        if (result.changes === 0) throw new Error(`Opción de slot modificador con id ${id} no encontrada.`);
+         console.log(`[deleteModifierSlotOption] Modifier slot option ${id} deleted successfully.`);
+    } catch (error) {
+         console.error(`[deleteModifierSlotOption] Error deleting modifier slot option ${id}:`, error);
+         throw new Error(`Falló al eliminar opción de slot. Error original: ${error instanceof Error ? error.message : error}`);
+    }
+}
 
 // --- CRUD Override de Paquete ---
 export async function setPackageItemOverride(override: Omit<PackageItemModifierSlotOverride, 'id' | 'product_modifier_slot_label'>): Promise<PackageItemModifierSlotOverride> {
@@ -631,151 +732,31 @@ export async function deletePackageItemOverride(id: string): Promise<void> {
     }
 }
 
-// --- Bulk Update for Package Items and Overrides ---
-interface ItemToSave {
-    localId: string; // Use localId from frontend state
-    id: string | null; // Null if new in DB
-    package_id: string;
-    product_id: string;
-    quantity: number;
-    display_order: number;
-    modifierOverrides: OverrideToSave[];
-}
-interface OverrideToSave {
-    localId: string; // Use localId from frontend state
-    id: string | null; // Null if new in DB
-    package_item_id: string; // Placeholder, will be set
-    product_modifier_slot_id: string;
-    min_quantity: number;
-    max_quantity: number;
-}
-
-export async function updatePackageItemsAndOverrides(packageId: string, itemsToSave: ItemToSave[]): Promise<void> {
-    const db = await getDb();
-    await db.run('BEGIN TRANSACTION;');
-    try {
-        // 1. Obtener IDs actuales de items para este paquete
-        const existingDbItems = await db.all<{ id: string }>('SELECT id FROM package_items WHERE package_id = ?', [packageId]);
-        const existingDbItemIds = new Set(existingDbItems.map(item => item.id));
-
-        // 2. Procesar items a guardar (insertar/actualizar)
-        const savedItemIds = new Set<string>();
-        const localToDbIdMap = new Map<string, string>(); // Map localId -> dbId
-
-        for (const item of itemsToSave) {
-             let currentDbItemId = item.id; // This is the *database* ID if it exists
-
-             if (currentDbItemId && existingDbItemIds.has(currentDbItemId)) {
-                 // Actualizar item existente
-                 console.log(`[updatePackageItems] Updating existing item ${currentDbItemId}`);
-                 await db.run(
-                     'UPDATE package_items SET product_id = ?, quantity = ?, display_order = ? WHERE id = ? AND package_id = ?',
-                     [item.product_id, item.quantity, item.display_order, currentDbItemId, packageId]
-                 );
-                 savedItemIds.add(currentDbItemId);
-                 localToDbIdMap.set(item.localId, currentDbItemId); // Map local ID to existing DB ID
-                 existingDbItemIds.delete(currentDbItemId); // Marcar como procesado
-             } else {
-                 // Insertar nuevo item
-                 const newItemDbId = randomUUID();
-                 console.log(`[updatePackageItems] Inserting new item for product ${item.product_id}, new DB ID: ${newItemDbId}, local ID: ${item.localId}`);
-                 await db.run(
-                     'INSERT INTO package_items (id, package_id, product_id, quantity, display_order) VALUES (?, ?, ?, ?, ?)',
-                     [newItemDbId, packageId, item.product_id, item.quantity, item.display_order]
-                 );
-                 currentDbItemId = newItemDbId; // Usar el nuevo ID de la BD
-                 savedItemIds.add(currentDbItemId);
-                 localToDbIdMap.set(item.localId, currentDbItemId); // Map local ID to new DB ID
-            }
-
-            if (!currentDbItemId) continue; // Seguridad
-
-             // 3. Procesar overrides para este item (using currentDbItemId)
-             const existingOverrides = await db.all<{ id: string, product_modifier_slot_id: string }>(
-                'SELECT id, product_modifier_slot_id FROM package_item_modifier_slot_overrides WHERE package_item_id = ?',
-                [currentDbItemId] // Use the correct database ID
-             );
-             const existingOverrideDbIds = new Set(existingOverrides.map(ov => ov.id));
-             const existingOverrideSlotMap = new Map(existingOverrides.map(ov => [ov.product_modifier_slot_id, ov.id]));
-
-             for (const override of item.modifierOverrides) {
-                 const slotId = override.product_modifier_slot_id;
-                 const existingOverrideDbId = existingOverrideSlotMap.get(slotId);
-                 const overrideDbIdToUse = override.id && !override.id.includes('-') ? override.id : null; // DB ID if exists
-
-                 if (overrideDbIdToUse && existingOverrideDbIds.has(overrideDbIdToUse)) {
-                     // Update existing override by its DB ID
-                     console.log(`[updatePackageItems] Updating override ${overrideDbIdToUse} for item ${currentDbItemId}, slot ${slotId}`);
-                     await db.run(
-                         'UPDATE package_item_modifier_slot_overrides SET min_quantity = ?, max_quantity = ? WHERE id = ?',
-                         [override.min_quantity, override.max_quantity, overrideDbIdToUse]
-                     );
-                     existingOverrideDbIds.delete(overrideDbIdToUse); // Mark as processed
-                 } else {
-                     // Insert new override
-                     const newOverrideDbId = randomUUID();
-                     console.log(`[updatePackageItems] Inserting new override for item ${currentDbItemId}, slot ${slotId}, localId: ${override.localId}`);
-                     await db.run(
-                         'INSERT INTO package_item_modifier_slot_overrides (id, package_item_id, product_modifier_slot_id, min_quantity, max_quantity) VALUES (?, ?, ?, ?, ?)',
-                         [newOverrideDbId, currentDbItemId, slotId, override.min_quantity, override.max_quantity]
-                     );
-                     // We don't need to track saved override IDs if we remove orphans below
-                 }
-            }
-
-             // 4. Eliminar overrides que ya no existen para este item (based on DB IDs)
-             for (const overrideIdToDelete of existingOverrideDbIds) {
-                 console.log(`[updatePackageItems] Deleting obsolete override ${overrideIdToDelete} for item ${currentDbItemId}`);
-                 await db.run('DELETE FROM package_item_modifier_slot_overrides WHERE id = ?', [overrideIdToDelete]);
-             }
-        }
-
-        // 5. Eliminar items que ya no existen en el paquete
-        for (const itemIdToDelete of existingDbItemIds) {
-             console.log(`[updatePackageItems] Deleting obsolete item ${itemIdToDelete} from package ${packageId}`);
-             await db.run('DELETE FROM package_items WHERE id = ?', [itemIdToDelete]); // CASCADE debería eliminar sus overrides
-        }
-
-
-        await db.run('COMMIT;');
-        console.log(`[updatePackageItemsAndOverrides] Package ${packageId} items and overrides updated successfully.`);
-    } catch (error) {
-        await db.run('ROLLBACK;');
-        console.error(`[updatePackageItemsAndOverrides] Error updating items/overrides for package ${packageId}:`, error);
-        throw new Error(`Falló al actualizar contenido del paquete. Error original: ${error instanceof Error ? error.message : error}`);
-    }
-}
-
-
-
 /**
- * Obtiene una lista combinada de todos los productos (no modificadores) y paquetes.
- * Útil para poblar listas donde ambos tipos de items pueden ser seleccionados.
- * @returns Una promesa que resuelve a un array de objetos que pueden ser Product o Package, con un campo 'itemType'.
+ * Obtiene una lista combinada de todos los productos (incluyendo modificadores).
+ * @returns Una promesa que resuelve a un array de objetos Product.
  */
-export async function getAllProductList(): Promise<Product[]> {
+export async function getAllProductsAndModifiersList(): Promise<Product[]> {
     const db = await getDb();
     try {
-        // Obtener productos (incluyendo modificadores por ahora, ya que no hay campo que los distinga en 'products')
-        // Podríamos filtrar por category.type si fuera necesario, pero la lista completa puede ser útil
-        const productsQuery = `
-            SELECT p.*, c.name as categoryName
+        const query = `
+            SELECT p.*, c.name as categoryName, c.type as categoryType
             FROM products p
-            JOIN categories c ON p.categoryId = c.id
+            LEFT JOIN categories c ON p.categoryId = c.id
             ORDER BY c.name, p.name
         `;
-        console.log(`[getAllProductList] Fetching all products/modifiers.`);
-        const products = await db.all<Product[]>(productsQuery);
-        console.log(`[getAllProductList] Found ${products.length} products/modifiers.`);
+        console.log(`[getAllProductsAndModifiersList] Fetching all products/modifiers.`);
+        const products = await db.all<Product[]>(query);
+        console.log(`[getAllProductsAndModifiersList] Found ${products.length} products/modifiers.`);
         return products;
     } catch (error) {
-        console.error('[getAllProductList] Error fetching product list:', error);
+        console.error('[getAllProductsAndModifiersList] Error fetching product list:', error);
         throw new Error(`Falló la obtención de la lista de productos. Error original: ${error instanceof Error ? error.message : error}`);
     }
 }
 
 
-// Helper function (if needed elsewhere)
+// Función auxiliar (si se necesita en otros lugares)
 export async function getCategoryById(categoryId: string): Promise<Category | null> {
     const db = await getDb();
     try {
