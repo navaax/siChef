@@ -47,63 +47,75 @@ function isNativePlatform(): boolean {
 }
 
 /**
- * Prints HTML content using cordova-plugin-printer.
- * Assumes the plugin is available and initialized.
+ * Prints HTML content using either cordova-plugin-printer (on native) or window.print() (on web).
  *
  * @param htmlContent The HTML string to print.
- * @param jobName Optional name for the print job.
+ * @param jobName Optional name for the print job (used by cordova plugin).
  */
-export async function printHtmlTicket(htmlContent: string, jobName: string = 'siChef Receipt'): Promise<void> {
-  if (!isNativePlatform()) {
-    throw new PrinterError("La impresión directa solo está disponible en plataformas nativas (iOS/Android).");
-  }
+export async function printTicket(htmlContent: string, jobName: string = 'siChef Receipt'): Promise<void> {
+  console.log(`Iniciando impresión para: ${jobName}`);
 
-  // Check if the plugin exists
-  if (typeof cordova === 'undefined' || !cordova.plugins || !cordova.plugins.printer) {
-     console.error("Cordova printer plugin not found. Ensure it's installed and initialized.");
-     throw new PrinterError("Plugin de impresora no encontrado. Asegúrate de que esté instalado.");
-  }
+  if (isNativePlatform()) {
+    // --- Native Platform Printing (using Cordova Plugin) ---
+    if (typeof cordova === 'undefined' || !cordova.plugins || !cordova.plugins.printer) {
+      console.error("Cordova printer plugin not found. Ensure it's installed and initialized.");
+      throw new PrinterError("Plugin de impresora no encontrado. Asegúrate de que esté instalado.");
+    }
 
-  console.log(`Iniciando impresión HTML para: ${jobName}`);
+    try {
+      const options: PrinterOptions = {
+        name: jobName,
+        orientation: 'portrait',
+        // Let the OS handle printer selection
+      };
 
-  try {
-    // Options for the print job (customize as needed)
-    const options: PrinterOptions = {
-      name: jobName,
-      orientation: 'portrait',
-      // printer: 'OptionalPrinterID' // Let the OS handle printer selection usually
-    };
+      // Call the plugin's print method
+      await new Promise<void>((resolve, reject) => {
+        try {
+            cordova.plugins.printer.print(htmlContent, options);
+            // The plugin usually opens the standard OS print dialog
+            console.log("Se llamó al diálogo de impresión del sistema operativo.");
+            // Resolve after a short delay as the plugin lacks a standard callback
+            setTimeout(resolve, 100);
+        } catch (pluginError) {
+             console.error("Error directo al llamar a cordova.plugins.printer.print:", pluginError);
+            reject(new PrinterError(`Error al llamar al plugin de impresora: ${pluginError instanceof Error ? pluginError.message : pluginError}`));
+        }
+      });
 
-    // Call the plugin's print method
-    // The plugin usually opens the standard OS print dialog
-    await new Promise<void>((resolve, reject) => {
-        cordova.plugins.printer.print(htmlContent, options);
-        // The plugin itself doesn't have a standard callback for success/failure.
-        // We resolve immediately assuming the print dialog was shown.
-        // Error handling within the plugin might need platform-specific checks.
-        console.log("Se llamó al diálogo de impresión del sistema operativo.");
-        // Simulating success as the plugin doesn't provide a direct callback
-        // In a real scenario, you might rely on device logs or lack of errors.
-        setTimeout(resolve, 100); // Resolve after a short delay
-    });
+      console.log(`Diálogo de impresión del OS mostrado para ${jobName}.`);
 
-    console.log(`Diálogo de impresión mostrado para ${jobName}.`);
-
-  } catch (error) {
-    console.error(`Error imprimiendo HTML:`, error);
-    const errorMessage = error instanceof Error ? error.message : JSON.stringify(error);
-    // Add more specific error checks if the plugin provides them
-    throw new PrinterError(`Error al imprimir: ${errorMessage}`);
+    } catch (error) {
+      console.error(`Error imprimiendo en nativo:`, error);
+      const errorMessage = error instanceof PrinterError ? error.message : (error instanceof Error ? error.message : JSON.stringify(error));
+      throw new PrinterError(`Error al imprimir en nativo: ${errorMessage}`);
+    }
+  } else {
+    // --- Web Browser Printing (using window.print()) ---
+    try {
+      const printWindow = window.open('', '_blank');
+      if (!printWindow) {
+        throw new PrinterError("No se pudo abrir la ventana de impresión. Revisa la configuración de bloqueo de pop-ups.");
+      }
+      printWindow.document.write(htmlContent);
+      printWindow.document.close(); // Necessary for some browsers
+      // Delay print command slightly to ensure content is loaded
+      setTimeout(() => {
+        printWindow.print();
+        // Optionally close the window after printing (can be unreliable)
+        // setTimeout(() => printWindow.close(), 500);
+      }, 250); // Adjust delay if needed
+      console.log("Diálogo de impresión del navegador abierto.");
+    } catch (error) {
+      console.error(`Error imprimiendo en navegador:`, error);
+       const errorMessage = error instanceof PrinterError ? error.message : (error instanceof Error ? error.message : JSON.stringify(error));
+      throw new PrinterError(`Error al imprimir en navegador: ${errorMessage}`);
+    }
   }
 }
 
-// Removed search functions as cordova-plugin-printer relies on the OS print dialog
+// Removed functions related to specific printer types/discovery as cordova-plugin-printer uses the OS dialog
 // export type DiscoveredPrinter = { ... }
 // export async function searchPrinters(...) { ... }
-// export async function searchBluetoothPrinters(...) { ... }
-// export async function searchWifiPrinters(...) { ... }
-// export async function searchUsbPrinters(...) { ... }
 // export async function initializeBluetoothForScan(...) { ... }
-
-// Renamed the main print function to reflect HTML printing
-export { printHtmlTicket as printTicket };
+```

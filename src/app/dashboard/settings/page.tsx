@@ -1,3 +1,7 @@
+/**
+ * Página de configuración para la aplicación siChef POS.
+ * Permite al usuario ajustar configuraciones generales y de impresión.
+ */
 "use client";
 
 import * as React from 'react';
@@ -6,12 +10,11 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
-// import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"; // Removed Select
 import { useToast } from '@/hooks/use-toast';
-import { Loader2, CheckCircle, XCircle } from 'lucide-react'; // Removed Wifi, Bluetooth, Usb
+import { Loader2, CheckCircle, XCircle } from 'lucide-react';
 import { printTicket, PrinterError } from '@/services/printer-service'; // Importar servicio
 
-// Placeholder component for settings sections
+// Componente de sección reutilizable
 const SettingsSection = ({ title, description, children }: { title: string, description: string, children: React.ReactNode }) => (
   <>
     <div className="mb-6">
@@ -28,23 +31,19 @@ const SettingsSection = ({ title, description, children }: { title: string, desc
 export default function SettingsPage() {
   const { toast } = useToast();
 
-  // State for settings values
+  // Estado para valores de configuración
   const [businessName, setBusinessName] = React.useState("siChef Restaurant");
   const [currencySymbol, setCurrencySymbol] = React.useState("$");
   const [printReceipts, setPrintReceipts] = React.useState(true);
 
-  // State for printer settings - Simplified
-  // const [isSearchingPrinters, setIsSearchingPrinters] = React.useState(false); // Removed
-  // const [discoveredPrinters, setDiscoveredPrinters] = React.useState<DiscoveredPrinter[]>([]); // Removed
-  // const [selectedPrinter, setSelectedPrinter] = React.useState<DiscoveredPrinter | null>(null); // Removed
+  // Estado para prueba de impresora
   const [isTestingPrinter, setIsTestingPrinter] = React.useState(false);
 
-  // Load settings on component mount
+  // Cargar configuración al montar el componente
   React.useEffect(() => {
     const savedBusinessName = localStorage.getItem('siChefSettings_businessName');
     const savedCurrency = localStorage.getItem('siChefSettings_currencySymbol');
     const savedPrintReceipts = localStorage.getItem('siChefSettings_printReceipts');
-    // Removed loading saved printer
 
     if (savedBusinessName) setBusinessName(savedBusinessName);
     if (savedCurrency) setCurrencySymbol(savedCurrency);
@@ -52,41 +51,34 @@ export default function SettingsPage() {
 
   }, []);
 
-
-  // Removed handleSearchPrinters function
-
-
   const handleSaveChanges = () => {
      // Guardar configuraciones generales
      localStorage.setItem('siChefSettings_businessName', businessName);
      localStorage.setItem('siChefSettings_currencySymbol', currencySymbol);
      localStorage.setItem('siChefSettings_printReceipts', String(printReceipts));
 
-     // Removed saving selected printer
-
      console.log("Guardando configuraciones...", { businessName, currencySymbol, printReceipts });
      toast({ title: "Configuraciones Guardadas", description: "Los cambios han sido guardados localmente." });
   }
 
   const handleTestPrinter = async () => {
-    // No need to check for selectedPrinter anymore
     setIsTestingPrinter(true);
     toast({ title: "Probando Impresora...", description: "Enviando página de prueba..." });
 
-    // Create simple HTML test data
+    // Crear datos de prueba HTML simples
     const testHtml = `
         <html><head><style>body{font-family:monospace; font-size:10pt; margin:5mm; width:58mm;} .center{text-align:center;}</style></head><body>
         <div class="center">*** Página de Prueba siChef ***</div><br>
         <div>Fecha: ${new Date().toLocaleString()}</div><br>
         <div>--------------------------------</div><br>
-        <div class="center">¡Conexión Exitosa!</div><br><br><br>
+        <div class="center">¡Impresión Funcional!</div><br><br><br>
         </body></html>
     `;
 
     try {
-      await printTicket(testHtml, "Prueba de Impresión siChef"); // Pass HTML to printTicket
-      // The plugin opens the OS dialog, success here means the dialog was likely called
-      toast({ title: "Diálogo de Impresión Mostrado", description: "Selecciona una impresora en el diálogo del sistema.", icon: <CheckCircle className="h-4 w-4 text-green-500"/> });
+      await printTicket(testHtml, "Prueba de Impresión siChef");
+      // Éxito aquí significa que se llamó al diálogo de impresión (del OS o navegador)
+      toast({ title: "Diálogo de Impresión Mostrado", description: "Selecciona una impresora en el diálogo del sistema o navegador.", icon: <CheckCircle className="h-4 w-4 text-green-500"/> });
     } catch (error) {
       console.error("Error en la prueba de impresión:", error);
       const message = error instanceof PrinterError ? error.message : "Error desconocido al imprimir.";
@@ -118,7 +110,10 @@ export default function SettingsPage() {
              </div>
           </SettingsSection>
 
-          <SettingsSection title="Impresión" description="Configuración de impresión de recibos. La selección de impresora se realiza en el diálogo del sistema.">
+          <SettingsSection
+            title="Impresión"
+            description="Configuración de impresión de recibos. Funciona en navegador (abre diálogo) y en app nativa (usa diálogo del OS)."
+           >
              <div className="flex items-center space-x-2 mb-4">
                 <input
                   type="checkbox"
@@ -131,14 +126,12 @@ export default function SettingsPage() {
                 <Label htmlFor="printReceipts" id="printReceiptsLabel" className="text-sm font-medium cursor-pointer">Imprimir recibo al finalizar venta</Label>
             </div>
 
-            {/* Removed Printer Search and Selection UI */}
-
             {/* Botón de Prueba */}
             <Button
               variant="secondary"
               size="sm"
               onClick={handleTestPrinter}
-              disabled={isTestingPrinter} // Disable only while testing
+              disabled={isTestingPrinter}
               className="mt-2"
             >
               {isTestingPrinter ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
@@ -149,12 +142,11 @@ export default function SettingsPage() {
 
            <SettingsSection title="Usuarios" description="Administrar cuentas de usuario.">
               <p className="text-sm text-muted-foreground">La gestión de usuarios (añadir/editar PIN) se puede implementar aquí.</p>
-               {/* Example: Button to add user */}
+               {/* Ejemplo: Botón para añadir usuario */}
                <Button variant="outline" disabled>Añadir Usuario (Próximamente)</Button>
           </SettingsSection>
 
-           {/* Add more sections as needed (Taxes, Menu Management, etc.) */}
-
+           {/* Añadir más secciones según sea necesario (Impuestos, Gestión de Menú, etc.) */}
 
            <div className="mt-8 flex justify-end">
              <Button onClick={handleSaveChanges}>Guardar Cambios</Button>
@@ -165,3 +157,4 @@ export default function SettingsPage() {
     </div>
   );
 }
+```
