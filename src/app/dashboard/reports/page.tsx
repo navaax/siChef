@@ -9,7 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableFoo
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { useToast } from "@/hooks/use-toast";
-import { Download, FileText, Loader2, ReceiptText, HandCoins, Gift, Landmark } from 'lucide-react'; // Icons
+import { Download, FileText, Loader2, ReceiptText, HandCoins, Gift, Landmark, CalendarIcon } from 'lucide-react'; // Icons, added CalendarIcon
 import { format } from 'date-fns';
 import { useAuth } from '@/contexts/auth-context';
 import { useCashRegister } from '@/contexts/cash-register-context'; // Importar hook de caja
@@ -24,7 +24,6 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import type { StartCashFormData, EndOfDayFormData } from '@/types/cash-register-types';
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"; // Added for date picker
-import { CalendarIcon } from "lucide-react"; // Added for date picker
 import { Calendar } from "@/components/ui/calendar"; // Added for date picker
 import { cn } from "@/lib/utils"; // Added for date picker styling
 
@@ -183,21 +182,36 @@ export default function ReportsPage() {
     setIsGeneratingPdf(true);
     toast({ title: "Generando Reporte...", description: "Preparando el PDF de ventas y cerrando caja." });
 
-    // CAPTURE DATA BEFORE ANY STATE CHANGES
-    const currentCompletedOrders = [...completedOrders]; // Create a stable copy
-    const reportTimestamp = new Date(); // Use a consistent timestamp
+    // CAPTURAR DATOS ANTES DE CUALQUIER CAMBIO DE ESTADO
+    const currentCompletedOrders = [...completedOrders]; // Crear una copia estable
+    const reportTimestamp = new Date(); // Usar una marca de tiempo consistente
+
+    // LOGGING: Revisar los datos que se usarán para el reporte
+    console.log('[handleFinalizeDay] Datos para reporte:', {
+      username,
+      startingCash,
+      totalSales, // Basado en completedOrders al inicio de la función
+      cashSales,  // Basado en completedOrders al inicio de la función
+      cardSales,  // Basado en completedOrders al inicio de la función
+      expenses: endOfDayData.expenses ?? 0,
+      tips: endOfDayData.tips ?? 0,
+      loanAmount: endOfDayData.loanAmount ?? 0,
+      endingCashTotal: endOfDayData.endingCashTotal ?? 0,
+      expectedCashInRegister,
+      cashDifference,
+      completedOrdersCount: currentCompletedOrders.length // Verificar cuántos pedidos se incluirán
+    });
 
     try {
         // 1. Preparar datos del reporte usando la copia estable
         const reportData: SalesReport = {
             businessName: "siChef POS", // Reemplazar con nombre dinámico
-            // logo: "https://picsum.photos/100/50?random=99", // Logo placeholder - Opcional
             reportDate: reportTimestamp.toISOString(), // Usar timestamp consistente
             user: username || 'Usuario Desconocido',
             startingCash: startingCash,
-            totalSales: totalSales, // Calculation based on filtered data before this function
-            cashSales: cashSales,   // Calculation based on filtered data before this function
-            cardSales: cardSales,   // Calculation based on filtered data before this function
+            totalSales: totalSales, // Usar totalSales calculado al inicio
+            cashSales: cashSales,   // Usar cashSales calculado al inicio
+            cardSales: cardSales,   // Usar cardSales calculado al inicio
             totalExpenses: endOfDayData.expenses ?? 0,
             totalTips: endOfDayData.tips ?? 0,
             loansWithdrawalsAmount: endOfDayData.loanAmount ?? 0,
@@ -216,11 +230,11 @@ export default function ReportsPage() {
             })),
         };
 
-        console.log("Datos para el reporte:", reportData); // Log para depuración
+        console.log("[handleFinalizeDay] Objeto reportData final:", JSON.stringify(reportData, null, 2)); // Log para depuración detallada
 
         // 2. Generar PDF
         const pdfBytes = await generateSalesReport(reportData);
-        console.log(`Bytes del PDF generados: ${pdfBytes?.length}`); // Log para depuración
+        console.log(`[handleFinalizeDay] Bytes del PDF generados: ${pdfBytes?.length}`); // Log para depuración
 
         // 3. Descargar PDF
         if (pdfBytes && pdfBytes.length > 0) {
@@ -235,7 +249,7 @@ export default function ReportsPage() {
             URL.revokeObjectURL(link.href); // Limpiar objeto URL
             toast({ title: "Reporte Generado", description: "Descarga de PDF iniciada." });
         } else {
-             console.error('generateSalesReport devolvió un array vacío o nulo.');
+             console.error('[handleFinalizeDay] generateSalesReport devolvió un array vacío o nulo.');
              toast({ title: "Error Reporte", description: "No se pudo generar el archivo PDF (datos vacíos).", variant: "destructive" });
              // NO continuar si falla la generación/descarga del PDF crítico
              setIsGeneratingPdf(false);
@@ -257,7 +271,11 @@ export default function ReportsPage() {
         );
 
         // 5. Resetear estado local y localStorage (MOVIDO AL FINAL)
-        const remainingOrders = allOrders.filter(o => o.status !== 'completed' || o.createdAt < currentSession.start_time); // Conservar pendientes y antiguas
+        // Filtrar para mantener órdenes pendientes y las completadas *antes* del inicio de la sesión cerrada
+        const sessionStartTime = new Date(currentSession.start_time).getTime();
+        const remainingOrders = allOrders.filter(o =>
+            o.status !== 'completed' || new Date(o.createdAt).getTime() < sessionStartTime
+        );
         localStorage.setItem('siChefOrders', JSON.stringify(remainingOrders));
         setAllOrders(remainingOrders); // Actualizar estado local
         clearSession(); // Limpiar sesión del contexto
@@ -266,7 +284,7 @@ export default function ReportsPage() {
         toast({ title: "Día Finalizado", description: "Ventas completadas archivadas, caja cerrada." });
 
     } catch (error) {
-        console.error("Error finalizando día / generando PDF:", error);
+        console.error("[handleFinalizeDay] Error finalizando día / generando PDF:", error);
         toast({ title: "Operación Fallida", description: `No se pudo finalizar el día o generar el reporte: ${error instanceof Error ? error.message : 'Error desconocido'}`, variant: "destructive" });
     } finally {
         setIsGeneratingPdf(false);
@@ -479,7 +497,7 @@ const renderWizardContent = () => {
            <div className="relative h-full">
              <ScrollArea className="absolute inset-0"> {/* Hacer que ScrollArea llene CardContent */}
                  <Table className="min-w-full">{/* Asegurar que la tabla ocupe al menos el ancho completo */}
-                   <TableHeader className="sticky top-0 bg-background z-10 shadow-sm"> {/* Hacer encabezado pegajoso */}
+                   <TableHeader> {/* Hacer encabezado pegajoso */}
                     <TableRow>
                       <TableHead className="w-[100px]">Pedido #</TableHead>
                       <TableHead className="w-[150px]">ID</TableHead>
@@ -521,7 +539,7 @@ const renderWizardContent = () => {
                   </TableBody>
                    {/* Footer con Resumen (Solo si hay órdenes completadas en la fecha seleccionada) */}
                    {completedOrders.length > 0 && (
-                    <TableFooter className="sticky bottom-0 bg-background z-10 border-t font-semibold">
+                    <TableFooter>
                         <TableRow>
                             <TableCell colSpan={3}>Resumen del Día (Pedidos Completados)</TableCell>
                             <TableCell className="text-right">Subtotal</TableCell>
@@ -563,3 +581,4 @@ const renderWizardContent = () => {
     </div>
   );
 }
+
