@@ -23,6 +23,10 @@ import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import type { StartCashFormData, EndOfDayFormData } from '@/types/cash-register-types';
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"; // Added for date picker
+import { CalendarIcon } from "lucide-react"; // Added for date picker
+import { Calendar } from "@/components/ui/calendar"; // Added for date picker
+import { cn } from "@/lib/utils"; // Added for date picker styling
 
 // Helper to get status badge variant
 const getStatusVariant = (status: SavedOrder['status']): "default" | "secondary" | "destructive" | "outline" | null | undefined => {
@@ -41,7 +45,9 @@ export default function ReportsPage() {
   const { username } = useAuth();
   const { currentSession, clearSession } = useCashRegister(); // Obtener sesión de caja actual
   const { toast } = useToast();
-  const [orders, setOrders] = useState<SavedOrder[]>([]);
+  const [allOrders, setAllOrders] = useState<SavedOrder[]>([]); // Todas las órdenes cargadas
+  const [filteredOrders, setFilteredOrders] = useState<SavedOrder[]>([]); // Órdenes filtradas por fecha
+  const [selectedDate, setSelectedDate] = useState<Date | undefined>(new Date()); // Fecha seleccionada para filtrar
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const [isWizardOpen, setIsWizardOpen] = useState(false);
   const [wizardStep, setWizardStep] = useState<WizardStep>('countCash');
@@ -54,14 +60,14 @@ export default function ReportsPage() {
     endingCashTotal: 0,
   });
 
-  // Load orders from localStorage on mount
+   // Load orders from localStorage on mount
   useEffect(() => {
     const storedOrders = localStorage.getItem('siChefOrders');
     if (storedOrders) {
       try {
            const parsedOrders: SavedOrder[] = JSON.parse(storedOrders).map((order: any) => ({
               ...order,
-              createdAt: new Date(order.createdAt),
+              createdAt: new Date(order.createdAt), // Asegurar que es un objeto Date
               subtotal: typeof order.subtotal === 'number' ? order.subtotal : 0,
               total: typeof order.total === 'number' ? order.total : 0,
                items: order.items?.map((item: any) => ({
@@ -75,21 +81,37 @@ export default function ReportsPage() {
                status: ['pending', 'completed', 'cancelled'].includes(order.status) ? order.status : 'pending',
                paymentMethod: ['cash', 'card'].includes(order.paymentMethod) ? order.paymentMethod : 'card',
            }));
-           setOrders(parsedOrders);
+           setAllOrders(parsedOrders);
       } catch (error) {
           console.error("Failed to parse orders from localStorage:", error);
           toast({ title: "Error al Cargar Pedidos", description: "No se pudieron cargar los datos de ventas anteriores.", variant: "destructive" });
       }
     }
-    // Starting cash ahora viene del contexto de caja
   }, [toast]);
 
-  // Calcular totales para el reporte (solo órdenes completadas durante la sesión activa)
-  const completedOrders = orders.filter(o => o.status === 'completed'); // Filtrar solo completados
+  // Filter orders based on selected date
+  useEffect(() => {
+    if (selectedDate) {
+      const startOfDay = new Date(selectedDate);
+      startOfDay.setHours(0, 0, 0, 0);
+      const endOfDay = new Date(selectedDate);
+      endOfDay.setHours(23, 59, 59, 999);
+
+      const filtered = allOrders.filter(order =>
+        order.createdAt >= startOfDay && order.createdAt <= endOfDay
+      );
+      setFilteredOrders(filtered);
+    } else {
+      setFilteredOrders(allOrders); // Show all if no date selected
+    }
+  }, [selectedDate, allOrders]);
+
+  // Calcular totales para el reporte (usando filteredOrders)
+  const completedOrders = filteredOrders.filter(o => o.status === 'completed'); // Filtrar solo completados
   const totalSales = completedOrders.reduce((sum, order) => sum + order.total, 0);
   const cashSales = completedOrders.filter(o => o.paymentMethod === 'cash').reduce((sum, order) => sum + order.total, 0);
   const cardSales = completedOrders.filter(o => o.paymentMethod === 'card').reduce((sum, order) => sum + order.total, 0);
-  const startingCash = currentSession?.starting_cash ?? 0; // Obtener de la sesión actual
+  const startingCash = currentSession?.starting_cash ?? 0; // Obtener de la sesión actual (o 0 si no hay)
   const expectedCashInRegister = startingCash + cashSales
                               - (endOfDayData.expenses ?? 0)
                               - (endOfDayData.loanAmount ?? 0)
@@ -102,10 +124,11 @@ export default function ReportsPage() {
         toast({ title: "Sin Sesión Activa", description: "No hay una sesión de caja activa para cerrar.", variant: "destructive" });
         return;
     }
-    if (completedOrders.length === 0) {
-        toast({ title: "Sin Ventas Completadas", description: "No se puede generar el reporte sin ventas completadas en esta sesión.", variant: "destructive" });
-        return;
-    }
+    // Permitir cerrar aunque no haya ventas (para ajustes, etc.)
+    // if (completedOrders.length === 0) {
+    //     toast({ title: "Sin Ventas Completadas", description: "No se puede generar el reporte sin ventas completadas en esta sesión.", variant: "destructive" });
+    //     return;
+    // }
     setWizardStep('countCash'); // Empezar desde el conteo de efectivo
     setEndOfDayData({ // Resetear datos del wizard
         expenses: 0,
@@ -121,8 +144,9 @@ export default function ReportsPage() {
   const handleNextStep = () => {
     switch (wizardStep) {
       case 'countCash':
-        if ((endOfDayData.endingCashTotal ?? 0) <= 0) {
-            toast({title: "Conteo Inválido", description: "Ingresa el conteo de efectivo final.", variant:"destructive"});
+        // Permitir 0 en conteo final si no hubo ventas
+        if ((endOfDayData.endingCashTotal ?? -1) < 0) {
+            toast({title: "Conteo Inválido", description: "Ingresa el conteo de efectivo final (puede ser 0).", variant:"destructive"});
             return;
         }
         setWizardStep('expenses');
@@ -163,8 +187,8 @@ export default function ReportsPage() {
         // 1. Preparar datos del reporte
         const reportData: SalesReport = {
             businessName: "siChef POS", // Reemplazar con nombre dinámico
-            logo: "https://picsum.photos/100/50?random=99", // Logo placeholder
-            reportDate: format(new Date(), 'Pp'),
+            // logo: "https://picsum.photos/100/50?random=99", // Logo placeholder - Opcional
+            reportDate: new Date().toISOString(), // Usar ISO string, formato se aplica en PDF
             user: username || 'Usuario Desconocido',
             startingCash: startingCash,
             totalSales: totalSales,
@@ -188,11 +212,10 @@ export default function ReportsPage() {
             })),
         };
 
-        // 2. Simular generación de PDF y obtener bytes (o console.log)
-        console.log("--- Datos Reporte PDF ---", reportData);
-        await new Promise(resolve => setTimeout(resolve, 1000)); // Simular tiempo
+        // 2. Generar PDF
         const pdfBytes = await generateSalesReport(reportData);
 
+        // 3. Descargar PDF
         if (pdfBytes && pdfBytes.length > 0) {
             const blob = new Blob([pdfBytes], { type: 'application/pdf' });
             const link = document.createElement('a');
@@ -205,10 +228,12 @@ export default function ReportsPage() {
             URL.revokeObjectURL(link.href);
             toast({ title: "Reporte Generado", description: "Descarga de PDF iniciada." });
         } else {
-             toast({ title: "Generación de Reporte Simulada", description: "Revisa la consola para ver los datos.", variant: "default" });
+             // Esto no debería suceder con la implementación real de PDF
+             console.warn('generateSalesReport devolvió un array vacío o nulo.');
+             toast({ title: "Error Reporte", description: "No se pudo generar el archivo PDF.", variant: "destructive" });
         }
 
-        // 3. Cerrar la sesión de caja en la BD
+        // 4. Cerrar la sesión de caja en la BD
         await closeCashSession(
             currentSession.id,
             endOfDayData.endingCashTotal ?? 0,
@@ -220,14 +245,17 @@ export default function ReportsPage() {
             endOfDayData.loanReason ?? ''
         );
 
-        // 4. Resetear estado local
-        const activeOrders = orders.filter(o => o.status === 'pending');
-        localStorage.setItem('siChefOrders', JSON.stringify(activeOrders));
-        setOrders(activeOrders);
+        // 5. Resetear estado local
+        // Mover todas las órdenes (incluyendo pendientes) al historial o limpiar completadas?
+        // Por ahora, limpiaremos las completadas de la sesión actual (localStorage)
+        // En una app real, esto sería manejado por el backend.
+        const remainingOrders = allOrders.filter(o => o.status !== 'completed' || o.createdAt < currentSession.start_time); // Conservar pendientes y antiguas
+        localStorage.setItem('siChefOrders', JSON.stringify(remainingOrders));
+        setAllOrders(remainingOrders); // Actualizar estado local
         clearSession(); // Limpiar sesión del contexto
         setIsWizardOpen(false); // Cerrar el wizard
 
-        toast({ title: "Día Finalizado", description: "Ventas completadas archivadas (simulado), caja cerrada." });
+        toast({ title: "Día Finalizado", description: "Ventas completadas archivadas, caja cerrada." });
 
     } catch (error) {
         console.error("Error finalizando día / generando PDF:", error);
@@ -397,19 +425,45 @@ const renderWizardContent = () => {
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 border-b">
           <div>
              <CardTitle>Reporte de Ventas</CardTitle>
-             <CardDescription>Historial de todos los pedidos de la sesión actual.</CardDescription>
-           </div>
-             <Button onClick={handleOpenWizard} disabled={isGeneratingPdf || !currentSession || completedOrders.length === 0} size="sm">
+             <CardDescription>Historial de pedidos por fecha.</CardDescription>
+          </div>
+          <div className="flex items-center gap-4">
+              {/* Date Picker */}
+             <Popover>
+                <PopoverTrigger asChild>
+                <Button
+                    variant={"outline"}
+                    className={cn(
+                    "w-[240px] justify-start text-left font-normal",
+                    !selectedDate && "text-muted-foreground"
+                    )}
+                >
+                    <CalendarIcon className="mr-2 h-4 w-4" />
+                    {selectedDate ? format(selectedDate, "PPP") : <span>Selecciona fecha</span>}
+                </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-0" align="start">
+                <Calendar
+                    mode="single"
+                    selected={selectedDate}
+                    onSelect={setSelectedDate}
+                    initialFocus
+                />
+                </PopoverContent>
+            </Popover>
+             {/* Botón Finalizar Día */}
+             <Button onClick={handleOpenWizard} disabled={isGeneratingPdf || !currentSession} size="sm">
                  {isGeneratingPdf ? (
                      <>
                         <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Procesando...
                      </>
                  ) : (
                      <>
-                        <Download className="mr-2 h-4 w-4" /> Finalizar Día y Exportar
+                        <Download className="mr-2 h-4 w-4" /> Finalizar Día Actual y Exportar
                      </>
                  )}
              </Button>
+          </div>
         </CardHeader>
         <CardContent className="flex-grow overflow-hidden p-0"> {/* Quitar padding para scroll de altura completa */}
            <div className="relative h-full">
@@ -428,8 +482,8 @@ const renderWizardContent = () => {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {orders.length > 0 ? (
-                      orders
+                    {filteredOrders.length > 0 ? (
+                      filteredOrders
                          .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()) // Ordenar por más reciente
                         .map((order) => (
                         <TableRow key={order.id}>
@@ -444,30 +498,26 @@ const renderWizardContent = () => {
                               {order.status}
                             </Badge>
                           </TableCell>
-                           <TableCell>{format(order.createdAt, 'Pp')}</TableCell>
+                           <TableCell>{format(order.createdAt, 'Pp')}</TableCell> {/* Usar objeto Date directamente */}
                         </TableRow>
                       ))
                     ) : (
                       <TableRow>
-                        <TableCell colSpan={8} className="text-center h-24 text-muted-foreground">No hay historial de ventas aún para esta sesión.</TableCell>
+                        <TableCell colSpan={8} className="text-center h-24 text-muted-foreground">
+                            {selectedDate ? `No hay pedidos para el ${format(selectedDate, 'PPP')}.` : 'No hay historial de ventas aún.'}
+                        </TableCell>
                       </TableRow>
                     )}
                   </TableBody>
-                   {/* Footer con Resumen (Solo si hay órdenes completadas) */}
-                   {completedOrders.length > 0 && currentSession && (
+                   {/* Footer con Resumen (Solo si hay órdenes completadas en la fecha seleccionada) */}
+                   {completedOrders.length > 0 && (
                     <TableFooter className="sticky bottom-0 bg-background z-10 border-t font-semibold">
                         <TableRow>
-                            <TableCell colSpan={3}>Resumen de la Sesión (Pedidos Completados)</TableCell>
+                            <TableCell colSpan={3}>Resumen del Día (Pedidos Completados)</TableCell>
                             <TableCell className="text-right">Subtotal</TableCell>
                              <TableCell className="text-right">Total</TableCell>
                              <TableCell colSpan={3}></TableCell> {/* Celdas Placeholder */}
                         </TableRow>
-                         <TableRow>
-                            <TableCell colSpan={3}>Fondo Inicial:</TableCell>
-                            <TableCell className="text-right"></TableCell>
-                             <TableCell className="text-right">{formatCurrency(startingCash)}</TableCell>
-                             <TableCell colSpan={3}></TableCell>
-                         </TableRow>
                         <TableRow>
                             <TableCell colSpan={3}>Ventas en Efectivo:</TableCell>
                              <TableCell className="text-right"></TableCell>
@@ -486,15 +536,6 @@ const renderWizardContent = () => {
                              <TableCell className="text-right">{formatCurrency(totalSales)}</TableCell>
                              <TableCell colSpan={3}></TableCell>
                          </TableRow>
-                         {/* Mostrar efectivo esperado SÓLO si se está en el wizard o ya se cerró */}
-                         {/*
-                         <TableRow className="text-lg font-bold border-t-2">
-                            <TableCell colSpan={3}>Efectivo Esperado en Caja:</TableCell>
-                             <TableCell className="text-right"></TableCell>
-                             <TableCell className="text-right">{formatCurrency(expectedCashInRegister)}</TableCell>
-                            <TableCell colSpan={3}></TableCell>
-                        </TableRow>
-                        */}
                     </TableFooter>
                     )}
                 </Table>
