@@ -118,4 +118,3 @@ export async function printTicket(htmlContent: string, jobName: string = 'siChef
 // export type DiscoveredPrinter = { ... }
 // export async function searchPrinters(...) { ... }
 // export async function initializeBluetoothForScan(...) { ... }
-```
