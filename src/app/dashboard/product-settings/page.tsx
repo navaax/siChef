@@ -3,23 +3,23 @@
 
 import * as React from 'react';
 import { useState, useEffect, useMemo } from 'react';
-import { useForm, type SubmitHandler, Controller } from 'react-hook-form'; // Added Controller
+import { useForm, type SubmitHandler, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from '@/components/ui/button';
-import { PlusCircle, Edit, Trash2, Loader2, Save, X, MinusCircle } from 'lucide-react'; // Added Save, X, MinusCircle
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger, DialogClose } from "@/components/ui/dialog"; // Added DialogClose
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog"; // Added AlertDialog
+import { PlusCircle, Edit, Trash2, Loader2, Save, X, MinusCircle } from 'lucide-react';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger, DialogClose } from "@/components/ui/dialog";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
-import { Separator } from '@/components/ui/separator'; // Added Separator
+import { Separator } from '@/components/ui/separator';
 import { useToast } from '@/hooks/use-toast';
 import Image from 'next/image';
 import { cn } from '@/lib/utils';
@@ -28,16 +28,17 @@ import { cn } from '@/lib/utils';
 import {
     getCategories, addCategory, updateCategory, deleteCategory,
     getProductsByCategory, addProduct, updateProduct, deleteProduct,
-    getPackagesByCategory, // Using getProductsByCategory with type 'paquete' or getPackagesByCategory
-    getProductById, // Needed for fetching packages/products
-    getModifierSlotsForProduct, addModifierSlot, deleteModifierSlot, // Added deleteModifierSlot
-    getItemsForPackage, addPackageItem, deletePackageItem, // Added deletePackageItem
-    getOverridesForPackageItem, setPackageItemOverride, deletePackageItemOverride // Added deletePackageItemOverride
+    getModifiersByCategory, // Specific function for modifiers
+    getAllPackages, getPackageById, addPackage, updatePackage, deletePackage, // Package specific CRUD
+    getProductById, // Keep for fetching products for packages
+    getModifierSlotsForProduct, addModifierSlot, deleteModifierSlot,
+    getItemsForPackage, addPackageItem, deletePackageItem,
+    getOverridesForPackageItem, setPackageItemOverride, deletePackageItemOverride
 } from '@/services/product-service';
 import { getInventoryItems } from '@/services/inventory-service';
 
 // Import types
-import type { Category, Product, InventoryItem, ProductModifierSlot, PackageItem, PackageItemModifierSlotOverride } from '@/types/product-types';
+import type { Category, Product, Package, InventoryItem, ProductModifierSlot, PackageItem, PackageItemModifierSlotOverride } from '@/types/product-types';
 
 // --- Schemas ---
 const categorySchema = z.object({
@@ -49,11 +50,10 @@ type CategoryFormValues = z.infer<typeof categorySchema>;
 
 const productSchema = z.object({
     name: z.string().min(1, "Nombre es requerido"),
-    price: z.coerce.number().min(0, "Precio debe ser positivo"), // Coerce to number
-    categoryId: z.string().min(1, "Categoría es requerida"),
+    price: z.coerce.number().min(0, "Precio debe ser positivo"),
+    categoryId: z.string().min(1, "Categoría es requerida"), // Refers to Category type 'producto' or 'modificador'
     imageUrl: z.string().url("Debe ser una URL válida").optional().or(z.literal('')),
-    // Use `null` as the default for optional string to avoid Zod issues with empty strings
-    inventory_item_id: z.string().nullable().optional(), // Make optional here to handle empty string case
+    inventory_item_id: z.string().nullable().optional(),
     inventory_consumed_per_unit: z.coerce.number().min(0, "Consumo debe ser positivo").optional().nullable(),
 }).refine(data => !data.inventory_item_id || (data.inventory_item_id && data.inventory_consumed_per_unit !== undefined && data.inventory_consumed_per_unit !== null), {
     message: "El consumo por unidad es requerido si se vincula un item de inventario.",
@@ -62,13 +62,12 @@ const productSchema = z.object({
 type ProductFormValues = z.infer<typeof productSchema>;
 
 
-// For packages (which are also products)
+// For packages
 const packageSchema = z.object({
     name: z.string().min(1, "Nombre es requerido"),
     price: z.coerce.number().min(0, "Precio debe ser positivo"),
-    categoryId: z.string().min(1, "Categoría (tipo paquete) es requerida"),
+    // categoryId: z.string().optional(), // Optional category ID for UI grouping
     imageUrl: z.string().url("Debe ser una URL válida").optional().or(z.literal('')),
-    // Packages generally don't have direct inventory links, items inside do
 });
 type PackageFormValues = z.infer<typeof packageSchema>;
 
@@ -85,7 +84,7 @@ const ManageCategories = () => {
     const [isLoading, setIsLoading] = useState(true);
     const [isFormOpen, setIsFormOpen] = useState(false);
     const [editingCategory, setEditingCategory] = useState<Category | null>(null);
-    const [isDeleting, setIsDeleting] = useState<string | null>(null); // Store ID of item being deleted
+    const [isDeleting, setIsDeleting] = useState<string | null>(null);
     const { toast } = useToast();
 
     const form = useForm<CategoryFormValues>({
@@ -96,7 +95,7 @@ const ManageCategories = () => {
     const fetchCategoriesData = async () => {
         setIsLoading(true);
         try {
-            const data = await getCategories(); // Fetch all types
+            const data = await getCategories();
             setCategories(data);
         } catch (error) {
             toast({ title: "Error", description: "No se pudieron cargar las categorías.", variant: "destructive" });
@@ -107,14 +106,14 @@ const ManageCategories = () => {
 
     useEffect(() => {
         fetchCategoriesData();
-    }, [toast]); // Added toast dependency
+    }, [toast]);
 
     const handleOpenForm = (category: Category | null = null) => {
         setEditingCategory(category);
         if (category) {
-            form.reset(category); // Load existing data into the form
+            form.reset(category);
         } else {
-            form.reset({ name: '', type: 'producto', imageUrl: '' }); // Reset for new category
+            form.reset({ name: '', type: 'producto', imageUrl: '' });
         }
         setIsFormOpen(true);
     };
@@ -129,7 +128,7 @@ const ManageCategories = () => {
                 toast({ title: "Éxito", description: "Categoría añadida." });
             }
             setIsFormOpen(false);
-            fetchCategoriesData(); // Refresh list
+            fetchCategoriesData();
         } catch (error) {
              const action = editingCategory ? 'actualizar' : 'añadir';
             toast({ title: "Error", description: `No se pudo ${action} la categoría: ${error instanceof Error ? error.message : 'Error desconocido'}`, variant: "destructive" });
@@ -137,20 +136,18 @@ const ManageCategories = () => {
     };
 
      const handleDeleteCategory = async (id: string) => {
-        setIsDeleting(id); // Indicate deletion in progress
+        setIsDeleting(id);
         try {
             await deleteCategory(id);
             toast({ title: "Éxito", description: "Categoría eliminada.", variant: "destructive" });
-            fetchCategoriesData(); // Refresh list
-             // Close the edit form if the deleted category was being edited
+            fetchCategoriesData();
              if (editingCategory?.id === id) {
                  setIsFormOpen(false);
              }
         } catch (error) {
             toast({ title: "Error", description: `No se pudo eliminar la categoría: ${error instanceof Error ? error.message : 'Error desconocido'}`, variant: "destructive" });
-            // Consider checking for related products if CASCADE DELETE isn't reliable or needs confirmation
         } finally {
-            setIsDeleting(null); // Reset deletion indicator
+            setIsDeleting(null);
         }
     };
 
@@ -162,7 +159,7 @@ const ManageCategories = () => {
                      <PlusCircle className="mr-2 h-4 w-4" /> Añadir Categoría
                  </Button>
             </div>
-            <p className="text-muted-foreground mb-4">Añade, edita o elimina categorías. Define si contienen productos, modificadores o paquetes.</p>
+            <p className="text-muted-foreground mb-4">Añade, edita o elimina categorías. Define si contienen productos, modificadores o paquetes (para UI).</p>
 
             <Card>
                  <CardContent className="p-0">
@@ -208,7 +205,7 @@ const ManageCategories = () => {
                                                         <AlertDialogHeader>
                                                         <AlertDialogTitle>¿Estás seguro?</AlertDialogTitle>
                                                         <AlertDialogDescription>
-                                                             Esta acción eliminará la categoría "{cat.name}" y potencialmente los productos asociados (dependiendo de la configuración de la base de datos). Esta acción no se puede deshacer.
+                                                             Esta acción eliminará la categoría "{cat.name}". Los productos asociados podrían quedar sin categoría o ser eliminados (dependiendo de la BD).
                                                         </AlertDialogDescription>
                                                         </AlertDialogHeader>
                                                         <AlertDialogFooter>
@@ -263,8 +260,8 @@ const ManageCategories = () => {
                                             </FormControl>
                                             <SelectContent>
                                                 <SelectItem value="producto">Producto (items vendibles)</SelectItem>
-                                                <SelectItem value="modificador">Modificador (opciones)</SelectItem>
-                                                <SelectItem value="paquete">Paquete (combos)</SelectItem>
+                                                <SelectItem value="modificador">Modificador (opciones para productos)</SelectItem>
+                                                <SelectItem value="paquete">Paquete (solo para agrupar paquetes en UI)</SelectItem>
                                             </SelectContent>
                                         </Select>
                                         <FormMessage />
@@ -277,7 +274,7 @@ const ManageCategories = () => {
                                 render={({ field }) => (
                                     <FormItem>
                                         <FormLabel>URL de Imagen (Opcional)</FormLabel>
-                                        <FormControl><Input type="url" placeholder="https://picsum.photos/..." {...field} value={field.value ?? ''} /></FormControl>
+                                        <FormControl><Input type="url" placeholder="https://..." {...field} value={field.value ?? ''} /></FormControl>
                                         <FormMessage />
                                     </FormItem>
                                 )}
@@ -310,9 +307,9 @@ const ManageProducts = () => {
     const [isDeleting, setIsDeleting] = useState<string | null>(null);
     const { toast } = useToast();
 
-    // Filter categories for product assignment (exclude 'paquete')
-    const productCategories = useMemo(() => categories.filter(c => c.type === 'producto' || c.type === 'modificador'), [categories]);
-    // Filter categories for modifier slots (only 'modificador' type)
+    // Filter categories for product assignment ('producto' or 'modificador')
+    const productAssignableCategories = useMemo(() => categories.filter(c => c.type === 'producto' || c.type === 'modificador'), [categories]);
+    // Filter categories for modifier slots ('modificador' type only)
     const modifierCategories = useMemo(() => categories.filter(c => c.type === 'modificador'), [categories]);
 
     const [currentModifierSlots, setCurrentModifierSlots] = useState<ProductModifierSlot[]>([]);
@@ -325,7 +322,7 @@ const ManageProducts = () => {
             price: 0,
             categoryId: '',
             imageUrl: '',
-            inventory_item_id: null, // Use null for optional selects
+            inventory_item_id: null,
             inventory_consumed_per_unit: 1,
         },
     });
@@ -334,17 +331,24 @@ const ManageProducts = () => {
         setIsLoading(true);
         try {
             const [fetchedCategories, fetchedInventory] = await Promise.all([
-                getCategories(),
+                getCategories(), // Fetch all categories
                 getInventoryItems(),
             ]);
             setCategories(fetchedCategories);
             setInventoryItems(fetchedInventory);
 
             let allProducts: Product[] = [];
-            const productCatIds = fetchedCategories.filter(c => c.type === 'producto' || c.type === 'modificador').map(c => c.id);
+            // Fetch products from 'producto' and 'modificador' categories
+            const productCatIds = fetchedCategories.filter(c => c.type === 'producto').map(c => c.id);
+            const modifierCatIds = fetchedCategories.filter(c => c.type === 'modificador').map(c => c.id);
+
             for (const catId of productCatIds) {
-                const catProducts = await getProductsByCategory(catId);
+                const catProducts = await getProductsByCategory(catId); // Fetches only type 'producto'
                 allProducts = [...allProducts, ...catProducts];
+            }
+             for (const catId of modifierCatIds) {
+                const catModifiers = await getModifiersByCategory(catId); // Fetches only type 'modificador'
+                allProducts = [...allProducts, ...catModifiers];
             }
             setProducts(allProducts);
 
@@ -357,7 +361,7 @@ const ManageProducts = () => {
 
     useEffect(() => {
         fetchProductData();
-    }, [toast]); // Added toast dependency
+    }, [toast]);
 
     // Fetch modifier slots for the product when editing
     useEffect(() => {
@@ -376,67 +380,62 @@ const ManageProducts = () => {
             };
             fetchSlots();
         } else {
-            setCurrentModifierSlots([]); // Clear slots when dialog closes or it's a new product
+            setCurrentModifierSlots([]);
         }
     }, [editingProduct, isFormOpen, toast]);
 
     const handleOpenForm = (product: Product | null = null) => {
         setEditingProduct(product);
         if (product) {
-            form.reset({ // Map product data to form values
+            form.reset({
                 name: product.name,
                 price: product.price,
                 categoryId: product.categoryId,
                 imageUrl: product.imageUrl || '',
-                inventory_item_id: product.inventory_item_id || null, // Use null if undefined/empty
+                inventory_item_id: product.inventory_item_id || null,
                 inventory_consumed_per_unit: product.inventory_consumed_per_unit ?? 1,
             });
-            // Modifier slots will be fetched by the useEffect
         } else {
              form.reset({
                 name: '',
                 price: 0,
                 categoryId: '',
                 imageUrl: '',
-                inventory_item_id: null, // Reset with null
+                inventory_item_id: null,
                 inventory_consumed_per_unit: 1,
             });
-             setCurrentModifierSlots([]); // Ensure slots are clear for new product
+             setCurrentModifierSlots([]);
         }
         setIsFormOpen(true);
     };
 
      const handleFormSubmit: SubmitHandler<ProductFormValues> = async (values) => {
-        // Ensure inventory_item_id is handled correctly (null vs undefined)
         const dataToSave = {
             ...values,
-            // Ensure optional fields are null if empty, otherwise use the value
              imageUrl: values.imageUrl || null,
             inventory_item_id: values.inventory_item_id || null,
              inventory_consumed_per_unit: values.inventory_item_id ? (values.inventory_consumed_per_unit ?? 1) : null,
         };
 
-        console.log("Saving product:", JSON.stringify(dataToSave, null, 2)); // Log data being sent
+        console.log("Saving product:", JSON.stringify(dataToSave, null, 2));
 
         try {
              if (editingProduct) {
                 await updateProduct(editingProduct.id, dataToSave);
                 toast({ title: "Éxito", description: "Producto actualizado." });
-                 setIsFormOpen(false); // Close form after update
+                 // Optionally keep form open to edit modifiers, or close it:
+                 // setIsFormOpen(false);
                  fetchProductData(); // Refresh list
              } else {
-                 // Create product first, then potentially keep dialog open to add modifiers
                 const newProduct = await addProduct(dataToSave as Omit<Product, 'id'>);
                 toast({ title: "Éxito", description: "Producto añadido. Puedes añadir modificadores." });
-                setEditingProduct(newProduct); // Update state to allow adding modifiers immediately
-                fetchProductData(); // Refresh list in background
-                // Do NOT close form here, allow adding modifiers
-                // return; // Keep form open
+                setEditingProduct(newProduct);
+                fetchProductData();
              }
 
         } catch (error) {
              const action = editingProduct ? 'actualizar' : 'añadir';
-            console.error(`Error ${action} product:`, error); // Log detailed error
+            console.error(`Error ${action} product:`, error);
             toast({ title: "Error", description: `No se pudo ${action} el producto: ${error instanceof Error ? error.message : 'Error desconocido'}`, variant: "destructive" });
         }
     };
@@ -446,8 +445,7 @@ const ManageProducts = () => {
         try {
             await deleteProduct(id);
             toast({ title: "Éxito", description: "Producto eliminado.", variant: "destructive" });
-            fetchProductData(); // Refresh list
-             // Close the edit form if the deleted product was being edited
+            fetchProductData();
              if (editingProduct?.id === id) {
                  setIsFormOpen(false);
              }
@@ -493,12 +491,12 @@ const ManageProducts = () => {
     return (
         <div>
              <div className="flex justify-between items-center mb-4">
-                <h3 className="text-xl font-semibold">Gestionar Productos</h3>
+                <h3 className="text-xl font-semibold">Gestionar Productos y Modificadores</h3>
                  <Button size="sm" onClick={() => handleOpenForm()}>
-                     <PlusCircle className="mr-2 h-4 w-4" /> Añadir Producto
+                     <PlusCircle className="mr-2 h-4 w-4" /> Añadir Producto/Modificador
                  </Button>
              </div>
-             <p className="text-muted-foreground mb-4">Define productos, asigna precios, vincula inventario (opcional) y configura modificadores.</p>
+             <p className="text-muted-foreground mb-4">Define productos vendibles y opciones modificadoras. Vincula inventario y configura grupos de modificadores.</p>
              <Card>
                  <CardContent className="p-0">
                      <ScrollArea className="h-[60vh]">
@@ -506,7 +504,7 @@ const ManageProducts = () => {
                              <TableHeader className="sticky top-0 bg-background z-10 shadow-sm">
                                 <TableRow>
                                     <TableHead>Nombre</TableHead>
-                                    <TableHead>Categoría</TableHead>
+                                    <TableHead>Categoría (Tipo)</TableHead>
                                     <TableHead className="text-right">Precio</TableHead>
                                     <TableHead>Inventario Vinculado</TableHead>
                                     <TableHead className="text-right">Consumo</TableHead>
@@ -530,7 +528,7 @@ const ManageProducts = () => {
                                                      ) : <div className='w-8 h-6 bg-muted rounded'></div>}
                                                     {prod.name}
                                                 </TableCell>
-                                                <TableCell>{category?.name || 'N/A'}</TableCell>
+                                                <TableCell>{category?.name || 'N/A'} ({category?.type || 'N/A'})</TableCell>
                                                 <TableCell className="text-right">{formatCurrency(prod.price)}</TableCell>
                                                 <TableCell>{invItem?.name || <span className="text-xs text-muted-foreground">N/A</span>}</TableCell>
                                                 <TableCell className="text-right">{invItem ? `${prod.inventory_consumed_per_unit ?? 1} ${invItem.unit}`: '-'}</TableCell>
@@ -548,7 +546,7 @@ const ManageProducts = () => {
                                                             <AlertDialogHeader>
                                                             <AlertDialogTitle>¿Estás seguro?</AlertDialogTitle>
                                                             <AlertDialogDescription>
-                                                                Esta acción eliminará el producto "{prod.name}". Esta acción no se puede deshacer.
+                                                                Esta acción eliminará "{prod.name}". Esta acción no se puede deshacer.
                                                             </AlertDialogDescription>
                                                             </AlertDialogHeader>
                                                             <AlertDialogFooter>
@@ -570,17 +568,16 @@ const ManageProducts = () => {
                 </CardContent>
             </Card>
 
-            {/* Add/Edit Dialog */}
+            {/* Add/Edit Product Dialog */}
              <Dialog open={isFormOpen} onOpenChange={setIsFormOpen}>
-                 <DialogContent className="sm:max-w-[700px]"> {/* Wider dialog for modifiers */}
+                 <DialogContent className="sm:max-w-[700px]">
                     <DialogHeader>
-                        <DialogTitle>{editingProduct ? 'Editar Producto' : 'Añadir Nuevo Producto'}</DialogTitle>
+                        <DialogTitle>{editingProduct ? 'Editar Producto/Modificador' : 'Añadir Nuevo Producto/Modificador'}</DialogTitle>
                         <DialogDescription>
-                             {editingProduct ? `Modifica los detalles de "${editingProduct.name}".` : 'Define un producto vendible o una opción modificadora.'}
+                             Define un producto vendible o una opción modificadora.
                         </DialogDescription>
                     </DialogHeader>
                     <Form {...form}>
-                        {/* Using a unique key to force re-render on submit/reset if needed, but onSubmit handles it */}
                         <form onSubmit={form.handleSubmit(handleFormSubmit)} className="space-y-4">
                             <FormField control={form.control} name="name" render={({ field }) => (
                                 <FormItem><FormLabel>Nombre</FormLabel><FormControl><Input placeholder="e.g., Alitas 6pz, Salsa BBQ" {...field} /></FormControl><FormMessage /></FormItem>
@@ -594,9 +591,8 @@ const ManageProducts = () => {
                                         <Select onValueChange={field.onChange} value={field.value || '__NONE__'}>
                                             <FormControl><SelectTrigger><SelectValue placeholder="Selecciona categoría" /></SelectTrigger></FormControl>
                                             <SelectContent>
-                                                 {/* Add a placeholder item */}
-                                                <SelectItem value="__NONE__" disabled>Selecciona una categoría</SelectItem>
-                                                {productCategories.map(cat => (
+                                                 <SelectItem value="__NONE__" disabled>Selecciona una categoría</SelectItem>
+                                                {productAssignableCategories.map(cat => (
                                                     <SelectItem key={cat.id} value={cat.id}>{cat.name} ({cat.type})</SelectItem>
                                                 ))}
                                             </SelectContent>
@@ -604,7 +600,7 @@ const ManageProducts = () => {
                                 )}/>
                             </div>
                             <FormField control={form.control} name="imageUrl" render={({ field }) => (
-                                <FormItem><FormLabel>URL de Imagen (Opcional)</FormLabel><FormControl><Input type="url" placeholder="https://picsum.photos/..." {...field} value={field.value ?? ''} /></FormControl><FormMessage /></FormItem>
+                                <FormItem><FormLabel>URL de Imagen (Opcional)</FormLabel><FormControl><Input type="url" placeholder="https://..." {...field} value={field.value ?? ''} /></FormControl><FormMessage /></FormItem>
                             )}/>
                              <div className="grid grid-cols-2 gap-4">
                                 <FormField
@@ -615,7 +611,6 @@ const ManageProducts = () => {
                                            <FormLabel>Item de Inventario (Opcional)</FormLabel>
                                             <Select
                                                 onValueChange={(value) => field.onChange(value === "__NONE__" ? null : value)}
-                                                // Ensure value is a string or undefined for Select, handle null from form state
                                                 value={field.value ?? "__NONE__"}
                                             >
                                                <FormControl>
@@ -624,7 +619,6 @@ const ManageProducts = () => {
                                                    </SelectTrigger>
                                                </FormControl>
                                                <SelectContent>
-                                                    {/* Ensure __NONE__ option exists and is first */}
                                                    <SelectItem value="__NONE__">-- Ninguno --</SelectItem>
                                                    {inventoryItems.map(item => (
                                                        <SelectItem key={item.id} value={item.id}>
@@ -637,12 +631,10 @@ const ManageProducts = () => {
                                        </FormItem>
                                    )}
                                 />
-                                {/* Only show consumption field if inventory item is selected */}
                                 {form.watch('inventory_item_id') && (
                                     <FormField control={form.control} name="inventory_consumed_per_unit" render={({ field }) => (
                                         <FormItem><FormLabel>Consumo por Unidad</FormLabel>
                                          <FormControl>
-                                             {/* Ensure value passed to Input is string or number, handle null */}
                                              <Input type="number" step="0.01" placeholder="1" {...field} value={field.value ?? 1}/>
                                          </FormControl>
                                          <FormMessage />
@@ -653,25 +645,21 @@ const ManageProducts = () => {
                               <div className="flex justify-end">
                                   <Button type="submit" size="sm" disabled={form.formState.isSubmitting}>
                                         {form.formState.isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4"/>}
-                                        {editingProduct ? 'Guardar Cambios Producto' : 'Crear Producto'}
+                                        {editingProduct ? 'Guardar Cambios' : 'Crear Producto'}
                                   </Button>
                               </div>
                         </form>
                     </Form>
 
-                    {/* Modifier Slot Management (Only visible when editing a product) */}
+                    {/* Modifier Slot Management */}
                     {editingProduct && (
                         <div className="space-y-4 pt-6 border-t mt-6">
                             <h4 className="text-lg font-semibold">Grupos de Modificadores para "{editingProduct.name}"</h4>
-
-                            {/* Add Slot Form (Simplified inline form) */}
                              <AddModifierSlotForm
                                 modifierCategories={modifierCategories}
                                 onAddSlot={handleAddModifierSlot}
                                 isLoading={isModifierSlotsLoading}
                              />
-
-                             {/* Slots List */}
                              <ScrollArea className="h-[200px] border rounded-md">
                                 {isModifierSlotsLoading && !currentModifierSlots.length && <div className="p-4 text-center"><Loader2 className="h-5 w-5 animate-spin inline-block" /></div>}
                                 {!isModifierSlotsLoading && currentModifierSlots.length === 0 && (
@@ -712,12 +700,10 @@ const ManageProducts = () => {
                         </div>
                     )}
 
-
                     <DialogFooter className="mt-6 pt-4 border-t">
                         <DialogClose asChild>
                             <Button type="button" variant="outline">Cerrar</Button>
                         </DialogClose>
-                        {/* Main save button might be removed if saving happens per section */}
                     </DialogFooter>
                 </DialogContent>
              </Dialog>
@@ -732,7 +718,7 @@ const addModifierSlotSchema = z.object({
     min_quantity: z.coerce.number().int().min(0).default(0),
     max_quantity: z.coerce.number().int().min(1).default(1),
 }).refine(data => data.max_quantity >= data.min_quantity, {
-    message: "Max debe ser mayor o igual a Min",
+    message: "Max debe ser >= Min",
     path: ["max_quantity"],
 });
 type AddModifierSlotFormValues = z.infer<typeof addModifierSlotSchema>;
@@ -751,7 +737,7 @@ const AddModifierSlotForm: React.FC<AddModifierSlotFormProps> = ({ modifierCateg
 
      const handleSubmit = async (values: AddModifierSlotFormValues) => {
         await onAddSlot(values);
-        form.reset(); // Reset form after successful add
+        form.reset();
      }
 
      return (
@@ -795,22 +781,20 @@ const formatCurrency = (amount: number | null | undefined): string => {
 
 
 const ManagePackages = () => {
-     const [packages, setPackages] = useState<Product[]>([]); // Packages are Products
-     const [packageCategories, setPackageCategories] = useState<Category[]>([]);
+     const [packages, setPackages] = useState<Package[]>([]); // Use Package type
      const [allProducts, setAllProducts] = useState<Product[]>([]); // For adding items to packages
      const [isLoading, setIsLoading] = useState(true);
      const [isFormOpen, setIsFormOpen] = useState(false);
-     const [editingPackage, setEditingPackage] = useState<Product | null>(null);
+     const [editingPackage, setEditingPackage] = useState<Package | null>(null);
      const [isDeleting, setIsDeleting] = useState<string | null>(null);
      const { toast } = useToast();
 
-     // State for managing items within the currently editing package
      const [currentPackageItems, setCurrentPackageItems] = useState<PackageItem[]>([]);
      const [isPackageItemsLoading, setIsPackageItemsLoading] = useState(false);
 
      const packageForm = useForm<PackageFormValues>({
         resolver: zodResolver(packageSchema),
-        defaultValues: { name: '', price: 0, categoryId: '', imageUrl: '' },
+        defaultValues: { name: '', price: 0, imageUrl: '' },
     });
 
     const addItemForm = useForm<AddPackageItemFormValues>({
@@ -821,25 +805,26 @@ const ManagePackages = () => {
       const fetchPackageData = async () => {
         setIsLoading(true);
         try {
-            const fetchedCategories = await getCategories();
-            const pkgCats = fetchedCategories.filter(c => c.type === 'paquete');
-            setPackageCategories(pkgCats);
-
-            let allPackages: Product[] = [];
-            for (const cat of pkgCats) {
-                const pkgs = await getPackagesByCategory(cat.id);
-                allPackages = [...allPackages, ...pkgs];
-            }
-            setPackages(allPackages);
+            const [fetchedPackages, fetchedCategories] = await Promise.all([
+                getAllPackages(), // Fetch all packages from the new table
+                getCategories(), // Fetch all categories
+            ]);
+            setPackages(fetchedPackages);
 
             // Fetch all regular products/modifiers to add to packages
-             let allProds: Product[] = [];
-             const prodCats = fetchedCategories.filter(c => c.type === 'producto' || c.type === 'modificador');
-             for (const cat of prodCats) {
-                 const prods = await getProductsByCategory(cat.id);
-                 allProds = [...allProds, ...prods];
+             let prodsForPackages: Product[] = [];
+             const prodCats = fetchedCategories.filter(c => c.type === 'producto').map(c => c.id);
+             const modCats = fetchedCategories.filter(c => c.type === 'modificador').map(c => c.id);
+
+             for (const catId of prodCats) {
+                 const prods = await getProductsByCategory(catId);
+                 prodsForPackages = [...prodsForPackages, ...prods];
              }
-             setAllProducts(allProds); // Keep only products and modifiers
+             for (const catId of modCats) {
+                 const mods = await getModifiersByCategory(catId);
+                 prodsForPackages = [...prodsForPackages, ...mods];
+             }
+             setAllProducts(prodsForPackages);
 
         } catch (error) {
             toast({ title: "Error", description: "No se pudieron cargar paquetes o productos.", variant: "destructive" });
@@ -850,18 +835,18 @@ const ManagePackages = () => {
 
      useEffect(() => {
         fetchPackageData();
-    }, [toast]); // Added toast dependency
+    }, [toast]);
 
      // Fetch items for the package when editing
      useEffect(() => {
-        if (editingPackage && isFormOpen && editingPackage.id) { // Ensure ID exists before fetching
+        if (editingPackage?.id && isFormOpen) {
             const fetchItems = async () => {
                 setIsPackageItemsLoading(true);
                 try {
                     const items = await getItemsForPackage(editingPackage.id);
                     setCurrentPackageItems(items);
                 } catch (error) {
-                    console.error("Error fetching package items:", error); // Log error
+                    console.error("Error fetching package items:", error);
                     toast({ title: "Error", description: `No se pudieron cargar los items para ${editingPackage.name}. ${error instanceof Error ? error.message : ''}`, variant: "destructive" });
                     setCurrentPackageItems([]);
                 } finally {
@@ -870,69 +855,56 @@ const ManagePackages = () => {
             };
             fetchItems();
         } else {
-            setCurrentPackageItems([]); // Clear items when dialog closes or it's a new package without ID
+            setCurrentPackageItems([]);
         }
      }, [editingPackage, isFormOpen, toast]);
 
 
-    const handleOpenForm = (pkg: Product | null = null) => {
+    const handleOpenForm = (pkg: Package | null = null) => {
         setEditingPackage(pkg);
         if (pkg) {
             packageForm.reset({
                 name: pkg.name,
                 price: pkg.price,
-                categoryId: pkg.categoryId,
                 imageUrl: pkg.imageUrl || '',
             });
-            // Items will be fetched by the useEffect
         } else {
-            packageForm.reset({ name: '', price: 0, categoryId: '', imageUrl: '' });
-            setCurrentPackageItems([]); // Ensure items are clear for new package
+            packageForm.reset({ name: '', price: 0, imageUrl: '' });
+            setCurrentPackageItems([]);
         }
-        addItemForm.reset(); // Reset add item form as well
+        addItemForm.reset();
         setIsFormOpen(true);
     };
 
     const handlePackageFormSubmit: SubmitHandler<PackageFormValues> = async (values) => {
-        // The form ensures categoryId belongs to a 'paquete' type category implicitly
-        const dataToSave: Partial<Product> = {
+        const dataToSave: Partial<Package> = {
              ...values,
-             imageUrl: values.imageUrl || null, // Ensure null if empty
+             imageUrl: values.imageUrl || null,
         };
 
         console.log("[handlePackageFormSubmit] Submitting package info:", JSON.stringify(dataToSave, null, 2));
-        console.log("[handlePackageFormSubmit] Current editingPackage state before save/update:", editingPackage);
 
         try {
-            if (editingPackage?.id) { // Check if editingPackage AND its id exist
+            if (editingPackage?.id) {
                 console.log(`[handlePackageFormSubmit] Updating package with ID: ${editingPackage.id}`);
-                await updateProduct(editingPackage.id, dataToSave); // Use updateProduct for packages too
+                await updatePackage(editingPackage.id, dataToSave); // Use updatePackage service
                  toast({ title: "Éxito", description: "Paquete actualizado." });
-                 // Update the local state to reflect changes without full refetch if desired
                  setEditingPackage(prev => prev ? { ...prev, ...dataToSave } : null);
-                // fetchPackageData(); // Refresh list in background - Temporarily disable to prevent potential state conflicts
-                 // Keep the form open to continue editing items or adding new ones
-                 console.log("[handlePackageFormSubmit] Package updated. New editingPackage state:", editingPackage); // Log state AFTER update attempt
+                 // fetchPackageData(); // Refresh list in background
+                 console.log("[handlePackageFormSubmit] Package updated.");
             } else {
-                 // Create the package product FIRST
                  console.log("[handlePackageFormSubmit] Creating new package...");
-                 const newPackage = await addProduct(dataToSave as Omit<Product, 'id'>); // Use addProduct service function
+                 const newPackage = await addPackage(dataToSave as Omit<Package, 'id'>); // Use addPackage service
                  console.log("[handlePackageFormSubmit] New package created:", JSON.stringify(newPackage, null, 2));
                  toast({ title: "Éxito", description: "Paquete creado. Ahora puedes añadirle productos." });
-                 // IMPORTANT: Update the editingPackage state with the newly created package
-                 // This ensures the subsequent addItem calls have the correct package_id
-                 setEditingPackage(newPackage);
-                 // fetchPackageData(); // Refresh list in background - Temporarily disable
-                 // Keep the form open
-                 console.log("[handlePackageFormSubmit] New package created. Updated editingPackage state:", newPackage); // Log new state
+                 setEditingPackage(newPackage); // Update state with the new package ID
+                 fetchPackageData(); // Refresh the main list to include the new package
+                 console.log("[handlePackageFormSubmit] New package created. Updated editingPackage state:", newPackage);
             }
-
-            // Keep dialog open to allow adding items right away
-            // setIsFormOpen(false); // Do not close
 
         } catch (error) {
             const action = editingPackage?.id ? 'actualizar' : 'añadir';
-            console.error(`[handlePackageFormSubmit] Error ${action} package:`, error); // Log detailed error
+            console.error(`[handlePackageFormSubmit] Error ${action} package:`, error);
             toast({ title: "Error", description: `No se pudo ${action} el paquete: ${error instanceof Error ? error.message : 'Error desconocido'}`, variant: "destructive" });
         }
     };
@@ -941,10 +913,10 @@ const ManagePackages = () => {
     const handleDeletePackage = async (id: string) => {
         setIsDeleting(id);
         try {
-            await deleteProduct(id); // Use deleteProduct for packages too
+            await deletePackage(id); // Use deletePackage service
             toast({ title: "Éxito", description: "Paquete eliminado.", variant: "destructive" });
-            fetchPackageData(); // Refresh list
-             if (editingPackage?.id === id) { // Close dialog if deleted package was being edited
+            fetchPackageData();
+             if (editingPackage?.id === id) {
                  setIsFormOpen(false);
              }
         } catch (error) {
@@ -955,45 +927,37 @@ const ManagePackages = () => {
     };
 
      const handleAddPackageItemSubmit: SubmitHandler<AddPackageItemFormValues> = async (values) => {
-         // Ensure we have a valid package ID (either from editing or after creation)
          if (!editingPackage || !editingPackage.id) {
-             console.error("[handleAddPackageItemSubmit] Cannot add item: No valid package ID. Ensure package is saved first. Current editingPackage state:", editingPackage);
+             console.error("[handleAddPackageItemSubmit] Cannot add item: No valid package ID. Ensure package is saved first.", editingPackage);
              toast({ title: "Error", description: "Guarda la información básica del paquete antes de añadir productos.", variant: "destructive" });
              return;
          }
 
-         // Refine the type for newItemData
           const newItemData: Omit<PackageItem, 'id' | 'product_name'> = {
-             package_id: editingPackage.id, // Use the ID from the state
+             package_id: editingPackage.id,
              product_id: values.product_id,
              quantity: values.quantity,
-             display_order: currentPackageItems.length, // Simple order append
+             display_order: currentPackageItems.length,
          };
 
-         // Debugging: Check if product_id exists
          const productToAdd = allProducts.find(p => p.id === values.product_id);
          if (!productToAdd) {
-             console.error(`[handleAddPackageItemSubmit] Product with ID ${values.product_id} not found in allProducts list.`);
+             console.error(`[handleAddPackageItemSubmit] Product with ID ${values.product_id} not found.`);
              toast({ title: "Error Interno", description: `Producto con ID ${values.product_id} no encontrado.`, variant: "destructive" });
              return;
          }
 
          console.log(`[handleAddPackageItemSubmit] Attempting to add item to package ${editingPackage.id}: Product ${productToAdd.name} (ID: ${values.product_id}), Qty: ${values.quantity}`);
-         console.log("[handleAddPackageItemSubmit] newItemData to send to service:", newItemData);
-
 
          setIsPackageItemsLoading(true);
          try {
-             // The addPackageItem service function already does pre-checks
              const addedItem = await addPackageItem(newItemData);
-             console.log("[handleAddPackageItemSubmit] Successfully added item (response from service):", JSON.stringify(addedItem, null, 2));
-
-             // Update local state optimistically
-             setCurrentPackageItems(prev => [...prev, { ...addedItem, product_name: productToAdd.name }]); // Use productToAdd for name
-             addItemForm.reset(); // Clear the add item form
+             console.log("[handleAddPackageItemSubmit] Successfully added item:", addedItem);
+             setCurrentPackageItems(prev => [...prev, { ...addedItem, product_name: productToAdd.name }]);
+             addItemForm.reset();
              toast({ title: "Éxito", description: `"${productToAdd.name}" añadido al paquete.` });
          } catch (error) {
-             console.error("[handleAddPackageItemSubmit] Error adding package item:", error); // Log detailed error
+             console.error("[handleAddPackageItemSubmit] Error adding package item:", error);
              toast({ title: "Error", description: `No se pudo añadir el producto: ${error instanceof Error ? error.message : 'Error desconocido'}`, variant: "destructive" });
          } finally {
              setIsPackageItemsLoading(false);
@@ -1002,16 +966,12 @@ const ManagePackages = () => {
 
      const handleDeletePackageItem = async (packageItemId: string) => {
          if (!editingPackage) return;
-
-         // Find the item to get its name for the toast message
          const itemToDelete = currentPackageItems.find(item => item.id === packageItemId);
          const itemName = itemToDelete?.product_name || `Item ID ${packageItemId}`;
-
 
          setIsPackageItemsLoading(true);
          try {
              await deletePackageItem(packageItemId);
-             // Update local state
              setCurrentPackageItems(prev => prev.filter(item => item.id !== packageItemId));
              toast({ title: "Éxito", description: `"${itemName}" eliminado del paquete.`, variant: 'destructive' });
          } catch (error) {
@@ -1021,20 +981,16 @@ const ManagePackages = () => {
          }
      };
 
-     // TODO: Implement Modifier Override management for package items in Edit Dialog
 
      return (
         <div>
              <div className="flex justify-between items-center mb-4">
                  <h3 className="text-xl font-semibold">Gestionar Paquetes</h3>
-                 <Button size="sm" onClick={() => handleOpenForm()} disabled={packageCategories.length === 0}>
+                 <Button size="sm" onClick={() => handleOpenForm()}>
                      <PlusCircle className="mr-2 h-4 w-4" /> Añadir Paquete
                  </Button>
              </div>
-             {packageCategories.length === 0 && (
-                <p className="text-destructive text-sm mb-4">Nota: Primero debes crear una categoría de tipo 'paquete' para poder añadir paquetes.</p>
-             )}
-              <p className="text-muted-foreground mb-4">Crea y edita paquetes. Añade productos y personaliza modificadores (próximamente en edición).</p>
+              <p className="text-muted-foreground mb-4">Crea y edita paquetes/combos. Añade productos y configura modificadores (próximamente).</p>
               <Card>
                  <CardContent className="p-0">
                     <ScrollArea className="h-[60vh]">
@@ -1042,19 +998,19 @@ const ManagePackages = () => {
                            <TableHeader className="sticky top-0 bg-background z-10 shadow-sm">
                                 <TableRow>
                                     <TableHead>Nombre</TableHead>
-                                    <TableHead>Categoría</TableHead>
+                                    {/* <TableHead>Categoría (UI)</TableHead> */}
                                     <TableHead className="text-right">Precio</TableHead>
                                     <TableHead className="text-right">Acciones</TableHead>
                                 </TableRow>
                              </TableHeader>
                              <TableBody>
                                  {isLoading ? (
-                                    <TableRow><TableCell colSpan={4} className="text-center h-24">Cargando...</TableCell></TableRow>
+                                    <TableRow><TableCell colSpan={3} className="text-center h-24">Cargando...</TableCell></TableRow>
                                  ) : packages.length === 0 ? (
-                                     <TableRow><TableCell colSpan={4} className="text-center h-24">No hay paquetes.</TableCell></TableRow>
+                                     <TableRow><TableCell colSpan={3} className="text-center h-24">No hay paquetes.</TableCell></TableRow>
                                  ) : (
                                     packages.map(pkg => {
-                                        const category = packageCategories.find(c => c.id === pkg.categoryId);
+                                        // const category = categories.find(c => c.id === pkg.categoryId); // If categoryId is added to Package type
                                         return (
                                             <TableRow key={pkg.id}>
                                                 <TableCell className="font-medium flex items-center gap-2">
@@ -1063,7 +1019,7 @@ const ManagePackages = () => {
                                                      ) : <div className='w-8 h-6 bg-muted rounded'></div>}
                                                     {pkg.name}
                                                 </TableCell>
-                                                 <TableCell>{category?.name || 'N/A'}</TableCell>
+                                                 {/* <TableCell>{category?.name || 'N/A'}</TableCell> */}
                                                 <TableCell className="text-right">{formatCurrency(pkg.price)}</TableCell>
                                                 <TableCell className="text-right">
                                                      <Button variant="ghost" size="icon" className="h-7 w-7 mr-1" onClick={() => handleOpenForm(pkg)} title="Editar Paquete">
@@ -1079,7 +1035,7 @@ const ManagePackages = () => {
                                                             <AlertDialogHeader>
                                                             <AlertDialogTitle>¿Estás seguro?</AlertDialogTitle>
                                                             <AlertDialogDescription>
-                                                                 Esta acción eliminará el paquete "{pkg.name}". Esta acción no se puede deshacer.
+                                                                 Esta acción eliminará el paquete "{pkg.name}" y su contenido definido. No se puede deshacer.
                                                             </AlertDialogDescription>
                                                             </AlertDialogHeader>
                                                             <AlertDialogFooter>
@@ -1101,9 +1057,9 @@ const ManagePackages = () => {
                  </CardContent>
               </Card>
 
-               {/* Add/Edit Dialog */}
+               {/* Add/Edit Package Dialog */}
               <Dialog open={isFormOpen} onOpenChange={setIsFormOpen}>
-                 <DialogContent className="sm:max-w-[700px]"> {/* Wider dialog for package items */}
+                 <DialogContent className="sm:max-w-[700px]">
                      <DialogHeader>
                          <DialogTitle>{editingPackage ? 'Editar Paquete' : 'Añadir Nuevo Paquete'}</DialogTitle>
                          <DialogDescription>
@@ -1120,25 +1076,23 @@ const ManagePackages = () => {
                                 <FormField control={packageForm.control} name="price" render={({ field }) => (
                                     <FormItem><FormLabel>Precio del Paquete</FormLabel><FormControl><Input type="number" step="0.01" placeholder="0.00" {...field} /></FormControl><FormMessage /></FormItem>
                                 )}/>
+                                {/* Optional CategoryId for UI grouping
                                 <FormField control={packageForm.control} name="categoryId" render={({ field }) => (
-                                    <FormItem><FormLabel>Categoría (de Paquetes)</FormLabel>
+                                    <FormItem><FormLabel>Categoría (UI)</FormLabel>
                                         <Select onValueChange={field.onChange} value={field.value || '__NONE__'}>
-                                            <FormControl><SelectTrigger><SelectValue placeholder="Selecciona categoría" /></SelectTrigger></FormControl>
+                                            <FormControl><SelectTrigger><SelectValue placeholder="Selecciona categoría UI" /></SelectTrigger></FormControl>
                                             <SelectContent>
                                                  <SelectItem value="__NONE__" disabled>Selecciona categoría</SelectItem>
-                                                 {packageCategories.length === 0 && <SelectItem value="__NONE_AVAILABLE__" disabled>Crea una categoría tipo paquete</SelectItem>}
-                                                {packageCategories.map(cat => (
-                                                    <SelectItem key={cat.id} value={cat.id}>{cat.name}</SelectItem>
-                                                ))}
+                                                 {packageUiCategories.map(cat => (<SelectItem key={cat.id} value={cat.id}>{cat.name}</SelectItem>))}
                                             </SelectContent>
                                         </Select><FormMessage /></FormItem>
-                                )}/>
+                                )}/> */}
                             </div>
                             <FormField control={packageForm.control} name="imageUrl" render={({ field }) => (
-                                <FormItem><FormLabel>URL de Imagen (Opcional)</FormLabel><FormControl><Input type="url" placeholder="https://picsum.photos/..." {...field} value={field.value ?? ''} /></FormControl><FormMessage /></FormItem>
+                                <FormItem><FormLabel>URL de Imagen (Opcional)</FormLabel><FormControl><Input type="url" placeholder="https://..." {...field} value={field.value ?? ''} /></FormControl><FormMessage /></FormItem>
                             )}/>
                              <div className="flex justify-end">
-                                <Button type="submit" size="sm" disabled={packageForm.formState.isSubmitting || packageCategories.length === 0}>
+                                <Button type="submit" size="sm" disabled={packageForm.formState.isSubmitting}>
                                     {packageForm.formState.isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4"/>}
                                     {editingPackage ? 'Guardar Cambios Paquete' : 'Crear Paquete'}
                                 </Button>
@@ -1146,12 +1100,10 @@ const ManagePackages = () => {
                         </form>
                      </Form>
 
-                     {/* Package Items Management (Only visible AFTER package created/saved OR if editing existing package) */}
-                     {editingPackage?.id && ( // Only show if editingPackage has an ID
+                     {/* Package Items Management */}
+                     {editingPackage?.id && (
                         <div className="space-y-4">
-                            <h4 className="text-lg font-semibold">Contenido del Paquete "{editingPackage.name}" (ID: {editingPackage.id})</h4> {/* Added ID for debugging */}
-
-                            {/* Add Item Form */}
+                            <h4 className="text-lg font-semibold">Contenido del Paquete "{editingPackage.name}"</h4>
                             <Form {...addItemForm}>
                                 <form onSubmit={addItemForm.handleSubmit(handleAddPackageItemSubmit)} className="flex items-end gap-2 border p-3 rounded-md bg-muted/50">
                                     <FormField
@@ -1184,19 +1136,18 @@ const ManagePackages = () => {
                                             </FormItem>
                                         )}
                                     />
-                                    <Button type="submit" size="sm" disabled={isPackageItemsLoading || !editingPackage?.id}> {/* Also disable if no editingPackage ID */}
+                                    <Button type="submit" size="sm" disabled={isPackageItemsLoading || !editingPackage?.id}>
                                          {isPackageItemsLoading ? <Loader2 className="h-4 w-4 animate-spin"/> : <PlusCircle className="h-4 w-4" />}
                                     </Button>
                                 </form>
                             </Form>
 
-                            {/* Items List */}
                              <ScrollArea className="h-[200px] border rounded-md">
                                  {isPackageItemsLoading && !currentPackageItems.length && <div className="p-4 text-center"><Loader2 className="h-5 w-5 animate-spin inline-block" /></div>}
                                  {!isPackageItemsLoading && currentPackageItems.length === 0 && (
                                      <p className="p-4 text-center text-sm text-muted-foreground">Añade productos al paquete.</p>
                                  )}
-                                 {currentPackageItems.length > 0 && ( // Display even while loading if items exist
+                                 {currentPackageItems.length > 0 && (
                                     <Table className="text-sm">
                                         <TableHeader>
                                             <TableRow>
@@ -1211,10 +1162,7 @@ const ManagePackages = () => {
                                                     <TableCell>{item.product_name || item.product_id}</TableCell>
                                                     <TableCell className="text-right">{item.quantity}</TableCell>
                                                     <TableCell className="text-right">
-                                                        {/* TODO: Edit button for quantity/overrides */}
-                                                         {/* <Button variant="ghost" size="icon" className="h-6 w-6 mr-1" title="Editar Item (Próximamente)">
-                                                             <Edit className="h-3 w-3" />
-                                                         </Button> */}
+                                                         {/* TODO: Edit button */}
                                                          <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive hover:text-destructive" onClick={() => handleDeletePackageItem(item.id)} title="Eliminar del Paquete" disabled={isPackageItemsLoading}>
                                                             <MinusCircle className="h-3 w-3" />
                                                          </Button>
@@ -1226,10 +1174,10 @@ const ManagePackages = () => {
                                  )}
                              </ScrollArea>
 
-                              {/* TODO: Add Modifier Override Management Here */}
+                              {/* TODO: Add Modifier Override Management */}
                               <Card className="mt-4 bg-muted/30">
                                     <CardHeader className="p-3"><CardTitle className="text-sm">Gestionar Modificadores del Paquete (Próximamente)</CardTitle></CardHeader>
-                                    <CardContent className="p-3"><p className="text-xs text-muted-foreground">Aquí podrás ajustar los modificadores permitidos para cada producto dentro del paquete "{editingPackage.name}".</p></CardContent>
+                                    <CardContent className="p-3"><p className="text-xs text-muted-foreground">Aquí podrás ajustar los modificadores permitidos para cada producto dentro del paquete.</p></CardContent>
                                 </Card>
 
                         </div>
@@ -1243,7 +1191,6 @@ const ManagePackages = () => {
                         <DialogClose asChild>
                             <Button type="button" variant="outline">Cerrar</Button>
                         </DialogClose>
-                        {/* Optionally add a main save button if needed, but maybe handled per section */}
                     </DialogFooter>
                 </DialogContent>
               </Dialog>
@@ -1253,7 +1200,7 @@ const ManagePackages = () => {
 };
 
 export default function ProductSettingsPage() {
-  const [activeTab, setActiveTab] = useState("categories"); // Default to categories
+  const [activeTab, setActiveTab] = useState("categories");
 
   const handleTabChange = (value: string) => {
     setActiveTab(value);
@@ -1262,7 +1209,7 @@ export default function ProductSettingsPage() {
   return (
     <div className="flex flex-col h-full">
       <Card className="flex-grow flex flex-col shadow-md">
-        <CardHeader className="pb-4 border-b"> {/* Remove flex row */}
+        <CardHeader className="pb-4 border-b">
           <CardTitle>Ajustes de Productos y Paquetes</CardTitle>
           <CardDescription>Administra categorías, productos, modificadores y paquetes.</CardDescription>
         </CardHeader>
@@ -1270,7 +1217,7 @@ export default function ProductSettingsPage() {
           <Tabs value={activeTab} onValueChange={handleTabChange} className="h-full flex flex-col">
             <TabsList className="mb-4 shrink-0">
               <TabsTrigger value="categories">Categorías</TabsTrigger>
-              <TabsTrigger value="products">Productos</TabsTrigger>
+              <TabsTrigger value="products">Productos / Modificadores</TabsTrigger>
               <TabsTrigger value="packages">Paquetes</TabsTrigger>
             </TabsList>
 
