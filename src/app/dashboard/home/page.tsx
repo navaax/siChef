@@ -2,20 +2,19 @@
 "use client";
 
 import * as React from 'react';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { format } from 'date-fns';
-import { Pencil, XCircle, PackageIcon } from 'lucide-react'; // Icons for edit, cancel, package
-import type { SavedOrder, SavedOrderItem, SavedOrderItemComponent } from '@/types/product-types'; // Import shared types
-import { adjustInventoryStock } from '@/services/inventory-service'; // Import for potential cancellation restocking
-import { getProductById } from '@/services/product-service'; // Import for getting product details
-import { useToast } from '@/hooks/use-toast'; // Import useToast
+import { Pencil, XCircle, PackageIcon, TimerIcon, CheckCircle2, AlertTriangle } from 'lucide-react';
+import type { SavedOrder, SavedOrderItem, SavedOrderItemComponent } from '@/types/product-types';
+import { useToast } from '@/hooks/use-toast';
+import { OrderKanbanColumn } from '@/components/dashboard/home/OrderKanbanColumn';
+import type { OrderKanbanCardProps } from '@/components/dashboard/home/OrderKanbanCard'; // Import type
 
 // Helper to format currency
 const formatCurrency = (amount: number | null | undefined): string => {
@@ -35,19 +34,33 @@ const getStatusVariant = (status: SavedOrder['status']): "default" | "secondary"
   }
 };
 
+type KanbanColumnId = 'preparing' | 'delayed' | 'delivered';
+
+interface KanbanColumn {
+  id: KanbanColumnId;
+  title: string;
+  icon: React.ElementType;
+  orders: OrderKanbanCardProps[];
+}
+
 export default function HomePage() {
-  const [orders, setOrders] = useState<SavedOrder[]>([]);
+  const [allOrders, setAllOrders] = useState<SavedOrder[]>([]);
   const [selectedOrder, setSelectedOrder] = useState<SavedOrder | null>(null);
   const [isSheetOpen, setIsSheetOpen] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
   const { toast } = useToast();
 
-   // Load orders from localStorage on mount
+  const [kanbanColumns, setKanbanColumns] = useState<KanbanColumn[]>([
+    { id: 'preparing', title: 'En Preparación', icon: TimerIcon, orders: [] },
+    { id: 'delayed', title: 'Con Demora', icon: AlertTriangle, orders: [] },
+    { id: 'delivered', title: 'Entregado', icon: CheckCircle2, orders: [] },
+  ]);
+
+  // Load orders from localStorage on mount
   useEffect(() => {
     const storedOrders = localStorage.getItem('siChefOrders');
     if (storedOrders) {
       try {
-         // Parse dates correctly and ensure item structure
         const parsedOrders: SavedOrder[] = JSON.parse(storedOrders).map((order: any) => ({
             ...order,
             createdAt: new Date(order.createdAt),
@@ -63,15 +76,94 @@ export default function HomePage() {
              total: typeof order.total === 'number' ? order.total : 0,
              status: ['pending', 'completed', 'cancelled'].includes(order.status) ? order.status : 'pending',
              paymentMethod: ['cash', 'card'].includes(order.paymentMethod) ? order.paymentMethod : 'card',
-        }));
-        setOrders(parsedOrders);
+        })).sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()); // Sort by most recent
+        setAllOrders(parsedOrders);
       } catch (error) {
-         console.error("Failed to parse orders from localStorage:", error);
-         localStorage.removeItem('siChefOrders'); // Clear potentially corrupted data
-          toast({ title: "Error Loading Orders", description: "Could not load order history. Storage might be corrupted.", variant: "destructive" });
+         console.error("Fallo al parsear pedidos desde localStorage:", error);
+         localStorage.removeItem('siChefOrders'); // Limpiar datos potencialmente corruptos
+          toast({ title: "Error al Cargar Pedidos", description: "No se pudieron cargar los datos de ventas anteriores. El almacenamiento podría estar corrupto.", variant: "destructive" });
       }
     }
   }, [toast]);
+
+  const handleMoveToDelayed = useCallback((orderId: string) => {
+    setKanbanColumns(prevColumns => {
+      const newColumns = prevColumns.map(col => ({ ...col, orders: [...col.orders] }));
+      const preparingCol = newColumns.find(col => col.id === 'preparing');
+      const delayedCol = newColumns.find(col => col.id === 'delayed');
+
+      if (preparingCol && delayedCol) {
+        const orderIndex = preparingCol.orders.findIndex(o => o.order.id === orderId);
+        if (orderIndex > -1) {
+          const [orderToMove] = preparingCol.orders.splice(orderIndex, 1);
+          // Ensure orderToMove exists and is not already in delayed to prevent duplicates
+          if (orderToMove && !delayedCol.orders.some(o => o.order.id === orderToMove.order.id)) {
+             // Update the internal state of the order if necessary (e.g., add a 'isDelayed' flag for styling)
+             // For now, moving it to the column is the primary action.
+            delayedCol.orders.unshift({ ...orderToMove, isDelayed: true }); // Add to the top of delayed
+            toast({ title: "Pedido Demorado", description: `Pedido #${orderToMove.order.orderNumber} movido a 'Con Demora'.`, variant: "default" });
+          }
+        }
+      }
+      return newColumns;
+    });
+  }, [toast]);
+
+
+  // Distribute orders into Kanban columns
+  useEffect(() => {
+    const newPreparing: OrderKanbanCardProps[] = [];
+    const newDelayed: OrderKanbanCardProps[] = [];
+    const newDelivered: OrderKanbanCardProps[] = [];
+
+    allOrders.forEach(order => {
+      if (order.status === 'cancelled') {
+        // Optionally handle cancelled orders, e.g., filter them out or put in a separate list
+        return;
+      }
+
+      const cardProps: OrderKanbanCardProps = {
+        order,
+        onCardClick: () => handleRowClick(order),
+        // onMoveToDelayed: handleMoveToDelayed, // Pass this down
+        isDelayed: false // Initial state
+      };
+
+      if (order.status === 'completed') {
+        newDelivered.push(cardProps);
+      } else if (order.status === 'pending') {
+        // Check if it should already be in delayed based on current logic
+        // For now, all pending start in 'preparing' and move via handleMoveToDelayed
+        const fifteenMinutes = 15 * 60 * 1000;
+        const timeSinceCreation = Date.now() - new Date(order.createdAt).getTime();
+        if (timeSinceCreation > fifteenMinutes) {
+            // Check if it's already manually moved by inspecting existing 'delayed' column
+            // This avoids re-classifying if already in 'delayed' from a previous render
+            const isAlreadyDelayed = kanbanColumns.find(c => c.id === 'delayed')?.orders.some(o => o.order.id === order.id);
+            if (isAlreadyDelayed) {
+                 newDelayed.push({ ...cardProps, isDelayed: true});
+            } else {
+                 // This logic primarily for initial load.
+                 // Active timers on cards will call handleMoveToDelayed for transitions.
+                 newPreparing.push(cardProps); // Start in preparing, timer will move it
+            }
+        } else {
+            newPreparing.push(cardProps);
+        }
+      }
+    });
+
+    setKanbanColumns(prevColumns =>
+      prevColumns.map(col => {
+        if (col.id === 'preparing') return { ...col, orders: newPreparing.map(o => ({...o, onMoveToDelayed: () => handleMoveToDelayed(o.order.id) })) };
+        if (col.id === 'delayed') return { ...col, orders: newDelayed }; // Orders moved here will already have isDelayed true
+        if (col.id === 'delivered') return { ...col, orders: newDelivered };
+        return col;
+      })
+    );
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allOrders, handleMoveToDelayed]); // Removed kanbanColumns from deps to avoid loop with its own update
+
 
   const handleRowClick = (order: SavedOrder) => {
     setSelectedOrder(order);
@@ -79,179 +171,109 @@ export default function HomePage() {
   };
 
   const handleEditOrder = (orderId: string) => {
-    // TODO: Implement actual order editing logic
-    // This is complex: needs to load order state into create-order page, handle inventory adjustments (reversal/update),
-    // potentially restrict edits based on order status.
-    console.log(`Editing order: ${orderId}`);
+    console.log(`Editando pedido: ${orderId}`);
     toast({
-        title: "Edit Functionality Not Implemented",
-        description: "Editing completed orders requires complex state loading and inventory handling.",
+        title: "Función de Edición No Implementada",
+        description: "Editar pedidos completados requiere carga de estado compleja y manejo de inventario.",
         variant: "default",
     });
-    // router.push(`/dashboard/create-order?edit=${orderId}`); // Needs logic to load state
     setIsSheetOpen(false);
   };
 
-   const handleCancelOrder = async (orderToCancel: SavedOrder) => {
-        if (isCancelling) return; // Prevent double clicks
+  const handleCancelOrder = async (orderToCancel: SavedOrder) => {
+    if (isCancelling) return;
 
-        // Confirmation dialog before cancelling
-        if (!confirm(`Are you sure you want to cancel order #${orderToCancel.orderNumber}? This action cannot be undone and inventory will NOT be automatically restocked.`)) {
-            return;
+    if (!confirm(`¿Estás seguro que quieres cancelar el pedido #${orderToCancel.orderNumber}? Esta acción no se puede deshacer y el inventario NO se repondrá automáticamente.`)) {
+        return;
+    }
+
+    setIsCancelling(true);
+    toast({ title: "Cancelando Pedido...", description: `Procesando cancelación para el pedido #${orderToCancel.orderNumber}` });
+
+    try {
+        console.warn(`Pedido ${orderToCancel.id} cancelado. El inventario NO se repone automáticamente.`);
+        toast({ title: "Inventario No Repuesto", description: `Puede ser necesario un ajuste manual del inventario para el pedido cancelado #${orderToCancel.orderNumber}.`, variant: "default" });
+
+        setAllOrders(prevOrders => {
+            const updatedOrders = prevOrders.map(order =>
+                order.id === orderToCancel.id ? { ...order, status: 'cancelled' } : order
+            );
+            localStorage.setItem('siChefOrders', JSON.stringify(updatedOrders));
+            return updatedOrders;
+        });
+
+        if (selectedOrder && selectedOrder.id === orderToCancel.id) {
+            setSelectedOrder(prev => prev ? { ...prev, status: 'cancelled' } : null);
         }
 
-        setIsCancelling(true);
-        toast({ title: "Cancelling Order...", description: `Processing cancellation for order #${orderToCancel.orderNumber}` });
-
-        try {
-            // --- Optional: Attempt to Restock Inventory (Simplified Example) ---
-            // This is complex and prone to errors if product definitions changed.
-            // Only attempt if the order was 'completed'.
-            // if (orderToCancel.status === 'completed') {
-            //     console.warn("Attempting simplified inventory restock for cancelled order:", orderToCancel.id);
-            //     const inventoryAdjustments: Record<string, number> = {}; // Key: inventory_item_id, Value: change
-            //     // Logic similar to handleFinalizeOrder but with POSITIVE changes
-            //     // ... (fetch product details, iterate items/components, calculate positive adjustments) ...
-            //     try {
-            //         for (const [itemId, change] of Object.entries(inventoryAdjustments)) {
-            //             if (change !== 0) {
-            //                 await adjustInventoryStock(itemId, change); // Restock
-            //                 console.log(`Restocked inventory for ${itemId} by ${change}`);
-            //             }
-            //         }
-            //         toast({ title: "Inventory Restocked (Simplified)", description: `Attempted restock for cancelled order items.`, variant: "default" });
-            //     } catch (invError) {
-            //         console.error("Inventory restock failed:", invError);
-            //         toast({ title: "Inventory Restock Failed", description: `Could not automatically restock inventory. Please adjust manually.`, variant: "destructive" });
-            //         // Proceed with cancellation anyway? Or stop? Decided to proceed.
-            //     }
-            // }
-             console.warn(`Order ${orderToCancel.id} cancelled. Inventory NOT automatically restocked.`);
-             toast({ title: "Inventory Not Restocked", description: `Manual inventory adjustment may be needed for cancelled order #${orderToCancel.orderNumber}.`, variant: "default" });
-
-
-            // Update order status in state and localStorage
-            setOrders(prevOrders => {
-                const updatedOrders = prevOrders.map(order =>
-                    order.id === orderToCancel.id ? { ...order, status: 'cancelled' } : order
-                );
-                localStorage.setItem('siChefOrders', JSON.stringify(updatedOrders)); // Update localStorage
-                return updatedOrders;
-            });
-
-            // Update selected order if it's the one being cancelled
-            if (selectedOrder && selectedOrder.id === orderToCancel.id) {
-                setSelectedOrder(prev => prev ? { ...prev, status: 'cancelled' } : null);
-            }
-
-             toast({ title: "Order Cancelled", description: `Order #${orderToCancel.orderNumber} has been marked as cancelled.`, variant: "destructive" });
-            // Keep sheet open to show updated status
-
-
-        } catch (error) {
-            console.error("Error cancelling order:", error);
-            toast({ title: "Cancellation Failed", description: "An error occurred while cancelling the order.", variant: "destructive" });
-        } finally {
-            setIsCancelling(false);
-        }
-    };
-
+        toast({ title: "Pedido Cancelado", description: `El pedido #${orderToCancel.orderNumber} ha sido marcado como cancelado.`, variant: "destructive" });
+    } catch (error) {
+        console.error("Error cancelando pedido:", error);
+        toast({ title: "Falló la Cancelación", description: "Ocurrió un error mientras se cancelaba el pedido.", variant: "destructive" });
+    } finally {
+        setIsCancelling(false);
+    }
+  };
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-      {/* Main Content - Order List */}
-      <div className="md:col-span-3"> {/* Takes full width */}
-        <Card className="shadow-md">
-          <CardHeader>
-            <CardTitle>Recent Orders</CardTitle>
-            <CardDescription>List of current and past orders.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <ScrollArea className="h-[60vh] md:h-[70vh]">
-              <Table>
-                <TableHeader className="sticky top-0 bg-background z-10 shadow-sm">
-                  <TableRow>
-                    <TableHead>Order #</TableHead>
-                    <TableHead>Customer</TableHead>
-                    <TableHead>Total</TableHead>
-                    <TableHead>Payment</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Time</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {orders.length > 0 ? (
-                    orders
-                      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()) // Sort by most recent
-                      .map((order) => (
-                      <TableRow key={order.id} onClick={() => handleRowClick(order)} className="cursor-pointer hover:bg-muted/50" aria-label={`View details for order number ${order.orderNumber}`}>
-                        <TableCell className="font-medium">{order.orderNumber}</TableCell>
-                        <TableCell>{order.customerName}</TableCell>
-                        <TableCell>{formatCurrency(order.total)}</TableCell>
-                        <TableCell className="capitalize">{order.paymentMethod}</TableCell>
-                         <TableCell>
-                          <Badge variant={getStatusVariant(order.status)} className="capitalize">
-                            {order.status}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>{format(order.createdAt, 'p')}</TableCell>
-                      </TableRow>
-                    ))
-                  ) : (
-                    <TableRow>
-                      <TableCell colSpan={6} className="text-center h-24 text-muted-foreground">No orders yet.</TableCell>
-                    </TableRow>
-                  )}
-                </TableBody>
-              </Table>
-            </ScrollArea>
-          </CardContent>
-        </Card>
-      </div>
+    <div className="flex flex-col h-full">
+      <Card className="flex-grow flex flex-col shadow-md">
+        <CardHeader>
+          <CardTitle>Panel de Pedidos Activos</CardTitle>
+          <CardDescription>Visualiza y gestiona el estado de los pedidos.</CardDescription>
+        </CardHeader>
+        <CardContent className="flex-grow overflow-x-auto p-4">
+          <div className="flex gap-4 min-w-max h-full">
+            {kanbanColumns.map(column => (
+              <OrderKanbanColumn
+                key={column.id}
+                title={column.title}
+                icon={column.icon}
+                orders={column.orders}
+                columnId={column.id}
+              />
+            ))}
+          </div>
+        </CardContent>
+      </Card>
 
-      {/* Right Sidebar - Order Details */}
-       <Sheet open={isSheetOpen} onOpenChange={setIsSheetOpen}>
-        <SheetContent className="sm:max-w-lg w-[90vw] md:w-[450px] p-0 flex flex-col"> {/* Increased width slightly */}
-           {selectedOrder ? ( // Check if selectedOrder is not null
+      {/* Sheet para Detalles del Pedido */}
+      <Sheet open={isSheetOpen} onOpenChange={setIsSheetOpen}>
+        <SheetContent className="sm:max-w-lg w-[90vw] md:w-[450px] p-0 flex flex-col">
+           {selectedOrder ? (
             <>
             <ScrollArea className="flex-grow">
               <div className="p-6">
                 <SheetHeader className="mb-4">
-                  <SheetTitle>Order Details: #{selectedOrder.orderNumber}</SheetTitle>
+                  <SheetTitle>Detalles del Pedido: #{selectedOrder.orderNumber}</SheetTitle>
                   <SheetDescription>
                      ID: {selectedOrder.id} <br/>
-                     Customer: {selectedOrder.customerName} | {format(selectedOrder.createdAt, 'Pp')}
+                     Cliente: {selectedOrder.customerName} | {format(selectedOrder.createdAt, 'Pp')}
                   </SheetDescription>
                 </SheetHeader>
                 <Separator className="my-4" />
                 <div className="space-y-4">
-                  <h4 className="text-md font-semibold mb-2">Items Ordered</h4>
+                  <h4 className="text-md font-semibold mb-2">Items Pedidos</h4>
                   {selectedOrder.items.map((item, index) => (
                     <div key={`${item.id}-${index}`} className="text-sm border-b pb-3 mb-3 last:border-b-0 last:mb-0">
-                       {/* Item Header: Qty x Name and Total Item Price */}
                       <div className="flex justify-between items-start mb-1">
                         <span className="font-medium flex items-center gap-1">
-                           {/* Check if 'Contenido' exists in components to indicate package */}
-                          {item.components?.some(c => c.slotLabel === 'Contenido') && <PackageIcon className="h-4 w-4 text-accent flex-shrink-0" title="Package"/>}
+                          {item.components?.some(c => c.slotLabel === 'Contenido') && <PackageIcon className="h-4 w-4 text-accent flex-shrink-0" title="Paquete"/>}
                           {item.quantity}x {item.name}
                         </span>
                         <span className="font-medium">{formatCurrency(item.totalItemPrice)}</span>
                       </div>
-                       {/* Base Price Info */}
                        <div className="text-xs text-muted-foreground mb-1.5">
-                           (Base: {formatCurrency(item.price)} each)
+                           (Base: {formatCurrency(item.price)} c/u)
                        </div>
-                       {/* Components/Modifiers List */}
                       {item.components && item.components.length > 0 && (
                         <div className="text-xs text-muted-foreground ml-4 mt-1 space-y-0.5">
-                           {/* Check if 'Contenido' exists to decide title */}
                            <span className="font-medium text-foreground">
-                             {item.components.some(c => c.slotLabel === 'Contenido') ? 'Contents / Modifiers:' : 'Modifiers:'}
+                             {item.components.some(c => c.slotLabel === 'Contenido') ? 'Contenido / Modificadores:' : 'Modificadores:'}
                             </span>
                            <ul className="list-disc list-inside pl-2">
                             {item.components.map((comp, compIdx) => (
                                 <li key={compIdx}>
-                                     {/* Display slot label if it exists and isn't generic */}
                                      {comp.slotLabel && comp.slotLabel !== 'Mod' && comp.slotLabel !== 'Contenido' && `[${comp.slotLabel}] `}
                                      {comp.name}
                                 </li>
@@ -263,38 +285,35 @@ export default function HomePage() {
                   ))}
                 </div>
                 <Separator className="my-4" />
-                {/* Financial Summary */}
                 <div>
                    <div className="flex justify-between text-sm mt-1">
                     <span>Subtotal:</span>
                     <span>{formatCurrency(selectedOrder.subtotal)}</span>
                   </div>
-                  {/* Add Tax/Discount lines here if applicable later */}
                   <div className="flex justify-between font-semibold mt-1 text-base">
                     <span>Total:</span>
                     <span>{formatCurrency(selectedOrder.total)}</span>
                   </div>
                    <div className="flex justify-between text-sm mt-1">
-                    <span>Payment Method:</span>
+                    <span>Forma de Pago:</span>
                     <span className="capitalize">{selectedOrder.paymentMethod}</span>
                   </div>
-                  {selectedOrder.paymentMethod === 'cash' && selectedOrder.paidAmount != null && ( // Check for null/undefined
+                  {selectedOrder.paymentMethod === 'cash' && selectedOrder.paidAmount != null && (
                      <>
                        <div className="flex justify-between text-sm mt-1">
-                         <span>Amount Paid:</span>
+                         <span>Monto Pagado:</span>
                          <span>{formatCurrency(selectedOrder.paidAmount)}</span>
                        </div>
-                        {/* Only show change if it was calculated and non-zero */}
                        {(selectedOrder.changeGiven ?? 0) > 0 && (
                             <div className="flex justify-between text-sm mt-1 text-accent font-medium">
-                                <span>Change Given:</span>
+                                <span>Cambio Entregado:</span>
                                 <span>{formatCurrency(selectedOrder.changeGiven)}</span>
                             </div>
                        )}
                      </>
                    )}
                    <div className="flex justify-between text-sm mt-1 items-center">
-                      <span>Status:</span>
+                      <span>Estado:</span>
                       <Badge variant={getStatusVariant(selectedOrder.status)} className="capitalize">
                         {selectedOrder.status}
                       </Badge>
@@ -303,31 +322,27 @@ export default function HomePage() {
               </div>
             </ScrollArea>
 
-             {/* Action buttons only if order is NOT cancelled */}
             {selectedOrder.status !== 'cancelled' && (
                <div className="p-6 border-t mt-auto bg-muted/30">
                  <div className="flex justify-end gap-2">
-                    {/* Edit Button - Placeholder/Disabled */}
                     <Button variant="outline" size="sm" onClick={() => handleEditOrder(selectedOrder!.id)} disabled>
-                        <Pencil className="mr-2 h-4 w-4" /> Edit (Disabled)
+                        <Pencil className="mr-2 h-4 w-4" /> Editar (Deshabilitado)
                     </Button>
-                    {/* Cancel Button */}
                     <Button variant="destructive" size="sm" onClick={() => handleCancelOrder(selectedOrder!)} disabled={isCancelling}>
-                        <XCircle className="mr-2 h-4 w-4" /> {isCancelling ? 'Cancelling...' : 'Cancel Order'}
+                        <XCircle className="mr-2 h-4 w-4" /> {isCancelling ? 'Cancelando...' : 'Cancelar Pedido'}
                     </Button>
                  </div>
-                 <p className="text-xs text-muted-foreground mt-2 text-right">Note: Cancelling does not automatically restock inventory.</p>
+                 <p className="text-xs text-muted-foreground mt-2 text-right">Nota: Cancelar no repone automáticamente el inventario.</p>
                 </div>
             )}
-             {/* Message if order is cancelled */}
              {selectedOrder.status === 'cancelled' && (
                 <div className="p-6 border-t mt-auto bg-destructive/10 text-center">
-                    <p className="text-sm font-medium text-destructive">This order has been cancelled.</p>
+                    <p className="text-sm font-medium text-destructive">Este pedido ha sido cancelado.</p>
                  </div>
              )}
             </>
-           ) : ( // Show this if selectedOrder is null
-                <div className="p-6 text-center text-muted-foreground flex items-center justify-center h-full">Select an order to view details.</div>
+           ) : (
+                <div className="p-6 text-center text-muted-foreground flex items-center justify-center h-full">Selecciona un pedido para ver detalles.</div>
            )}
         </SheetContent>
       </Sheet>

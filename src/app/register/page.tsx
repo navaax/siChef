@@ -98,7 +98,7 @@ export default function RegisterPage() {
                     <FormItem>
                       <FormLabel>PIN (mín. 4 dígitos)</FormLabel>
                       <FormControl>
-                        <Input type="password" placeholder="Crea un PIN numérico" {...field} inputMode='numeric' />
+                        <Input type="password" placeholder="Crea un PIN numérico" {...field} inputMode='numeric' keyboardType='number-pad' />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
