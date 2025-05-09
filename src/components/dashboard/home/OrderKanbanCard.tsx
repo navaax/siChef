@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Badge } from '@/components/ui/badge';
 import { Timer, PackageIcon, User, DollarSign, AlertTriangle } from 'lucide-react';
 import type { SavedOrder } from '@/types/product-types';
-import { formatDistanceToNowStrict, intervalToDuration } from 'date-fns';
+import { formatDistanceToNowStrict, intervalToDuration, format } from 'date-fns'; // Added format
 import { es } from 'date-fns/locale'; // Import Spanish locale for date-fns
 import { cn } from '@/lib/utils';
 
