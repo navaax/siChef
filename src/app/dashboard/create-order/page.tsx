@@ -971,7 +971,7 @@ export default function CreateOrderPage() {
       paymentMethod: currentOrder.paymentMethod,
       subtotal: currentOrder.subtotal,
       total: currentOrder.total,
-      status: 'completed', // Marcar como completado directamente para inventario
+      status: 'pending', // CAMBIADO: El estado inicial es 'pending'
       createdAt: new Date(),
       paidAmount: currentOrder.paidAmount,
       changeGiven: currentOrder.changeDue,

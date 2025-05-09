@@ -10,7 +10,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { format } from 'date-fns';
-import { Pencil, XCircle, PackageIcon, TimerIcon, CheckCircle2, AlertTriangle } from 'lucide-react';
+import { Pencil, XCircle, PackageIcon, TimerIcon, CheckCircle2, AlertTriangle, Loader2 } from 'lucide-react'; // Added Loader2
 import type { SavedOrder, SavedOrderItem, SavedOrderItemComponent } from '@/types/product-types';
 import { useToast } from '@/hooks/use-toast';
 import { OrderKanbanColumn } from '@/components/dashboard/home/OrderKanbanColumn';
@@ -48,6 +48,7 @@ export default function HomePage() {
   const [selectedOrder, setSelectedOrder] = useState<SavedOrder | null>(null);
   const [isSheetOpen, setIsSheetOpen] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
+  const [isUpdatingStatus, setIsUpdatingStatus] = useState(false); // New state for status updates
   const { toast } = useToast();
 
   const [kanbanColumns, setKanbanColumns] = useState<KanbanColumn[]>([
@@ -96,11 +97,8 @@ export default function HomePage() {
         const orderIndex = preparingCol.orders.findIndex(o => o.order.id === orderId);
         if (orderIndex > -1) {
           const [orderToMove] = preparingCol.orders.splice(orderIndex, 1);
-          // Ensure orderToMove exists and is not already in delayed to prevent duplicates
           if (orderToMove && !delayedCol.orders.some(o => o.order.id === orderToMove.order.id)) {
-             // Update the internal state of the order if necessary (e.g., add a 'isDelayed' flag for styling)
-             // For now, moving it to the column is the primary action.
-            delayedCol.orders.unshift({ ...orderToMove, isDelayed: true }); // Add to the top of delayed
+            delayedCol.orders.unshift({ ...orderToMove, isDelayed: true });
             toast({ title: "Pedido Demorado", description: `Pedido #${orderToMove.order.orderNumber} movido a 'Con Demora'.`, variant: "default" });
           }
         }
@@ -118,35 +116,23 @@ export default function HomePage() {
 
     allOrders.forEach(order => {
       if (order.status === 'cancelled') {
-        // Optionally handle cancelled orders, e.g., filter them out or put in a separate list
         return;
       }
+
+      const isCurrentlyInDelayedVisualColumn = kanbanColumns.find(col => col.id === 'delayed')?.orders.some(o => o.order.id === order.id);
 
       const cardProps: OrderKanbanCardProps = {
         order,
         onCardClick: () => handleRowClick(order),
-        // onMoveToDelayed: handleMoveToDelayed, // Pass this down
-        isDelayed: false // Initial state
+        onMoveToDelayed: () => handleMoveToDelayed(order.id),
+        isDelayed: isCurrentlyInDelayedVisualColumn || false,
       };
 
       if (order.status === 'completed') {
         newDelivered.push(cardProps);
       } else if (order.status === 'pending') {
-        // Check if it should already be in delayed based on current logic
-        // For now, all pending start in 'preparing' and move via handleMoveToDelayed
-        const fifteenMinutes = 15 * 60 * 1000;
-        const timeSinceCreation = Date.now() - new Date(order.createdAt).getTime();
-        if (timeSinceCreation > fifteenMinutes) {
-            // Check if it's already manually moved by inspecting existing 'delayed' column
-            // This avoids re-classifying if already in 'delayed' from a previous render
-            const isAlreadyDelayed = kanbanColumns.find(c => c.id === 'delayed')?.orders.some(o => o.order.id === order.id);
-            if (isAlreadyDelayed) {
-                 newDelayed.push({ ...cardProps, isDelayed: true});
-            } else {
-                 // This logic primarily for initial load.
-                 // Active timers on cards will call handleMoveToDelayed for transitions.
-                 newPreparing.push(cardProps); // Start in preparing, timer will move it
-            }
+        if (isCurrentlyInDelayedVisualColumn) {
+            newDelayed.push({ ...cardProps, isDelayed: true });
         } else {
             newPreparing.push(cardProps);
         }
@@ -155,14 +141,14 @@ export default function HomePage() {
 
     setKanbanColumns(prevColumns =>
       prevColumns.map(col => {
-        if (col.id === 'preparing') return { ...col, orders: newPreparing.map(o => ({...o, onMoveToDelayed: () => handleMoveToDelayed(o.order.id) })) };
-        if (col.id === 'delayed') return { ...col, orders: newDelayed }; // Orders moved here will already have isDelayed true
+        if (col.id === 'preparing') return { ...col, orders: newPreparing };
+        if (col.id === 'delayed') return { ...col, orders: newDelayed };
         if (col.id === 'delivered') return { ...col, orders: newDelivered };
         return col;
       })
     );
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allOrders, handleMoveToDelayed]); // Removed kanbanColumns from deps to avoid loop with its own update
+  }, [allOrders, handleMoveToDelayed]);
 
 
   const handleRowClick = (order: SavedOrder) => {
@@ -174,14 +160,14 @@ export default function HomePage() {
     console.log(`Editando pedido: ${orderId}`);
     toast({
         title: "Función de Edición No Implementada",
-        description: "Editar pedidos completados requiere carga de estado compleja y manejo de inventario.",
+        description: "Editar pedidos requiere manejo de estado complejo y de inventario.",
         variant: "default",
     });
     setIsSheetOpen(false);
   };
 
   const handleCancelOrder = async (orderToCancel: SavedOrder) => {
-    if (isCancelling) return;
+    if (isCancelling || isUpdatingStatus) return;
 
     if (!confirm(`¿Estás seguro que quieres cancelar el pedido #${orderToCancel.orderNumber}? Esta acción no se puede deshacer y el inventario NO se repondrá automáticamente.`)) {
         return;
@@ -191,6 +177,7 @@ export default function HomePage() {
     toast({ title: "Cancelando Pedido...", description: `Procesando cancelación para el pedido #${orderToCancel.orderNumber}` });
 
     try {
+        // Aquí NO se repone el inventario automáticamente.
         console.warn(`Pedido ${orderToCancel.id} cancelado. El inventario NO se repone automáticamente.`);
         toast({ title: "Inventario No Repuesto", description: `Puede ser necesario un ajuste manual del inventario para el pedido cancelado #${orderToCancel.orderNumber}.`, variant: "default" });
 
@@ -214,6 +201,39 @@ export default function HomePage() {
         setIsCancelling(false);
     }
   };
+
+  const handleUpdateOrderStatus = async (orderId: string, newStatus: SavedOrder['status']) => {
+    if (isUpdatingStatus || isCancelling) return;
+
+    setIsUpdatingStatus(true);
+    toast({ title: "Actualizando Estado...", description: `Cambiando estado del pedido a '${newStatus}'.`});
+
+    try {
+        setAllOrders(prevOrders => {
+            const updatedOrders = prevOrders.map(order =>
+                order.id === orderId ? { ...order, status: newStatus } : order
+            );
+            localStorage.setItem('siChefOrders', JSON.stringify(updatedOrders));
+            return updatedOrders;
+        });
+
+        if (selectedOrder && selectedOrder.id === orderId) {
+            setSelectedOrder(prev => prev ? { ...prev, status: newStatus } : null);
+        }
+         // Cerrar el sheet después de la acción si aún está abierto
+        if (newStatus === 'completed') {
+            setIsSheetOpen(false);
+        }
+
+        toast({ title: "Estado Actualizado", description: `El pedido #${selectedOrder?.orderNumber || orderId} ahora está '${newStatus}'.` });
+    } catch (error) {
+        console.error("Error actualizando estado del pedido:", error);
+        toast({ title: "Falló la Actualización", description: "Ocurrió un error al cambiar el estado del pedido.", variant: "destructive" });
+    } finally {
+        setIsUpdatingStatus(false);
+    }
+  };
+
 
   return (
     <div className="flex flex-col h-full">
@@ -322,14 +342,33 @@ export default function HomePage() {
               </div>
             </ScrollArea>
 
-            {selectedOrder.status !== 'cancelled' && (
+            {selectedOrder.status !== 'cancelled' && selectedOrder.status !== 'completed' && (
                <div className="p-6 border-t mt-auto bg-muted/30">
-                 <div className="flex justify-end gap-2">
-                    <Button variant="outline" size="sm" onClick={() => handleEditOrder(selectedOrder!.id)} disabled>
+                 <div className="flex flex-col sm:flex-row justify-end gap-2">
+                    {selectedOrder.status === 'pending' && ( // O si está en 'delayed' que también es 'pending'
+                        <Button
+                            variant="default"
+                            size="sm"
+                            onClick={() => handleUpdateOrderStatus(selectedOrder!.id, 'completed')}
+                            disabled={isUpdatingStatus || isCancelling}
+                            className="flex-grow sm:flex-grow-0"
+                        >
+                            {isUpdatingStatus && !isCancelling ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-2 h-4 w-4" />}
+                            Marcar como Entregado
+                        </Button>
+                    )}
+                    <Button variant="outline" size="sm" onClick={() => handleEditOrder(selectedOrder!.id)} disabled className="flex-grow sm:flex-grow-0">
                         <Pencil className="mr-2 h-4 w-4" /> Editar (Deshabilitado)
                     </Button>
-                    <Button variant="destructive" size="sm" onClick={() => handleCancelOrder(selectedOrder!)} disabled={isCancelling}>
-                        <XCircle className="mr-2 h-4 w-4" /> {isCancelling ? 'Cancelando...' : 'Cancelar Pedido'}
+                    <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={() => handleCancelOrder(selectedOrder!)}
+                        disabled={isCancelling || isUpdatingStatus}
+                        className="flex-grow sm:flex-grow-0"
+                    >
+                        {isCancelling ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <XCircle className="mr-2 h-4 w-4" />}
+                        Cancelar Pedido
                     </Button>
                  </div>
                  <p className="text-xs text-muted-foreground mt-2 text-right">Nota: Cancelar no repone automáticamente el inventario.</p>
@@ -338,6 +377,11 @@ export default function HomePage() {
              {selectedOrder.status === 'cancelled' && (
                 <div className="p-6 border-t mt-auto bg-destructive/10 text-center">
                     <p className="text-sm font-medium text-destructive">Este pedido ha sido cancelado.</p>
+                 </div>
+             )}
+             {selectedOrder.status === 'completed' && (
+                <div className="p-6 border-t mt-auto bg-green-500/10 text-center">
+                    <p className="text-sm font-medium text-green-700">Este pedido ha sido completado.</p>
                  </div>
              )}
             </>
