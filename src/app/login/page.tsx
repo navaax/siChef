@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from 'react';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react'; // Import useRef
 import { useRouter } from 'next/navigation';
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
@@ -33,6 +33,7 @@ export default function LoginPage() {
   const router = useRouter();
   const { toast } = useToast();
   const { login } = useAuth();
+  const hiddenPinInputRef = useRef<HTMLInputElement>(null); // Create ref for hidden PIN input
 
   useEffect(() => {
     const users: string[] = [];
@@ -48,6 +49,13 @@ export default function LoginPage() {
     }
   }, []);
 
+  // Focus the hidden PIN input when a user is selected
+  useEffect(() => {
+    if (selectedUser && hiddenPinInputRef.current) {
+      hiddenPinInputRef.current.focus();
+    }
+  }, [selectedUser]);
+
 
   const form = useForm<LoginFormValues>({
     resolver: zodResolver(loginSchema),
@@ -59,7 +67,7 @@ export default function LoginPage() {
 
   const onSubmitManual = async (data: LoginFormValues) => {
     setIsLoading(true);
-    await new Promise(resolve => setTimeout(resolve, 500)); 
+    await new Promise(resolve => setTimeout(resolve, 500));
 
     const storedPin = localStorage.getItem(`siChefPin_${data.username}`);
     if (storedPin && storedPin === data.pin) {
@@ -89,7 +97,7 @@ export default function LoginPage() {
       return;
     }
     setIsLoading(true);
-    await new Promise(resolve => setTimeout(resolve, 500)); 
+    await new Promise(resolve => setTimeout(resolve, 500));
 
     const storedPin = localStorage.getItem(`siChefPin_${selectedUser}`);
     if (storedPin && storedPin === pinInput) {
@@ -105,15 +113,16 @@ export default function LoginPage() {
         title: "Inicio de Sesión Fallido",
         description: "PIN incorrecto.",
       });
-       setPinInput('');
+       setPinInput(''); // Clear PIN input on failure
+       hiddenPinInputRef.current?.focus(); // Re-focus input
     }
     setIsLoading(false);
   };
 
   const handleUserSelect = (username: string) => {
     setSelectedUser(username);
-    setPinInput(''); 
-    setShowManualForm(false); 
+    setPinInput('');
+    setShowManualForm(false);
   };
 
   const handleGoBack = () => {
@@ -122,6 +131,7 @@ export default function LoginPage() {
     if (savedUsers.length > 0) {
       setShowManualForm(false);
     } else {
+      // Should ideally not happen if savedUsers is empty, manual form would be shown
       setShowManualForm(true);
     }
   };
@@ -131,22 +141,39 @@ export default function LoginPage() {
     setShowManualForm(true);
   };
 
+  // Handler to focus the hidden input when the PIN box container is clicked
+  const handlePinBoxContainerClick = () => {
+    hiddenPinInputRef.current?.focus();
+  };
+
   const renderPinInput = () => (
-    <div className="space-y-6"> {/* Increased spacing */}
+    <div className="space-y-6">
       <Button variant="ghost" size="sm" onClick={handleGoBack} className="absolute top-4 left-4 text-muted-foreground">
         <ChevronLeft className="mr-1 h-4 w-4" /> Volver
       </Button>
       <div className="flex flex-col items-center text-center pt-8">
-        <User className="h-16 w-16 mb-3 text-primary" /> {/* Larger icon */}
+        <User className="h-16 w-16 mb-3 text-primary" />
         <p className="text-xl font-semibold">{selectedUser}</p>
-        <p className="text-md text-muted-foreground mb-6">Introduce tu PIN</p> {/* Adjusted margin */}
-        
-        {/* PIN input squares */}
-        <div className="flex justify-center space-x-2 mb-6">
-          {Array.from({ length: 6 }).map((_, index) => ( // Display 6 boxes consistently
+        <p className="text-md text-muted-foreground mb-6">Introduce tu PIN</p>
+
+        {/* PIN input squares - made clickable */}
+        <div
+          className="flex justify-center space-x-2 mb-6 cursor-text" // Added cursor-text for better UX
+          onClick={handlePinBoxContainerClick} // Focus hidden input on click
+          role="button" // Accessibility: treat as a button-like element
+          tabIndex={0} // Make it focusable via keyboard
+          onKeyDown={(e) => { // Allow focusing with keyboard Enter/Space
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault(); // Prevent page scroll on Space
+              handlePinBoxContainerClick();
+            }
+          }}
+          aria-label="Contenedor de entrada de PIN, haz clic o presiona Enter para escribir"
+        >
+          {Array.from({ length: 6 }).map((_, index) => (
             <div
               key={index}
-              className="w-12 h-14 bg-input/50 rounded-md flex items-center justify-center text-2xl font-mono border border-input"
+              className="w-12 h-14 bg-input/50 rounded-md flex items-center justify-center text-2xl font-mono border border-input pointer-events-none" // pointer-events-none so click goes to parent
             >
               {pinInput[index] ? '•' : ''}
             </div>
@@ -154,22 +181,23 @@ export default function LoginPage() {
         </div>
          {/* Hidden actual input for PIN */}
          <Input
-            type="password"
+            ref={hiddenPinInputRef}
+            id="hidden-pin-input" // Added id for potential label association
+            type="tel" // Use 'tel' for numeric keypad on mobile
             value={pinInput}
             onChange={(e) => {
               const value = e.target.value.replace(/\D/g, ''); // Only allow digits
-              if (value.length <= 6) setPinInput(value); // Ensure maxLength is respected
+              if (value.length <= 6) setPinInput(value);
             }}
-            placeholder="----"
-            className="absolute -left-[9999px] opacity-0 w-px h-px" // Visually hidden but focusable, 1px dimensions
-            autoFocus
+            className="absolute -left-[9999px] opacity-0 w-px h-px" // Visually hidden but focusable
             inputMode='numeric'
-            maxLength={6} 
+            maxLength={6}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && pinInput.length >= 4) {
                 handlePinLogin();
               }
             }}
+            aria-hidden="true" // Hide from assistive technologies
           />
         <Button onClick={handlePinLogin} className="w-full max-w-xs" disabled={isLoading || pinInput.length < 4}>
           {isLoading ? "Iniciando sesión..." : "Entrar"}
@@ -177,7 +205,7 @@ export default function LoginPage() {
       </div>
     </div>
   );
-  
+
   const renderUserSelection = () => (
     <div className='space-y-4'>
        <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
@@ -185,7 +213,7 @@ export default function LoginPage() {
           <Button
             key={user}
             variant="outline"
-            className="flex flex-col items-center justify-center h-28 p-4 text-center shadow-sm hover:shadow-md transition-shadow" // Enhanced style
+            className="flex flex-col items-center justify-center h-28 p-4 text-center shadow-sm hover:shadow-md transition-shadow"
             onClick={() => handleUserSelect(user)}
           >
             <User className="h-10 w-10 mb-2 text-muted-foreground" />
@@ -201,9 +229,9 @@ export default function LoginPage() {
 
   const renderManualForm = () => (
     <Form {...form}>
-        <form onSubmit={form.handleSubmit(onSubmitManual)} className="space-y-4">
-            {savedUsers.length > 0 && (
-                 <Button variant="ghost" size="sm" onClick={handleGoBack} className="absolute top-4 left-4 text-muted-foreground">
+        <form onSubmit={form.handleSubmit(onSubmitManual)} className="space-y-4 relative"> {/* Added relative for back button positioning if needed */}
+            {savedUsers.length > 0 && ( // Show back button only if there are saved users to go back to
+                 <Button variant="ghost" size="sm" onClick={handleGoBack} className="absolute top-0 left-0 text-muted-foreground -mt-4 -ml-2"> {/* Adjusted positioning */}
                     <ChevronLeft className="mr-1 h-4 w-4" /> Volver a Usuarios
                  </Button>
             )}
@@ -241,26 +269,25 @@ export default function LoginPage() {
   );
 
   return (
-    // Incorporating centering styles from AuthLayout
     <div className="flex min-h-screen items-center justify-center bg-secondary p-4">
-      <div className="w-full max-w-lg"> {/* Added a container for better centering on larger screens */}
+      <div className="w-full max-w-lg">
         <h1 className="absolute top-10 left-1/2 -translate-x-1/2 text-5xl font-bold text-primary opacity-0 animate-fadeInUp md:text-6xl">
           siChef
           <span className="align-super text-sm font-semibold text-accent opacity-80 md:text-base">
             POS <span className="text-xs">&copy;</span>
           </span>
         </h1>
-        <Card className="w-full shadow-xl relative"> {/* Increased shadow, relative for back button */}
+        <Card className="w-full shadow-xl relative">
           <CardHeader className="space-y-1 text-center">
-            <KeyRound className="mx-auto h-10 w-10 text-primary mb-2" /> {/* Icon */}
-            <CardTitle className="text-3xl font-bold">Acceso siChef</CardTitle> {/* Larger title */}
+            <KeyRound className="mx-auto h-10 w-10 text-primary mb-2" />
+            <CardTitle className="text-3xl font-bold">Acceso siChef</CardTitle>
             {!selectedUser && <CardDescription className="text-md">
               {showManualForm || savedUsers.length === 0
                 ? "Introduce tus credenciales"
                 : "Selecciona tu perfil para continuar"}
             </CardDescription>}
           </CardHeader>
-          <CardContent className="p-6"> {/* Added padding */}
+          <CardContent className="p-6">
             {selectedUser ? renderPinInput() : (showManualForm || savedUsers.length === 0 ? renderManualForm() : renderUserSelection())}
 
             {!selectedUser && (
