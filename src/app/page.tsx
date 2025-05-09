@@ -6,9 +6,17 @@ import { redirect } from 'next/navigation';
 
 export default function RootPage() {
   useEffect(() => {
+    // Check for active session
+    const storedUsername = localStorage.getItem('siChefUsername');
+    
     const timer = setTimeout(() => {
-      redirect('/login');
+      if (storedUsername) {
+        redirect('/dashboard/home');
+      } else {
+        redirect('/login');
+      }
     }, 2500); // Adjusted delay to allow animation to play
+
     return () => clearTimeout(timer); // Cleanup timer on unmount
   }, []);
 
@@ -18,7 +26,7 @@ export default function RootPage() {
         <h1 className="text-7xl sm:text-8xl md:text-9xl font-bold text-primary">
           siChef
           <span className="align-super text-lg sm:text-xl md:text-2xl font-semibold text-accent opacity-80 ml-1">
-            pos c
+            POS ©
           </span>
         </h1>
         {/* Optional: a subtle loading spinner or message below if desired */}
