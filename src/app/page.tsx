@@ -1,33 +1,22 @@
 // src/app/page.tsx
 'use client';
 
-import { useEffect } from 'react';
 import { redirect } from 'next/navigation';
+import { useEffect } from 'react'; // Import useEffect
 
 export default function RootPage() {
+  // Esta página es principalmente para la carga inicial o redirección.
+  // En una aplicación real, esta verificación y redirección podrían manejarse mejor en middleware o componentes de servidor.
+
   useEffect(() => {
-    let storedUsername: string | null = null;
-    try {
-      storedUsername = localStorage.getItem('siChefUsername');
-      console.log('RootPage: localStorage siChefUsername =', storedUsername);
-    } catch (e) {
-      console.error("RootPage: Error accessing localStorage:", e);
-      // Default to redirecting to login if localStorage is inaccessible
-      storedUsername = null;
-    }
-
+    // Retrasar la redirección para permitir que se muestre la animación
     const timer = setTimeout(() => {
-      if (storedUsername) {
-        console.log("RootPage: User found in localStorage, redirecting to /dashboard/home...");
-        redirect('/dashboard/home');
-      } else {
-        console.log("RootPage: No user in localStorage or error accessing, redirecting to /login...");
-        redirect('/login');
-      }
-    }, 2500); // Adjusted delay to allow animation to play
+      redirect('/login');
+    }, 2500); // Retraso de 2.5 segundos (ajustar según sea necesario)
 
-    return () => clearTimeout(timer); // Cleanup timer on unmount
-  }, []);
+    // Limpiar el temporizador si el componente se desmonta antes de que se complete
+    return () => clearTimeout(timer);
+  }, []); // El array de dependencias vacío asegura que esto se ejecute solo una vez al montar
 
   return (
     <main className="flex flex-col min-h-screen items-center justify-center bg-background text-foreground">
@@ -38,7 +27,7 @@ export default function RootPage() {
             POS <span className="text-xs">&copy;</span>
           </span>
         </h1>
-        {/* Optional: a subtle loading spinner or message below if desired */}
+        {/* Opcional: un sutil spinner de carga o mensaje debajo si se desea */}
         {/* <p className="mt-4 text-muted-foreground animate-pulse">Cargando...</p> */}
       </div>
     </main>
