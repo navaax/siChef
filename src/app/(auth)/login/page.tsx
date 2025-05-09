@@ -242,6 +242,10 @@ export default function LoginPage() {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-secondary">
+      <h1 className="absolute top-10 text-4xl font-bold opacity-0 animate-fadeInUp">
+        siChef
+        <span className="align-super text-xs opacity-70">pos c</span>
+      </h1>
       <Card className="w-full max-w-md mx-auto shadow-lg relative"> {/* Added relative for back button positioning */}
         <CardHeader className="space-y-1 text-center">
           <CardTitle className="text-2xl font-bold">siChef POS - Login</CardTitle>

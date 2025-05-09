@@ -6,6 +6,18 @@ body {
   font-family: Arial, Helvetica, sans-serif;
 }
 
+/* Enhanced fadeInUp animation */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px); /* Start slightly lower */
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0); /* Move to original position */
+  }
+}
+
 @layer base {
   :root {
     --background: 0 0% 100%; /* White */
@@ -70,4 +82,18 @@ body {
   body {
     @apply bg-background text-foreground;
   }
+}
+
+/* Apply animation to the h1 and span elements on the main loading page */
+main h1 {
+  animation: fadeInUp 1s ease-out 0.2s forwards; /* Main text animation with slight delay */
+}
+
+main h1 span {
+  animation: fadeInUp 1s ease-out 0.5s forwards; /* Span animation with further delay */
+}
+
+/* Initially hide the elements to prevent flash before animation */
+main h1, main h1 span {
+  opacity: 0;
 }
