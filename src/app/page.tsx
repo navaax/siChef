@@ -11,31 +11,34 @@ export default function RootPage() {
   const { username, isLoadingAuth } = useAuth();
 
   useEffect(() => {
+    console.log('[RootPage] useEffect triggered. isLoadingAuth:', isLoadingAuth, 'Username:', username);
     const splashSeen = localStorage.getItem('hasSeenSiChefSplash') === 'true';
+    console.log('[RootPage] Splash seen:', splashSeen);
 
-    if (!splashSeen) {
-      // console.log("Splash not seen, setting flag and redirecting to /loading-splash");
-      localStorage.setItem('hasSeenSiChefSplash', 'true');
-      router.replace('/loading-splash'); // Redirige a /loading-splash
-      return; 
-    }
-
-    // Si ya se vio el splash, esperar a que cargue la autenticación
     if (isLoadingAuth) {
-      // console.log("Auth is loading, waiting...");
-      return; // Esperar a que termine de cargar la autenticación
+      console.log('[RootPage] Auth is loading, waiting...');
+      return; // Wait for auth to load
     }
 
-    // La autenticación ha cargado, ahora tomar decisión
-    // console.log("Auth loaded. Username:", username);
-    if (username) {
-      router.replace('/dashboard/home'); // Redirige a /dashboard/home
+    // Auth has loaded
+    if (!splashSeen) {
+      console.log('[RootPage] Splash not seen, setting flag and redirecting to /loading-splash');
+      localStorage.setItem('hasSeenSiChefSplash', 'true');
+      router.replace('/loading-splash');
     } else {
-      router.replace('/login'); // Corregido: Redirige a /login (antes /auth/login)
+      // Splash has been seen, route based on auth
+      console.log('[RootPage] Splash seen. Auth loaded. Username:', username);
+      if (username) {
+        console.log('[RootPage] User authenticated, redirecting to /dashboard/home');
+        router.replace('/dashboard/home');
+      } else {
+        console.log('[RootPage] User not authenticated, redirecting to /login');
+        router.replace('/login');
+      }
     }
   }, [router, username, isLoadingAuth]);
 
-  // Renderizar un indicador de carga simple mientras ocurren las verificaciones/redirecciones
+  // Render a loading indicator while useEffect runs and decides where to redirect
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-background text-foreground">
       <Loader2 className="h-12 w-12 animate-spin text-primary" />
