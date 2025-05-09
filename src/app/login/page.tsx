@@ -143,7 +143,7 @@ export default function LoginPage() {
         
         {/* PIN input squares */}
         <div className="flex justify-center space-x-2 mb-6">
-          {Array.from({ length: Math.max(4, pinInput.length) }).map((_, index) => (
+          {Array.from({ length: 6 }).map((_, index) => ( // Display 6 boxes consistently
             <div
               key={index}
               className="w-12 h-14 bg-input/50 rounded-md flex items-center justify-center text-2xl font-mono border border-input"
@@ -158,13 +158,13 @@ export default function LoginPage() {
             value={pinInput}
             onChange={(e) => {
               const value = e.target.value.replace(/\D/g, ''); // Only allow digits
-              setPinInput(value);
+              if (value.length <= 6) setPinInput(value); // Ensure maxLength is respected
             }}
             placeholder="----"
-            className="absolute -left-[9999px] opacity-0 w-0 h-0" // Visually hidden but focusable
+            className="absolute -left-[9999px] opacity-0 w-px h-px" // Visually hidden but focusable, 1px dimensions
             autoFocus
             inputMode='numeric'
-            maxLength={6} // Example max length for PIN
+            maxLength={6} 
             onKeyDown={(e) => {
               if (e.key === 'Enter' && pinInput.length >= 4) {
                 handlePinLogin();
