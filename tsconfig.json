@@ -1,3 +1,26 @@
 {
-  "extends": "@react-native/typescript-config/tsconfig.json"
+  "compilerOptions": {
+    "target": "esnext", // O una versión de ECMAScript adecuada para tu proyecto
+    "module": "commonjs", // O "esnext", dependiendo de tu configuración
+    "lib": ["esnext", "dom"], // O las librerías que necesites
+    "allowJs": true,
+    "jsx": "react-native", // <-- ¡Esta línea es la importante!
+    "noEmit": true, // Generalmente true en proyectos donde el bundler (Metro) hace la compilación final
+    "isolatedModules": true, // Útil para asegurar que los archivos son módulos independientes
+    "strict": true, // Se recomienda tener strict activado
+    "moduleResolution": "node",
+    "resolveJsonModule": true,
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true
+    // ... otras opciones ...
+  },
+  "extends": "@react-native/typescript-config", // Si usaste la plantilla por defecto de React Native
+  "exclude": [
+    "node_modules",
+    "babel.config.js",
+    "metro.config.js",
+    "jest.config.js"
+  ]
 }
