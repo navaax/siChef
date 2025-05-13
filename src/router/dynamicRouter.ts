@@ -1,7 +1,7 @@
 // src/componentesMap.ts
-// import Splash from '../pantallas/Splash/Splash';
-// import Login from '../pantallas/Login/Login';
-// import Registro from '../pantallas/Registro/Registro';
+import SplashScreen from '../pantallas/SplashScreen/SplashScreen.main'; // Importacion SplashScreen
+import LoginScreen from '../pantallas/LoginScreen/LoginScreen.main'; // Importacion LoginScreen
+import RegisterScreen from '../pantallas/RegisterScreen/RegisterScreen.main'; // Importacion RegisterScreen
 import WelcomeScreen from '../pantallas/WelcomeScreen/WelcomeScreen.main'; // Ruta corregida
 import LoadingScreen from '../pantallas/LoadingScreen/LoadingScreen.main'; // Ruta corregida
 import CreateBusinessScreen from '../pantallas/CreateBusinessScreen/CreateBusinessScreen.main'; // Ruta corregida
@@ -13,6 +13,9 @@ const componentesMap = {
   // Registro: Registro,
   WelcomeScreen: WelcomeScreen,
   LoadingScreen: LoadingScreen,
+  SplashScreen: SplashScreen, // Añadido SplashScreen
+  LoginScreen: LoginScreen, // Añadido LoginScreen
+  RegisterScreen: RegisterScreen, // Añadido RegisterScreen
   CreateBusinessScreen: CreateBusinessScreen,
   JoinTeamScreen: JoinTeamScreen,
   // Agrega más pantallas aquí si es necesario
