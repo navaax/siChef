@@ -1,5 +1,6 @@
 // src/modelBuiss/initConfig.ts
 
+import { initDB } from './db/initDB'; // Importa la función initDB
 import AsyncStorage from '@react-native-async-storage/async-storage'; // Importa AsyncStorage
 
 const HAS_LAUNCHED_KEY = 'hasLaunched';
@@ -15,6 +16,12 @@ export const initializeApplication = async (): Promise<string> => {
 
     if (hasLaunched === null) {
       // Primera vez que se abre la aplicación
+      console.log('Primer lanzamiento: Inicializando base de datos...');
+      const dbInitResult = await initDB(); // Llama a la función initDB
+      if (!dbInitResult.success) {
+        console.error('Error en la inicialización de la BD:', dbInitResult.message);
+        // Dependiendo de tu lógica, podrías lanzar un error o redirigir a una pantalla de error
+      }
       await AsyncStorage.setItem(HAS_LAUNCHED_KEY, 'true'); // Marca como lanzado
       console.log('Primer lanzamiento: Navegando a WelcomeScreen');
       return 'WelcomeScreen'; // Ruta a la pantalla de bienvenida
