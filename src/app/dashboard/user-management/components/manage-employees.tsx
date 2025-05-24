@@ -8,7 +8,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
 
 import { Card, CardContent } from "@/components/ui/card";
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from "@/components/ui/button";
 import { PlusCircle, Edit, Trash2, Loader2, Save, X, Eye, EyeOff, CheckSquare, Square } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogClose } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
@@ -202,20 +202,26 @@ const ManageEmployees: React.FC<ManageEmployeesProps> = ({ initialEmployees, all
                             )}/>
                             <FormField control={form.control} name="position_id" render={({ field }) => (
                                 <FormItem><FormLabel>Puesto</FormLabel>
-                                    <Select onValueChange={field.onChange} value={field.value || ''} >
+                                    <Select 
+                                        onValueChange={(value) => field.onChange(value === '__NONE__' ? null : value)} 
+                                        value={field.value || '__NONE__'} 
+                                    >
                                         <FormControl><SelectTrigger><SelectValue placeholder="Seleccionar puesto" /></SelectTrigger></FormControl>
                                         <SelectContent>
-                                            <SelectItem value="">-- Sin Puesto --</SelectItem>
+                                            <SelectItem value="__NONE__">-- Sin Puesto --</SelectItem>
                                             {allPositions.map(pos => <SelectItem key={pos.id} value={pos.id}>{pos.name}</SelectItem>)}
                                         </SelectContent>
                                     </Select><FormMessage /></FormItem>
                             )}/>
                             <FormField control={form.control} name="reports_to_employee_id" render={({ field }) => (
                                 <FormItem><FormLabel>Reporta a (Opcional)</FormLabel>
-                                    <Select onValueChange={field.onChange} value={field.value || ''}>
+                                    <Select 
+                                        onValueChange={(value) => field.onChange(value === '__NONE__' ? null : value)} 
+                                        value={field.value || '__NONE__'}
+                                    >
                                         <FormControl><SelectTrigger><SelectValue placeholder="Seleccionar supervisor" /></SelectTrigger></FormControl>
                                         <SelectContent>
-                                            <SelectItem value="">-- Nadie --</SelectItem>
+                                            <SelectItem value="__NONE__">-- Nadie --</SelectItem>
                                             {employees.filter(e => e.id !== editingEmployee?.id).map(emp => <SelectItem key={emp.id} value={emp.id}>{emp.full_name}</SelectItem>)}
                                         </SelectContent>
                                     </Select><FormMessage /></FormItem>
