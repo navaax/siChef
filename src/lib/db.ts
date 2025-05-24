@@ -180,6 +180,51 @@ async function initializeDb(dbInstance: Database): Promise<void> {
                 FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE CASCADE,
                 UNIQUE (category_id, label)
             );
+
+            -- Tablas para Gestión de Usuarios --
+            CREATE TABLE IF NOT EXISTS positions (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE
+            );
+
+            CREATE TABLE IF NOT EXISTS roles (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE
+            );
+
+            CREATE TABLE IF NOT EXISTS permissions (
+                id TEXT PRIMARY KEY, -- e.g., "manage_inventory", "view_reports"
+                name TEXT NOT NULL UNIQUE, -- e.g., "Gestionar Inventario"
+                description TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS employees (
+                id TEXT PRIMARY KEY,
+                full_name TEXT NOT NULL,
+                pin TEXT, -- PIN específico del sistema para este empleado, no el de login al POS. Puede ser NULL.
+                position_id TEXT,
+                reports_to_employee_id TEXT, -- Para jerarquía, puede ser NULL
+                status TEXT NOT NULL CHECK(status IN ('active', 'inactive')) DEFAULT 'active',
+                FOREIGN KEY (position_id) REFERENCES positions(id) ON DELETE SET NULL,
+                FOREIGN KEY (reports_to_employee_id) REFERENCES employees(id) ON DELETE SET NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS employee_roles (
+                employee_id TEXT NOT NULL,
+                role_id TEXT NOT NULL,
+                PRIMARY KEY (employee_id, role_id),
+                FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE,
+                FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS role_permissions (
+                role_id TEXT NOT NULL,
+                permission_id TEXT NOT NULL,
+                PRIMARY KEY (role_id, permission_id),
+                FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE,
+                FOREIGN KEY (permission_id) REFERENCES permissions(id) ON DELETE CASCADE
+            );
+
         `);
         console.log("[DB Initialize] Tablas base creadas o verificadas.");
 
@@ -235,3 +280,4 @@ process.on('SIGTERM', async () => {
     await closeDb();
     process.exit(0);
 });
+

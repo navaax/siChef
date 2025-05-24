@@ -1,7 +1,8 @@
+// src/app/dashboard/layout.tsx
 'use client';
 
 import * as React from 'react';
-import { Home, ShoppingCart, BarChart2, Settings, LogOut, User, Archive, PackagePlus, PiggyBank } from 'lucide-react'; // Added Archive, PackagePlus, PiggyBank
+import { Home, ShoppingCart, BarChart2, Settings, LogOut, User, Archive, PackagePlus, PiggyBank, Users } from 'lucide-react'; // Added Users
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 
@@ -30,7 +31,8 @@ const navItems = [
   { href: '/dashboard/inventory', label: 'Inventario', icon: Archive },
   { href: '/dashboard/product-settings', label: 'Ajustes Productos', icon: PackagePlus },
   { href: '/dashboard/reports', label: 'Reporte de Ventas', icon: BarChart2 },
-  { href: '/dashboard/cash-register', label: 'Gestión de Caja', icon: PiggyBank }, // Nueva sección (opcional)
+  { href: '/dashboard/cash-register', label: 'Gestión de Caja', icon: PiggyBank },
+  { href: '/dashboard/user-management', label: 'Gestión de Usuarios', icon: Users }, // Nueva sección
   { href: '/dashboard/settings', label: 'Configuraciones', icon: Settings },
 ];
 
@@ -84,7 +86,7 @@ export default function DashboardLayout({
             <aside className="fixed inset-y-0 left-0 z-10 flex w-14 flex-col border-r bg-background sm:flex">
                 <Skeleton className="h-10 w-10 rounded-full mt-4 mb-4 mx-auto" />
                 <div className="flex flex-col items-center gap-4 px-2 py-4 flex-grow">
-                     {[...Array(5)].map((_, i) => <Skeleton key={i} className="h-8 w-8 rounded-lg" />)}
+                     {[...Array(6)].map((_, i) => <Skeleton key={i} className="h-8 w-8 rounded-lg" />)} {/* Ajustado a 6 por el nuevo item */}
                 </div>
                 <Skeleton className="h-8 w-8 rounded-lg mt-auto mb-4 mx-auto" />
             </aside>
