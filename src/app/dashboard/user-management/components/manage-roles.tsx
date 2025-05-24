@@ -8,7 +8,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
 
 import { Card, CardContent } from "@/components/ui/card";
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from "@/components/ui/button"; // Importación añadida
 import { PlusCircle, Edit, Trash2, Loader2, Save, X, ShieldCheck, CheckSquare, Square } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogClose } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
@@ -182,7 +182,7 @@ const ManageRoles: React.FC<ManageRolesProps> = ({ initialRoles, allPermissions,
                                             <FormField key={permission.id} control={form.control} name="permission_ids"
                                                 render={({ field }) => {
                                                     return (
-                                                        <FormItem className="flex flex-row items-start space-x-3 space-y-0 p-2 hover:bg-muted/50 rounded-md">
+                                                        <FormItem className="flex flex-row items-start space-x-3 space-y-0 py-1">
                                                             <FormControl>
                                                                 <Checkbox
                                                                     checked={field.value?.includes(permission.id)}
