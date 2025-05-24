@@ -1,3 +1,4 @@
+
 // src/app/dashboard/reports/page.tsx
 'use client';
 
@@ -13,7 +14,7 @@ import { Download, FileText, Loader2, ReceiptText, HandCoins, Gift, Landmark, Ca
 import { format } from 'date-fns';
 import { useAuth } from '@/contexts/auth-context';
 import { useCashRegister } from '@/contexts/cash-register-context'; // Importar hook de caja
-import { generateSalesReport, type SalesReport, type SalesHistoryItem } from '@/services/pdf-generator'; // Assuming service exists
+import { generateSalesReport, type SalesReport, type SalesHistoryItem } from '@/services/pdf-generator';
 import { closeCashSession } from '@/services/cash-register-service'; // Importar servicio de caja
 import type { SavedOrder } from '@/types/product-types'; // Import SavedOrder type
 import { formatCurrency } from '@/lib/utils'; // Importar utilidad de formato
@@ -23,9 +24,9 @@ import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import type { StartCashFormData, EndOfDayFormData } from '@/types/cash-register-types';
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"; // Added for date picker
-import { Calendar } from "@/components/ui/calendar"; // Added for date picker
-import { cn } from "@/lib/utils"; // Added for date picker styling
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Calendar } from "@/components/ui/calendar";
+import { cn } from "@/lib/utils";
 
 // Helper para obtener variante de badge de estado
 const getStatusVariant = (status: SavedOrder['status']): "default" | "secondary" | "destructive" | "outline" | null | undefined => {
@@ -106,30 +107,36 @@ export default function ReportsPage() {
   }, [selectedDate, allOrders]);
 
   // Calcular totales para el reporte (usando filteredOrders)
-  const completedOrders = filteredOrders.filter(o => o.status === 'completed'); // Filtrar solo completados
-  const totalSales = completedOrders.reduce((sum, order) => sum + order.total, 0);
-  const cashSales = completedOrders.filter(o => o.paymentMethod === 'cash').reduce((sum, order) => sum + order.total, 0);
-  const cardSales = completedOrders.filter(o => o.paymentMethod === 'card').reduce((sum, order) => sum + order.total, 0);
-  const startingCash = currentSession?.starting_cash ?? 0; // Obtener de la sesión actual (o 0 si no hay)
-  const expectedCashInRegister = startingCash + cashSales
-                              - (endOfDayData.expenses ?? 0)
-                              - (endOfDayData.loanAmount ?? 0)
-                              + (endOfDayData.tips ?? 0); // Ajustado con gastos, préstamos y propinas
+  // Estos son los totales que se muestran en la tabla de resumen de la UI y que se USAN como base para el wizard
+  const completedOrdersForUI = filteredOrders.filter(o => o.status === 'completed');
+  const totalSalesForUI = completedOrdersForUI.reduce((sum, order) => sum + order.total, 0);
+  const cashSalesForUI = completedOrdersForUI.filter(o => o.paymentMethod === 'cash').reduce((sum, order) => sum + order.total, 0);
+  const cardSalesForUI = completedOrdersForUI.filter(o => o.paymentMethod === 'card').reduce((sum, order) => sum + order.total, 0);
+  
+  // Estos se calcularán DENTRO de handleFinalizeDay para asegurar consistencia con los datos del momento
+  let expectedCashInRegister = 0;
+  let cashDifference = 0;
+  let startingCashForSummary = currentSession?.starting_cash ?? 0;
 
-  const cashDifference = (endOfDayData.endingCashTotal ?? 0) - expectedCashInRegister;
+  if (wizardStep === 'summary' || wizardStep === 'confirm') {
+    startingCashForSummary = currentSession?.starting_cash ?? 0;
+    // Usa los totales DE LA UI para el resumen, pero los finales se recalculan en handleFinalizeDay
+    const tempCashSales = completedOrdersForUI.filter(o => o.paymentMethod === 'cash').reduce((sum, order) => sum + order.total, 0);
+    expectedCashInRegister = startingCashForSummary + tempCashSales
+                                - (endOfDayData.expenses ?? 0)
+                                - (endOfDayData.loanAmount ?? 0)
+                                + (endOfDayData.tips ?? 0);
+    cashDifference = (endOfDayData.endingCashTotal ?? 0) - expectedCashInRegister;
+  }
+
 
   const handleOpenWizard = () => {
     if (!currentSession) {
         toast({ title: "Sin Sesión Activa", description: "No hay una sesión de caja activa para cerrar.", variant: "destructive" });
         return;
     }
-    // Permitir cerrar aunque no haya ventas (para ajustes, etc.)
-    // if (completedOrders.length === 0) {
-    //     toast({ title: "Sin Ventas Completadas", description: "No se puede generar el reporte sin ventas completadas en esta sesión.", variant: "destructive" });
-    //     return;
-    // }
-    setWizardStep('countCash'); // Empezar desde el conteo de efectivo
-    setEndOfDayData({ // Resetear datos del wizard
+    setWizardStep('countCash');
+    setEndOfDayData({
         expenses: 0,
         tips: 0,
         loanAmount: 0,
@@ -143,7 +150,6 @@ export default function ReportsPage() {
   const handleNextStep = () => {
     switch (wizardStep) {
       case 'countCash':
-        // Permitir 0 en conteo final si no hubo ventas
         if ((endOfDayData.endingCashTotal ?? -1) < 0) {
             toast({title: "Conteo Inválido", description: "Ingresa el conteo de efectivo final (puede ser 0).", variant:"destructive"});
             return;
@@ -153,7 +159,7 @@ export default function ReportsPage() {
       case 'expenses': setWizardStep('tips'); break;
       case 'tips': setWizardStep('loans'); break;
       case 'loans': setWizardStep('summary'); break;
-      case 'summary': setWizardStep('confirm'); break; // O ir directo a finalizar
+      case 'summary': setWizardStep('confirm'); break;
       default: break;
     }
   };
@@ -171,7 +177,7 @@ export default function ReportsPage() {
 
   const handleDenominationSubmit = (data: StartCashFormData) => {
     setEndOfDayData(prev => ({ ...prev, endingDenominations: data.denominations, endingCashTotal: data.total }));
-    handleNextStep(); // Avanzar al siguiente paso
+    handleNextStep();
   };
 
   const handleFinalizeDay = async () => {
@@ -182,44 +188,76 @@ export default function ReportsPage() {
     setIsGeneratingPdf(true);
     toast({ title: "Generando Reporte...", description: "Preparando el PDF de ventas y cerrando caja." });
 
-    // CAPTURAR DATOS ANTES DE CUALQUIER CAMBIO DE ESTADO
-    const currentCompletedOrders = [...completedOrders]; // Crear una copia estable
-    const reportTimestamp = new Date(); // Usar una marca de tiempo consistente
+    // CAPTURAR DATOS *EN ESTE MOMENTO* PARA EL REPORTE
+    // Usar los pedidos filtrados por la fecha seleccionada al momento de iniciar la finalización
+    let ordersForReport: SavedOrder[];
+    if (selectedDate) {
+        const startOfDay = new Date(selectedDate); startOfDay.setHours(0,0,0,0);
+        const endOfDay = new Date(selectedDate); endOfDay.setHours(23,59,59,999);
+        ordersForReport = allOrders.filter(order => {
+            const orderDate = new Date(order.createdAt);
+            return order.status === 'completed' && orderDate >= startOfDay && orderDate <= endOfDay;
+        });
+    } else {
+        // Si no hay fecha seleccionada, ¿qué hacemos? Por ahora, consideremos las órdenes de la sesión actual.
+        // O podríamos tomar todos los completados, pero es mejor ser específico.
+        // Para este ejemplo, si no hay selectedDate, tomaremos los completados de la sesión actual
+        const sessionStartTime = new Date(currentSession.start_time).getTime();
+        ordersForReport = allOrders.filter(order =>
+            order.status === 'completed' && new Date(order.createdAt).getTime() >= sessionStartTime
+        );
+        console.warn("[handleFinalizeDay] No hay fecha seleccionada para el reporte, usando órdenes completadas desde el inicio de la sesión actual.");
+    }
 
-    // LOGGING: Revisar los datos que se usarán para el reporte
-    console.log('[handleFinalizeDay] Datos para reporte:', {
+
+    const reportTimestamp = new Date();
+
+    // Recalcular totales basados en ordersForReport para consistencia
+    const finalTotalSales = ordersForReport.reduce((sum, order) => sum + order.total, 0);
+    const finalCashSales = ordersForReport.filter(o => o.paymentMethod === 'cash').reduce((sum, order) => sum + order.total, 0);
+    const finalCardSales = ordersForReport.filter(o => o.paymentMethod === 'card').reduce((sum, order) => sum + order.total, 0);
+    const finalStartingCash = currentSession.starting_cash;
+
+    const finalExpectedCash = finalStartingCash + finalCashSales
+                              - (endOfDayData.expenses ?? 0)
+                              - (endOfDayData.loanAmount ?? 0)
+                              + (endOfDayData.tips ?? 0);
+    const finalCashDifference = (endOfDayData.endingCashTotal ?? 0) - finalExpectedCash;
+
+    console.log('[handleFinalizeDay] Datos capturados para reporte:', {
       username,
-      startingCash,
-      totalSales, // Basado en completedOrders al inicio de la función
-      cashSales,  // Basado en completedOrders al inicio de la función
-      cardSales,  // Basado en completedOrders al inicio de la función
+      startingCash: finalStartingCash,
+      totalSales: finalTotalSales,
+      cashSales: finalCashSales,
+      cardSales: finalCardSales,
       expenses: endOfDayData.expenses ?? 0,
       tips: endOfDayData.tips ?? 0,
       loanAmount: endOfDayData.loanAmount ?? 0,
+      loanReason: endOfDayData.loanReason ?? '',
       endingCashTotal: endOfDayData.endingCashTotal ?? 0,
-      expectedCashInRegister,
-      cashDifference,
-      completedOrdersCount: currentCompletedOrders.length // Verificar cuántos pedidos se incluirán
+      expectedCashInRegister: finalExpectedCash,
+      cashDifference: finalCashDifference,
+      completedOrdersCount: ordersForReport.length,
+      selectedDateForReport: selectedDate ? selectedDate.toISOString() : 'N/A',
     });
 
     try {
-        // 1. Preparar datos del reporte usando la copia estable
         const reportData: SalesReport = {
-            businessName: "siChef POS", // Reemplazar con nombre dinámico
-            reportDate: reportTimestamp.toISOString(), // Usar timestamp consistente
+            businessName: localStorage.getItem('siChefSettings_businessName') || "siChef POS",
+            reportDate: reportTimestamp.toISOString(),
             user: username || 'Usuario Desconocido',
-            startingCash: startingCash,
-            totalSales: totalSales, // Usar totalSales calculado al inicio
-            cashSales: cashSales,   // Usar cashSales calculado al inicio
-            cardSales: cardSales,   // Usar cardSales calculado al inicio
+            startingCash: finalStartingCash,
+            totalSales: finalTotalSales,
+            cashSales: finalCashSales,
+            cardSales: finalCardSales,
             totalExpenses: endOfDayData.expenses ?? 0,
             totalTips: endOfDayData.tips ?? 0,
             loansWithdrawalsAmount: endOfDayData.loanAmount ?? 0,
             loansWithdrawalsReason: endOfDayData.loanReason ?? '',
-            endingCash: endOfDayData.endingCashTotal ?? 0, // Conteo final
-            expectedCashInRegister: expectedCashInRegister, // Calculado incluyendo gastos, etc.
-            calculatedDifference: cashDifference, // Diferencia calculada
-            salesHistory: currentCompletedOrders.map(order => ({ // USAR LA COPIA ESTABLE
+            endingCash: endOfDayData.endingCashTotal ?? 0,
+            expectedCashInRegister: finalExpectedCash,
+            calculatedDifference: finalCashDifference,
+            salesHistory: ordersForReport.map(order => ({
                 orderNumber: String(order.orderNumber),
                 orderId: order.id,
                 customer: order.customerName,
@@ -230,62 +268,75 @@ export default function ReportsPage() {
             })),
         };
 
-        console.log("[handleFinalizeDay] Objeto reportData final:", JSON.stringify(reportData, null, 2)); // Log para depuración detallada
+        console.log("[handleFinalizeDay] Objeto reportData final para PDF:", JSON.stringify(reportData, null, 2));
 
-        // 2. Generar PDF
         const pdfBytes = await generateSalesReport(reportData);
-        console.log(`[handleFinalizeDay] Bytes del PDF generados: ${pdfBytes?.length}`); // Log para depuración
+        console.log(`[handleFinalizeDay] Bytes del PDF generados: ${pdfBytes?.length}`);
 
-        // 3. Descargar PDF
         if (pdfBytes && pdfBytes.length > 0) {
             const blob = new Blob([pdfBytes], { type: 'application/pdf' });
             const link = document.createElement('a');
             link.href = URL.createObjectURL(blob);
-            const timestampStr = format(reportTimestamp, 'yyyyMMdd_HHmmss'); // Usar timestamp consistente
+            const timestampStr = format(reportTimestamp, 'yyyyMMdd_HHmmss');
             link.download = `siChef_ReporteVentas_${timestampStr}.pdf`;
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);
-            URL.revokeObjectURL(link.href); // Limpiar objeto URL
+            URL.revokeObjectURL(link.href);
             toast({ title: "Reporte Generado", description: "Descarga de PDF iniciada." });
         } else {
-             console.error('[handleFinalizeDay] generateSalesReport devolvió un array vacío o nulo.');
-             toast({ title: "Error Reporte", description: "No se pudo generar el archivo PDF (datos vacíos).", variant: "destructive" });
-             // NO continuar si falla la generación/descarga del PDF crítico
+             console.error('[handleFinalizeDay] generateSalesReport devolvió un array vacío o nulo. PDF no se descargará.');
+             toast({ title: "Error Reporte", description: "No se pudo generar el archivo PDF (datos vacíos o error interno).", variant: "destructive" });
              setIsGeneratingPdf(false);
              return;
         }
 
-        // ---- SOLO SI EL PDF SE GENERÓ Y DESCARGÓ ----
-
-        // 4. Cerrar la sesión de caja en la BD
         await closeCashSession(
             currentSession.id,
             endOfDayData.endingCashTotal ?? 0,
-            cashSales, // Pasar los totales calculados antes
-            cardSales, // Pasar los totales calculados antes
+            finalCashSales,
+            finalCardSales,
             endOfDayData.expenses ?? 0,
             endOfDayData.tips ?? 0,
             endOfDayData.loanAmount ?? 0,
             endOfDayData.loanReason ?? ''
         );
 
-        // 5. Resetear estado local y localStorage (MOVIDO AL FINAL)
-        // Filtrar para mantener órdenes pendientes y las completadas *antes* del inicio de la sesión cerrada
-        const sessionStartTime = new Date(currentSession.start_time).getTime();
-        const remainingOrders = allOrders.filter(o =>
-            o.status !== 'completed' || new Date(o.createdAt).getTime() < sessionStartTime
-        );
+        // Actualizar localStorage: mantener pendientes y completados de *otras* sesiones/días
+        const sessionClosedTime = reportTimestamp.getTime(); // Usar el tiempo de cierre actual
+
+        const remainingOrders = allOrders.filter(o => {
+           const orderTime = new Date(o.createdAt).getTime();
+           if (o.status === 'completed') {
+               // Mantener solo los completados que NO pertenecen al día/sesión que se está cerrando
+               if (selectedDate) {
+                   const startOfDayReport = new Date(selectedDate); startOfDayReport.setHours(0,0,0,0);
+                   const endOfDayReport = new Date(selectedDate); endOfDayReport.setHours(23,59,59,999);
+                   return orderTime < startOfDayReport.getTime() || orderTime > endOfDayReport.getTime();
+               } else {
+                   // Si no hay fecha seleccionada, mantén los completados antes del inicio de esta sesión
+                   return orderTime < new Date(currentSession.start_time).getTime();
+               }
+           }
+           return true; // Mantener todos los no completados (pending, cancelled)
+        });
+
+
         localStorage.setItem('siChefOrders', JSON.stringify(remainingOrders));
-        setAllOrders(remainingOrders); // Actualizar estado local
-        clearSession(); // Limpiar sesión del contexto
-        setIsWizardOpen(false); // Cerrar el wizard
+        setAllOrders(remainingOrders);
+        // Forzar la re-filtración actualizando selectedDate o una dependencia
+        // Esto es un poco un hack; idealmente filteredOrders se recalcularía naturalmente.
+        // Simplemente re-establecer selectedDate a sí mismo para forzar el efecto.
+        setSelectedDate(prevDate => prevDate ? new Date(prevDate) : undefined);
+
+        clearSession();
+        setIsWizardOpen(false);
 
         toast({ title: "Día Finalizado", description: "Ventas completadas archivadas, caja cerrada." });
 
     } catch (error) {
         console.error("[handleFinalizeDay] Error finalizando día / generando PDF:", error);
-        toast({ title: "Operación Fallida", description: `No se pudo finalizar el día o generar el reporte: ${error instanceof Error ? error.message : 'Error desconocido'}`, variant: "destructive" });
+        toast({ title: "Operación Fallida", description: `No se pudo finalizar el día o generar el reporte: ${error instanceof Error ? error.message : error}`, variant: "destructive" });
     } finally {
         setIsGeneratingPdf(false);
     }
@@ -304,10 +355,9 @@ const renderWizardContent = () => {
             </DialogHeader>
             <DenominationInputForm
               onSubmit={handleDenominationSubmit}
-              isLoading={isGeneratingPdf} // Usar el mismo estado de carga
+              isLoading={isGeneratingPdf}
               submitButtonText="Siguiente: Gastos"
             />
-            {/* No necesitamos Cancelar aquí, el Dialog se encarga */}
           </>
         );
       case 'expenses':
@@ -408,7 +458,16 @@ const renderWizardContent = () => {
           </>
         );
       case 'summary':
-      case 'confirm': // Mostrar lo mismo para resumen y confirmación final
+      case 'confirm':
+        // Recalcular aquí para asegurar que el resumen usa los datos actuales de endOfDayData
+        const summaryStartingCash = currentSession?.starting_cash ?? 0;
+        const summaryCashSales = completedOrdersForUI.filter(o => o.paymentMethod === 'cash').reduce((sum, order) => sum + order.total, 0);
+        const summaryExpectedCash = summaryStartingCash + summaryCashSales
+                                    - (endOfDayData.expenses ?? 0)
+                                    - (endOfDayData.loanAmount ?? 0)
+                                    + (endOfDayData.tips ?? 0);
+        const summaryCashDifference = (endOfDayData.endingCashTotal ?? 0) - summaryExpectedCash;
+
         return (
           <>
             <DialogHeader>
@@ -416,22 +475,22 @@ const renderWizardContent = () => {
                <DialogDescription>Revisa los totales antes de finalizar el día.</DialogDescription>
             </DialogHeader>
              <div className="space-y-3 py-4 text-sm">
-                <div className="flex justify-between"><span className="text-muted-foreground">Fondo Inicial:</span> <span>{formatCurrency(startingCash)}</span></div>
-                <div className="flex justify-between"><span className="text-muted-foreground">Ventas Efectivo:</span> <span className="text-green-600">+ {formatCurrency(cashSales)}</span></div>
-                <div className="flex justify-between"><span className="text-muted-foreground">Ventas Tarjeta:</span> <span>{formatCurrency(cardSales)}</span></div> {/* Agregado */}
+                <div className="flex justify-between"><span className="text-muted-foreground">Fondo Inicial:</span> <span>{formatCurrency(summaryStartingCash)}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Ventas Efectivo (Día Seleccionado):</span> <span className="text-green-600">+ {formatCurrency(summaryCashSales)}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Ventas Tarjeta (Día Seleccionado):</span> <span>{formatCurrency(cardSalesForUI)}</span></div>
                 <div className="flex justify-between"><span className="text-muted-foreground">Gastos:</span> <span className="text-red-600">- {formatCurrency(endOfDayData.expenses ?? 0)}</span></div>
                 <div className="flex justify-between"><span className="text-muted-foreground">Propinas (Efectivo):</span> <span className="text-green-600">+ {formatCurrency(endOfDayData.tips ?? 0)}</span></div>
                 <div className="flex justify-between"><span className="text-muted-foreground">Préstamos/Retiros:</span> <span className="text-red-600">- {formatCurrency(endOfDayData.loanAmount ?? 0)}</span></div>
-                <div className="flex justify-between font-semibold border-t pt-2"><span >Efectivo Esperado:</span> <span>{formatCurrency(expectedCashInRegister)}</span></div>
+                <div className="flex justify-between font-semibold border-t pt-2"><span >Efectivo Esperado:</span> <span>{formatCurrency(summaryExpectedCash)}</span></div>
                 <div className="flex justify-between font-semibold"><span >Efectivo Contado:</span> <span>{formatCurrency(endOfDayData.endingCashTotal ?? 0)}</span></div>
-                 <div className={`flex justify-between font-bold text-lg border-t pt-2 ${cashDifference === 0 ? '' : cashDifference > 0 ? 'text-green-700' : 'text-destructive'}`}>
+                 <div className={`flex justify-between font-bold text-lg border-t pt-2 ${summaryCashDifference === 0 ? '' : summaryCashDifference > 0 ? 'text-green-700' : 'text-destructive'}`}>
                     <span >Diferencia:</span>
-                    <span>{formatCurrency(cashDifference)} {cashDifference === 0 ? '' : cashDifference > 0 ? '(Sobrante)' : '(Faltante)'}</span>
+                    <span>{formatCurrency(summaryCashDifference)} {summaryCashDifference === 0 ? '' : summaryCashDifference > 0 ? '(Sobrante)' : '(Faltante)'}</span>
                  </div>
                  {endOfDayData.loanReason && <p className="text-xs text-muted-foreground pt-2">Motivo Préstamo/Retiro: {endOfDayData.loanReason}</p>}
              </div>
              <p className="text-xs text-center text-muted-foreground mt-4">
-                 Al confirmar, se cerrará la sesión de caja actual, se generará el reporte PDF y se limpiarán las ventas completadas para el próximo día.
+                 Al confirmar, se cerrará la sesión de caja actual, se generará el reporte PDF para el día <strong>{selectedDate ? format(selectedDate, "PPP") : 'seleccionado'}</strong> y se limpiarán las ventas completadas de ese día.
             </p>
             <div className="flex justify-between mt-6">
                  <Button variant="outline" onClick={handlePreviousStep} disabled={isGeneratingPdf}>Anterior</Button>
@@ -456,7 +515,6 @@ const renderWizardContent = () => {
              <CardDescription>Historial de pedidos por fecha.</CardDescription>
           </div>
           <div className="flex items-center gap-4">
-              {/* Selector de Fecha */}
              <Popover>
                 <PopoverTrigger asChild>
                 <Button
@@ -479,7 +537,6 @@ const renderWizardContent = () => {
                 />
                 </PopoverContent>
             </Popover>
-             {/* Botón Finalizar Día */}
              <Button onClick={handleOpenWizard} disabled={isGeneratingPdf || !currentSession} size="sm">
                  {isGeneratingPdf ? (
                      <>
@@ -493,11 +550,11 @@ const renderWizardContent = () => {
              </Button>
           </div>
         </CardHeader>
-        <CardContent className="flex-grow overflow-hidden p-0"> {/* Quitar padding para scroll de altura completa */}
+        <CardContent className="flex-grow overflow-hidden p-0">
            <div className="relative h-full">
-             <ScrollArea className="absolute inset-0"> {/* Hacer que ScrollArea llene CardContent */}
-                 <Table className="min-w-full">{/* Asegurar que la tabla ocupe al menos el ancho completo */}
-                   <TableHeader> {/* Hacer encabezado pegajoso */}
+             <ScrollArea className="absolute inset-0">
+                 <Table className="min-w-full">
+                   <TableHeader>
                     <TableRow>
                       <TableHead className="w-[100px]">Pedido #</TableHead>
                       <TableHead className="w-[150px]">ID</TableHead>
@@ -512,7 +569,7 @@ const renderWizardContent = () => {
                   <TableBody>
                     {filteredOrders.length > 0 ? (
                       filteredOrders
-                         .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()) // Ordenar por más reciente
+                         .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
                         .map((order) => (
                         <TableRow key={order.id}>
                           <TableCell className="font-medium">{order.orderNumber}</TableCell>
@@ -526,7 +583,7 @@ const renderWizardContent = () => {
                               {order.status}
                             </Badge>
                           </TableCell>
-                           <TableCell>{format(order.createdAt, 'Pp')}</TableCell> {/* Usar objeto Date directamente */}
+                           <TableCell>{format(order.createdAt, 'Pp')}</TableCell>
                         </TableRow>
                       ))
                     ) : (
@@ -537,31 +594,30 @@ const renderWizardContent = () => {
                       </TableRow>
                     )}
                   </TableBody>
-                   {/* Footer con Resumen (Solo si hay órdenes completadas en la fecha seleccionada) */}
-                   {completedOrders.length > 0 && (
+                   {completedOrdersForUI.length > 0 && (
                     <TableFooter>
                         <TableRow>
-                            <TableCell colSpan={3}>Resumen del Día (Pedidos Completados)</TableCell>
+                            <TableCell colSpan={3}>Resumen del Día ({selectedDate ? format(selectedDate, 'PPP') : 'Todos'}) (Pedidos Completados)</TableCell>
                             <TableCell className="text-right">Subtotal</TableCell>
                              <TableCell className="text-right">Total</TableCell>
-                             <TableCell colSpan={3}></TableCell> {/* Celdas Placeholder */}
+                             <TableCell colSpan={3}></TableCell>
                         </TableRow>
                         <TableRow>
                             <TableCell colSpan={3}>Ventas en Efectivo:</TableCell>
                              <TableCell className="text-right"></TableCell>
-                             <TableCell className="text-right">{formatCurrency(cashSales)}</TableCell>
+                             <TableCell className="text-right">{formatCurrency(cashSalesForUI)}</TableCell>
                             <TableCell colSpan={3}></TableCell>
                         </TableRow>
                          <TableRow>
                             <TableCell colSpan={3}>Ventas con Tarjeta:</TableCell>
                              <TableCell className="text-right"></TableCell>
-                             <TableCell className="text-right">{formatCurrency(cardSales)}</TableCell>
+                             <TableCell className="text-right">{formatCurrency(cardSalesForUI)}</TableCell>
                              <TableCell colSpan={3}></TableCell>
                          </TableRow>
                          <TableRow className="text-base font-bold">
                             <TableCell colSpan={3}>Venta Total (Completados):</TableCell>
                              <TableCell className="text-right"></TableCell>
-                             <TableCell className="text-right">{formatCurrency(totalSales)}</TableCell>
+                             <TableCell className="text-right">{formatCurrency(totalSalesForUI)}</TableCell>
                              <TableCell colSpan={3}></TableCell>
                          </TableRow>
                     </TableFooter>
@@ -572,7 +628,6 @@ const renderWizardContent = () => {
         </CardContent>
       </Card>
 
-      {/* Wizard de Fin de Día */}
        <Dialog open={isWizardOpen} onOpenChange={setIsWizardOpen}>
          <DialogContent className="sm:max-w-lg">
            {renderWizardContent()}

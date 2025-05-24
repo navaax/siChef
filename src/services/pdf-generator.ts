@@ -1,3 +1,4 @@
+
 // src/services/pdf-generator.ts
 import type { CashSessionDetail } from "@/types/cash-register-types"; // Importar si se usan detalles
 import { jsPDF } from "jspdf";
@@ -135,22 +136,25 @@ export async function generateSalesReport(reportData: SalesReport): Promise<Uint
    const col1X = margin;
    const col2X = pageWidth - margin; // Alinear a la derecha
 
-   console.log("Generando PDF con datos:", reportData); // Depuración
+   console.log("[generateSalesReport] Iniciando generación de PDF con datos:", JSON.stringify(reportData, null, 2));
 
    // -- Encabezado --
    doc.setFontSize(18);
    doc.text(reportData.businessName, pageWidth / 2, currentY, { align: 'center' });
+   console.log(`[generateSalesReport] Header: Business Name added at Y=${currentY}`);
    currentY += 8;
    doc.setFontSize(10);
-   // Usar la fecha del reporte pasada como parámetro
    doc.text(`Reporte de Ventas - Fecha: ${format(new Date(reportData.reportDate), 'dd/MM/yyyy HH:mm')}`, pageWidth / 2, currentY, { align: 'center' });
+   console.log(`[generateSalesReport] Header: Report Date added at Y=${currentY}`);
    currentY += 5;
    doc.text(`Generado por: ${reportData.user}`, pageWidth / 2, currentY, { align: 'center' });
+   console.log(`[generateSalesReport] Header: User added at Y=${currentY}`);
    currentY += 10;
 
    // -- Sección de Resumen Financiero --
    doc.setFontSize(12);
    doc.text("Resumen Financiero", margin, currentY);
+   console.log(`[generateSalesReport] Financial Summary title added at Y=${currentY}`);
    currentY += 7;
    doc.setFontSize(10);
 
@@ -167,37 +171,36 @@ export async function generateSalesReport(reportData: SalesReport): Promise<Uint
         doc.text(label, col1X, currentY);
         doc.text(`${sign} ${formattedValue}`, col2X, currentY, { align: align });
         if (isBold) doc.setFont(undefined, 'normal');
+        console.log(`[generateSalesReport] Summary Line: "${label} ${sign} ${formattedValue}" added at Y=${currentY}`);
         currentY += 6; // Espacio entre líneas
         // Check for page break
         if (currentY > pageHeight - 20) {
             doc.addPage();
             currentY = 15;
+            console.log("[generateSalesReport] New page added for summary.");
         }
    };
 
    addSummaryLine("Fondo Inicial:", reportData.startingCash);
    addSummaryLine("Ventas Efectivo:", reportData.cashSales, { sign: '+' });
-   addSummaryLine("Ventas Tarjeta:", reportData.cardSales); // No afecta cálculo de efectivo
+   addSummaryLine("Ventas Tarjeta:", reportData.cardSales);
    addSummaryLine("Gastos:", reportData.totalExpenses, { sign: '-' });
    addSummaryLine("Propinas (Efectivo):", reportData.totalTips, { sign: '+' });
    addSummaryLine("Préstamos/Retiros:", reportData.loansWithdrawalsAmount, { sign: '-' });
    if(reportData.loansWithdrawalsReason) {
         doc.setFontSize(8);
-        doc.text(`   Motivo: ${reportData.loansWithdrawalsReason}`, col1X + 5, currentY - 3); // Ajustar posición
+        doc.text(`   Motivo: ${reportData.loansWithdrawalsReason}`, col1X + 5, currentY - 3);
         doc.setFontSize(10);
+        console.log(`[generateSalesReport] Loan Reason added`);
    }
 
-   // Efectivo esperado
    addSummaryLine("Efectivo Esperado:", reportData.expectedCashInRegister, { isBold: true, isTotal: true });
-
-   // Efectivo contado y diferencia
    addSummaryLine("Efectivo Contado:", reportData.endingCash, { isBold: true });
 
-   // Diferencia (con color)
    doc.setFontSize(12);
    doc.setFont(undefined, 'bold');
    doc.text("Diferencia:", col1X, currentY);
-   const diffColor = reportData.calculatedDifference === 0 ? [0, 0, 0] : reportData.calculatedDifference > 0 ? [0, 100, 0] : [200, 0, 0]; // Negro, Verde, Rojo
+   const diffColor = reportData.calculatedDifference === 0 ? [0, 0, 0] : reportData.calculatedDifference > 0 ? [0, 100, 0] : [200, 0, 0];
    doc.setTextColor(diffColor[0], diffColor[1], diffColor[2]);
    doc.text(
      `${formatCurrency(reportData.calculatedDifference)} ${reportData.calculatedDifference === 0 ? '' : reportData.calculatedDifference > 0 ? '(Sobrante)' : '(Faltante)'}`,
@@ -205,23 +208,27 @@ export async function generateSalesReport(reportData: SalesReport): Promise<Uint
      currentY,
      { align: 'right' }
    );
-   doc.setTextColor(0, 0, 0); // Resetear color
+   doc.setTextColor(0, 0, 0);
    doc.setFont(undefined, 'normal');
-   currentY += 12; // Más espacio después de la diferencia
+   console.log(`[generateSalesReport] Difference line added at Y=${currentY}`);
+   currentY += 12;
 
     // -- Tablas de Historial de Ventas --
     const addSalesTable = (title: string, data: SalesHistoryItem[]) => {
-        if (currentY > pageHeight - 40) { // Añadir nueva página si no hay espacio
+        if (currentY > pageHeight - 40) {
              doc.addPage();
              currentY = 15;
+             console.log("[generateSalesReport] New page added for sales table.");
         }
         doc.setFontSize(12);
         doc.text(title, margin, currentY);
+        console.log(`[generateSalesReport] Sales Table title: "${title}" added at Y=${currentY}`);
         currentY += 7;
 
         if(data.length === 0){
             doc.setFontSize(10);
             doc.text("No hay pedidos para mostrar.", margin, currentY);
+            console.log(`[generateSalesReport] No sales data message added at Y=${currentY}`);
             currentY += 10;
             return;
         }
@@ -232,7 +239,7 @@ export async function generateSalesReport(reportData: SalesReport): Promise<Uint
             item.customer,
             formatCurrency(item.subtotal),
             formatCurrency(item.total),
-            item.paymentMethod // Añadir método de pago
+            item.paymentMethod
         ]);
 
         autoTable(doc, {
@@ -240,28 +247,27 @@ export async function generateSalesReport(reportData: SalesReport): Promise<Uint
             body: body,
             startY: currentY,
             theme: 'grid',
-            headStyles: { fillColor: [0, 128, 128], fontSize: 9 }, // Encabezado Teal, ajustar tamaño
+            headStyles: { fillColor: [0, 128, 128], fontSize: 9 },
             styles: { fontSize: 8, cellPadding: 1.5, overflow: 'linebreak' },
             columnStyles: {
-                0: { cellWidth: 12, halign: 'center' }, // Ancho para #
-                1: { cellWidth: 'auto' }, // Cliente auto
-                2: { halign: 'right', cellWidth: 25 }, // Subtotal
-                3: { halign: 'right', cellWidth: 25 }, // Total
-                4: { cellWidth: 20, halign: 'center' }, // Método Pago
+                0: { cellWidth: 12, halign: 'center' },
+                1: { cellWidth: 'auto' },
+                2: { halign: 'right', cellWidth: 25 },
+                3: { halign: 'right', cellWidth: 25 },
+                4: { cellWidth: 20, halign: 'center' },
             },
             didDrawPage: (hookData) => {
-                currentY = hookData.cursor?.y ? hookData.cursor.y + 5 : currentY + 5; // Actualizar Y y añadir margen
+                currentY = hookData.cursor?.y ? hookData.cursor.y + 5 : currentY + 5;
             }
         });
-        // Ya no se necesita currentY += 5 aquí, se maneja en didDrawPage
+        console.log(`[generateSalesReport] Sales table drawn. New Y=${currentY}`);
     };
 
-    // Usar el historial de ventas pasado en reportData
     addSalesTable("Historial de Pedidos (Completados)", reportData.salesHistory);
 
-
-   // Devolver bytes del PDF
+   console.log(`[generateSalesReport] Document before output: Pages=${doc.getNumberOfPages()}`);
    const pdfOutput = doc.output('arraybuffer');
-   console.log(`Tamaño final del PDF: ${pdfOutput.byteLength} bytes`);
-   return pdfOutput as Uint8Array; // Asegurar tipo de retorno
+   console.log(`[generateSalesReport] PDF output type: ${typeof pdfOutput}, length: ${pdfOutput ? (pdfOutput as ArrayBuffer).byteLength : 'N/A'}`);
+   return pdfOutput as Uint8Array;
 }
+
