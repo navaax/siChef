@@ -227,8 +227,8 @@ export async function generateSalesReport(reportData: SalesReport): Promise<Uint
 
         if(data.length === 0){
             doc.setFontSize(10);
-            doc.text("No hay pedidos para mostrar.", margin, currentY);
-            console.log(`[generateSalesReport] No sales data message added at Y=${currentY}`);
+            doc.text("No hay pedidos para mostrar en esta sección.", margin, currentY);
+            console.log(`[generateSalesReport] No sales data message for "${title}" added at Y=${currentY}`);
             currentY += 10;
             return;
         }
@@ -247,7 +247,7 @@ export async function generateSalesReport(reportData: SalesReport): Promise<Uint
             body: body,
             startY: currentY,
             theme: 'grid',
-            headStyles: { fillColor: [0, 128, 128], fontSize: 9 },
+            headStyles: { fillColor: [0, 128, 128], fontSize: 9, textColor: [255,255,255] },
             styles: { fontSize: 8, cellPadding: 1.5, overflow: 'linebreak' },
             columnStyles: {
                 0: { cellWidth: 12, halign: 'center' },
@@ -260,10 +260,19 @@ export async function generateSalesReport(reportData: SalesReport): Promise<Uint
                 currentY = hookData.cursor?.y ? hookData.cursor.y + 5 : currentY + 5;
             }
         });
-        console.log(`[generateSalesReport] Sales table drawn. New Y=${currentY}`);
+        // Actualizar currentY basado en la posición final de la tabla
+        const finalTableY = (doc as any).lastAutoTable.finalY || currentY;
+        currentY = finalTableY + 10;
+        console.log(`[generateSalesReport] Sales table for "${title}" drawn. New Y=${currentY}`);
     };
+    
+    // Filtrar pedidos por método de pago para tablas separadas
+    const cashOrders = reportData.salesHistory.filter(order => order.paymentMethod === 'cash');
+    const cardOrders = reportData.salesHistory.filter(order => order.paymentMethod === 'card');
 
-    addSalesTable("Historial de Pedidos (Completados)", reportData.salesHistory);
+    addSalesTable("Pedidos en Efectivo (Completados)", cashOrders);
+    addSalesTable("Pedidos con Tarjeta (Completados)", cardOrders);
+
 
    console.log(`[generateSalesReport] Document before output: Pages=${doc.getNumberOfPages()}`);
    const pdfOutput = doc.output('arraybuffer');

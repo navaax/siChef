@@ -188,9 +188,9 @@ export default function ReportsPage() {
     setIsGeneratingPdf(true);
     toast({ title: "Generando Reporte...", description: "Preparando el PDF de ventas y cerrando caja." });
 
-    // CAPTURAR DATOS *EN ESTE MOMENTO* PARA EL REPORTE
-    // Usar los pedidos filtrados por la fecha seleccionada al momento de iniciar la finalización
+    const reportTimestamp = new Date();
     let ordersForReport: SavedOrder[];
+
     if (selectedDate) {
         const startOfDay = new Date(selectedDate); startOfDay.setHours(0,0,0,0);
         const endOfDay = new Date(selectedDate); endOfDay.setHours(23,59,59,999);
@@ -198,21 +198,17 @@ export default function ReportsPage() {
             const orderDate = new Date(order.createdAt);
             return order.status === 'completed' && orderDate >= startOfDay && orderDate <= endOfDay;
         });
+        console.log(`[handleFinalizeDay] Pedidos para reporte (fecha seleccionada ${format(selectedDate, 'yyyy-MM-dd')}): ${ordersForReport.length} pedidos.`);
     } else {
-        // Si no hay fecha seleccionada, ¿qué hacemos? Por ahora, consideremos las órdenes de la sesión actual.
-        // O podríamos tomar todos los completados, pero es mejor ser específico.
-        // Para este ejemplo, si no hay selectedDate, tomaremos los completados de la sesión actual
         const sessionStartTime = new Date(currentSession.start_time).getTime();
         ordersForReport = allOrders.filter(order =>
             order.status === 'completed' && new Date(order.createdAt).getTime() >= sessionStartTime
         );
-        console.warn("[handleFinalizeDay] No hay fecha seleccionada para el reporte, usando órdenes completadas desde el inicio de la sesión actual.");
+        console.warn(`[handleFinalizeDay] No hay fecha seleccionada para el reporte, usando ${ordersForReport.length} órdenes completadas desde el inicio de la sesión actual (${format(new Date(currentSession.start_time), 'Pp')}).`);
     }
+    // console.log('[handleFinalizeDay] Pedidos seleccionados para el reporte:', JSON.stringify(ordersForReport.map(o => ({id: o.id, total: o.total, date: o.createdAt})), null, 2));
 
 
-    const reportTimestamp = new Date();
-
-    // Recalcular totales basados en ordersForReport para consistencia
     const finalTotalSales = ordersForReport.reduce((sum, order) => sum + order.total, 0);
     const finalCashSales = ordersForReport.filter(o => o.paymentMethod === 'cash').reduce((sum, order) => sum + order.total, 0);
     const finalCardSales = ordersForReport.filter(o => o.paymentMethod === 'card').reduce((sum, order) => sum + order.total, 0);
@@ -224,72 +220,55 @@ export default function ReportsPage() {
                               + (endOfDayData.tips ?? 0);
     const finalCashDifference = (endOfDayData.endingCashTotal ?? 0) - finalExpectedCash;
 
-    console.log('[handleFinalizeDay] Datos capturados para reporte:', {
-      username,
-      startingCash: finalStartingCash,
-      totalSales: finalTotalSales,
-      cashSales: finalCashSales,
-      cardSales: finalCardSales,
-      expenses: endOfDayData.expenses ?? 0,
-      tips: endOfDayData.tips ?? 0,
-      loanAmount: endOfDayData.loanAmount ?? 0,
-      loanReason: endOfDayData.loanReason ?? '',
-      endingCashTotal: endOfDayData.endingCashTotal ?? 0,
-      expectedCashInRegister: finalExpectedCash,
-      cashDifference: finalCashDifference,
-      completedOrdersCount: ordersForReport.length,
-      selectedDateForReport: selectedDate ? selectedDate.toISOString() : 'N/A',
-    });
+    const reportData: SalesReport = {
+        businessName: localStorage.getItem('siChefSettings_businessName') || "siChef POS",
+        reportDate: reportTimestamp.toISOString(),
+        user: username || 'Usuario Desconocido',
+        startingCash: finalStartingCash,
+        totalSales: finalTotalSales,
+        cashSales: finalCashSales,
+        cardSales: finalCardSales,
+        totalExpenses: endOfDayData.expenses ?? 0,
+        totalTips: endOfDayData.tips ?? 0,
+        loansWithdrawalsAmount: endOfDayData.loanAmount ?? 0,
+        loansWithdrawalsReason: endOfDayData.loanReason ?? '',
+        endingCash: endOfDayData.endingCashTotal ?? 0,
+        expectedCashInRegister: finalExpectedCash,
+        calculatedDifference: finalCashDifference,
+        salesHistory: ordersForReport.map(order => ({
+            orderNumber: String(order.orderNumber),
+            orderId: order.id,
+            customer: order.customerName,
+            subtotal: order.subtotal,
+            total: order.total,
+            paymentMethod: order.paymentMethod,
+            status: order.status,
+        })),
+    };
+    console.log("[handleFinalizeDay] Objeto reportData final para PDF:", JSON.stringify(reportData, null, 2));
+
 
     try {
-        const reportData: SalesReport = {
-            businessName: localStorage.getItem('siChefSettings_businessName') || "siChef POS",
-            reportDate: reportTimestamp.toISOString(),
-            user: username || 'Usuario Desconocido',
-            startingCash: finalStartingCash,
-            totalSales: finalTotalSales,
-            cashSales: finalCashSales,
-            cardSales: finalCardSales,
-            totalExpenses: endOfDayData.expenses ?? 0,
-            totalTips: endOfDayData.tips ?? 0,
-            loansWithdrawalsAmount: endOfDayData.loanAmount ?? 0,
-            loansWithdrawalsReason: endOfDayData.loanReason ?? '',
-            endingCash: endOfDayData.endingCashTotal ?? 0,
-            expectedCashInRegister: finalExpectedCash,
-            calculatedDifference: finalCashDifference,
-            salesHistory: ordersForReport.map(order => ({
-                orderNumber: String(order.orderNumber),
-                orderId: order.id,
-                customer: order.customerName,
-                subtotal: order.subtotal,
-                total: order.total,
-                paymentMethod: order.paymentMethod,
-                status: order.status,
-            })),
-        };
-
-        console.log("[handleFinalizeDay] Objeto reportData final para PDF:", JSON.stringify(reportData, null, 2));
-
         const pdfBytes = await generateSalesReport(reportData);
-        console.log(`[handleFinalizeDay] Bytes del PDF generados: ${pdfBytes?.length}`);
+        console.log(`[handleFinalizeDay] Bytes del PDF generados (longitud): ${pdfBytes?.length}`);
 
-        if (pdfBytes && pdfBytes.length > 0) {
-            const blob = new Blob([pdfBytes], { type: 'application/pdf' });
-            const link = document.createElement('a');
-            link.href = URL.createObjectURL(blob);
-            const timestampStr = format(reportTimestamp, 'yyyyMMdd_HHmmss');
-            link.download = `siChef_ReporteVentas_${timestampStr}.pdf`;
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-            URL.revokeObjectURL(link.href);
-            toast({ title: "Reporte Generado", description: "Descarga de PDF iniciada." });
-        } else {
-             console.error('[handleFinalizeDay] generateSalesReport devolvió un array vacío o nulo. PDF no se descargará.');
-             toast({ title: "Error Reporte", description: "No se pudo generar el archivo PDF (datos vacíos o error interno).", variant: "destructive" });
+        if (!pdfBytes || pdfBytes.length === 0) {
+             console.error('[handleFinalizeDay] generateSalesReport devolvió un array vacío o nulo. El PDF no se descargará.');
+             toast({ title: "Error Reporte", description: "No se pudo generar el archivo PDF (datos vacíos o error interno en la generación).", variant: "destructive" });
              setIsGeneratingPdf(false);
-             return;
+             return; // Salir si no hay bytes de PDF
         }
+
+        const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        const timestampStr = format(reportTimestamp, 'yyyyMMdd_HHmmss');
+        link.download = `siChef_ReporteVentas_${timestampStr}.pdf`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(link.href);
+        toast({ title: "Reporte Generado", description: "Descarga de PDF iniciada." });
 
         await closeCashSession(
             currentSession.id,
@@ -302,31 +281,22 @@ export default function ReportsPage() {
             endOfDayData.loanReason ?? ''
         );
 
-        // Actualizar localStorage: mantener pendientes y completados de *otras* sesiones/días
-        const sessionClosedTime = reportTimestamp.getTime(); // Usar el tiempo de cierre actual
-
         const remainingOrders = allOrders.filter(o => {
            const orderTime = new Date(o.createdAt).getTime();
            if (o.status === 'completed') {
-               // Mantener solo los completados que NO pertenecen al día/sesión que se está cerrando
                if (selectedDate) {
                    const startOfDayReport = new Date(selectedDate); startOfDayReport.setHours(0,0,0,0);
                    const endOfDayReport = new Date(selectedDate); endOfDayReport.setHours(23,59,59,999);
                    return orderTime < startOfDayReport.getTime() || orderTime > endOfDayReport.getTime();
                } else {
-                   // Si no hay fecha seleccionada, mantén los completados antes del inicio de esta sesión
                    return orderTime < new Date(currentSession.start_time).getTime();
                }
            }
-           return true; // Mantener todos los no completados (pending, cancelled)
+           return true;
         });
-
 
         localStorage.setItem('siChefOrders', JSON.stringify(remainingOrders));
         setAllOrders(remainingOrders);
-        // Forzar la re-filtración actualizando selectedDate o una dependencia
-        // Esto es un poco un hack; idealmente filteredOrders se recalcularía naturalmente.
-        // Simplemente re-establecer selectedDate a sí mismo para forzar el efecto.
         setSelectedDate(prevDate => prevDate ? new Date(prevDate) : undefined);
 
         clearSession();
@@ -336,7 +306,7 @@ export default function ReportsPage() {
 
     } catch (error) {
         console.error("[handleFinalizeDay] Error finalizando día / generando PDF:", error);
-        toast({ title: "Operación Fallida", description: `No se pudo finalizar el día o generar el reporte: ${error instanceof Error ? error.message : error}`, variant: "destructive" });
+        toast({ title: "Operación Fallida", description: `No se pudo finalizar el día o generar el reporte: ${error instanceof Error ? error.message : String(error)}`, variant: "destructive" });
     } finally {
         setIsGeneratingPdf(false);
     }
