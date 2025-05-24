@@ -1,5 +1,5 @@
 // src/lib/db.ts
-'use server'; // Ensure this runs on the server
+'use server'; // Asegurar que esto corra en el servidor
 
 import sqlite3 from 'sqlite3';
 import { open, type Database } from 'sqlite';
@@ -9,45 +9,45 @@ import path from 'path';
 const dbPath = path.join(process.cwd(), 'sichef.db');
 
 let db: Database | null = null;
-let isInitializing = false; // Flag to prevent concurrent initializations
-let initializationPromise: Promise<Database> | null = null; // Promise for ongoing initialization
+let isInitializing = false; // Bandera para prevenir inicializaciones concurrentes
+let initializationPromise: Promise<Database> | null = null; // Promesa para la inicialización en curso
 
 export async function getDb(): Promise<Database> {
-  // If initialization is already in progress, wait for it to complete
+  // Si la inicialización ya está en progreso, esperar a que se complete
   if (isInitializing && initializationPromise) {
-    console.log(`[DB] Waiting for ongoing initialization...`);
+    console.log(`[DB] Esperando inicialización en curso...`);
     return initializationPromise;
   }
 
-  // If db is already initialized, return it
+  // Si la BD ya está inicializada, retornarla
   if (db) {
-    // console.log("[DB] Returning existing database connection."); // Avoid excessive logging
+    // console.log("[DB] Retornando conexión de base de datos existente."); // Evitar logging excesivo
     return db;
   }
 
-  // Start initialization
+  // Iniciar inicialización
   isInitializing = true;
   initializationPromise = (async () => {
     try {
-      console.log(`[DB] Attempting to open database at: ${dbPath}`);
-      // Add verbose logging for sqlite3 driver
+      console.log(`[DB] Intentando abrir base de datos en: ${dbPath}`);
+      // Añadir logging verboso para el driver sqlite3
       const verboseSqlite3 = sqlite3.verbose();
       const newDb = await open({
         filename: dbPath,
-        driver: verboseSqlite3.Database // Use verbose driver for more logs
+        driver: verboseSqlite3.Database // Usar driver verboso para más logs
       });
-      console.log("[DB] Database opened successfully. Initializing schema...");
+      console.log("[DB] Base de datos abierta exitosamente. Inicializando esquema...");
       await initializeDb(newDb); // Asegurar que el esquema se cree/actualice
-      db = newDb; // Assign to the global variable *after* successful initialization
-      console.log("[DB] Database connection established and initialized.");
-      isInitializing = false; // Reset flag
-      initializationPromise = null; // Clear promise
+      db = newDb; // Asignar a la variable global *después* de una inicialización exitosa
+      console.log("[DB] Conexión de base de datos establecida e inicializada.");
+      isInitializing = false; // Resetear bandera
+      initializationPromise = null; // Limpiar promesa
       return db;
     } catch (error) {
-      isInitializing = false; // Reset flag on error
-      initializationPromise = null; // Clear promise
-      db = null; // Ensure db is null on error
-      console.error("[DB] Failed to open or initialize database:", error);
+      isInitializing = false; // Resetear bandera en error
+      initializationPromise = null; // Limpiar promesa
+      db = null; // Asegurar que db sea null en error
+      console.error("[DB] Falló al abrir o inicializar la base de datos:", error);
       throw error; // Re-lanzar el error para indicar fallo
     }
   })();
@@ -57,11 +57,11 @@ export async function getDb(): Promise<Database> {
 
 
 async function initializeDb(dbInstance: Database): Promise<void> {
-    console.log("[DB Initialize] Starting schema initialization...");
+    console.log("[DB Initialize] Iniciando inicialización de esquema...");
     try {
         // Usar PRAGMA foreign_keys=ON; para forzar restricciones de clave foránea
         await dbInstance.exec('PRAGMA foreign_keys=ON;');
-        console.log("[DB Initialize] PRAGMA foreign_keys=ON executed.");
+        console.log("[DB Initialize] PRAGMA foreign_keys=ON ejecutado.");
 
         // --- Creación de Tablas ---
         await dbInstance.exec(`
@@ -116,19 +116,21 @@ async function initializeDb(dbInstance: Database): Promise<void> {
             id TEXT PRIMARY KEY,
             product_id TEXT NOT NULL,
             label TEXT NOT NULL,
-            linked_category_id TEXT NOT NULL,
+            linked_category_id TEXT NOT NULL, /* ID de categoría tipo 'modificador' de donde sacar las opciones */
             min_quantity INTEGER NOT NULL DEFAULT 0,
             max_quantity INTEGER NOT NULL DEFAULT 1,
             FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE,
-            FOREIGN KEY (linked_category_id) REFERENCES categories(id) ON DELETE CASCADE
+            FOREIGN KEY (linked_category_id) REFERENCES categories(id) ON DELETE CASCADE /* Asegurar que la categoría vinculada exista */
             );
 
             CREATE TABLE IF NOT EXISTS product_modifier_slot_options (
             id TEXT PRIMARY KEY,
             product_modifier_slot_id TEXT NOT NULL,
-            modifier_product_id TEXT NOT NULL,
+            modifier_product_id TEXT NOT NULL, /* ID del producto (de tipo modificador) que es una opción */
+            is_default BOOLEAN DEFAULT 0,
+            price_adjustment REAL DEFAULT 0,
             FOREIGN KEY (product_modifier_slot_id) REFERENCES product_modifier_slots(id) ON DELETE CASCADE,
-            FOREIGN KEY (modifier_product_id) REFERENCES products(id) ON DELETE CASCADE,
+            FOREIGN KEY (modifier_product_id) REFERENCES products(id) ON DELETE CASCADE, /* Asegurar que el producto modificador exista */
             UNIQUE (product_modifier_slot_id, modifier_product_id)
             );
 
@@ -143,112 +145,93 @@ async function initializeDb(dbInstance: Database): Promise<void> {
             UNIQUE (package_item_id, product_modifier_slot_id)
             );
 
-            -- NUEVAS TABLAS PARA CAJA --
             CREATE TABLE IF NOT EXISTS cash_sessions (
             id TEXT PRIMARY KEY,
-            user_id TEXT, -- Quién abrió o cerró? Puede ser null si es general
+            user_id TEXT,
             start_time DATETIME DEFAULT CURRENT_TIMESTAMP,
             end_time DATETIME,
             starting_cash REAL NOT NULL DEFAULT 0,
-            ending_cash REAL, -- Conteo final
-            total_cash_sales REAL, -- Calculado de órdenes completadas
-            total_card_sales REAL, -- Calculado de órdenes completadas
+            ending_cash REAL,
+            total_cash_sales REAL,
+            total_card_sales REAL,
             total_expenses REAL DEFAULT 0,
             total_tips REAL DEFAULT 0,
             loans_withdrawals_amount REAL DEFAULT 0,
             loans_withdrawals_reason TEXT,
-            calculated_difference REAL, -- (ending_cash - (starting_cash + cash_sales - expenses - loans + tips))
+            calculated_difference REAL,
             status TEXT NOT NULL CHECK(status IN ('open', 'closed')) DEFAULT 'open'
-            -- FOREIGN KEY (user_id) REFERENCES users(id) -- Si hubiera tabla de usuarios
             );
 
             CREATE TABLE IF NOT EXISTS cash_session_details (
             id TEXT PRIMARY KEY,
             cash_session_id TEXT NOT NULL,
-            type TEXT NOT NULL CHECK(type IN ('start', 'end')), -- Indica si es conteo inicial o final
-            denomination_value REAL NOT NULL, -- e.g., 500, 200, 0.50
+            type TEXT NOT NULL CHECK(type IN ('start', 'end')),
+            denomination_value REAL NOT NULL,
             quantity INTEGER NOT NULL,
-            subtotal REAL NOT NULL, -- quantity * denomination_value
+            subtotal REAL NOT NULL,
             FOREIGN KEY (cash_session_id) REFERENCES cash_sessions(id) ON DELETE CASCADE
             );
+
+            CREATE TABLE IF NOT EXISTS modifier_serving_styles (
+                id TEXT PRIMARY KEY,
+                category_id TEXT NOT NULL, -- FK to categories (type 'modificador')
+                label TEXT NOT NULL,
+                display_order INTEGER DEFAULT 0,
+                FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE CASCADE,
+                UNIQUE (category_id, label)
+            );
         `);
-        console.log("[DB Initialize] Basic tables created or verified.");
+        console.log("[DB Initialize] Tablas base creadas o verificadas.");
 
-        // --- Add 'type' column to 'categories' if it doesn't exist ---
-        try {
-            const columns = await dbInstance.all(`PRAGMA table_info(categories)`);
-            const hasTypeColumn = columns.some(col => col.name === 'type');
-            if (!hasTypeColumn) {
-                 console.log("[DB Initialize] Adding 'type' column to 'categories' table.");
-                 await dbInstance.exec(`
-                    ALTER TABLE categories
-                    ADD COLUMN type TEXT NOT NULL CHECK(type IN ('producto', 'modificador', 'paquete')) DEFAULT 'producto';
-                 `);
-                 console.log("[DB Initialize] 'type' column added successfully.");
-             } else {
-                 // console.log("[DB Initialize] 'type' column already exists in 'categories'."); // Less verbose
-             }
-        } catch (addColumnError) {
-             console.warn("[DB Initialize] Could not check or add 'type' column to categories (might already exist or other issue):", addColumnError);
+        // --- Añadir/Verificar columnas existentes ---
+        const columnsToVerify = [
+            { table: 'categories', column: 'type', definition: "TEXT NOT NULL CHECK(type IN ('producto', 'modificador', 'paquete')) DEFAULT 'producto'" },
+            { table: 'products', column: 'inventory_item_id', definition: "TEXT" },
+            { table: 'products', column: 'inventory_consumed_per_unit', definition: "REAL DEFAULT 1" },
+            { table: 'product_modifier_slot_options', column: 'is_default', definition: "BOOLEAN DEFAULT 0" },
+            { table: 'product_modifier_slot_options', column: 'price_adjustment', definition: "REAL DEFAULT 0" },
+        ];
+
+        for (const { table, column, definition } of columnsToVerify) {
+            try {
+                const tableInfo = await dbInstance.all(`PRAGMA table_info(${table})`);
+                const columnExists = tableInfo.some(col => col.name === column);
+                if (!columnExists) {
+                    console.log(`[DB Initialize] Añadiendo columna '${column}' a la tabla '${table}'.`);
+                    await dbInstance.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition};`);
+                    console.log(`[DB Initialize] Columna '${column}' añadida exitosamente a '${table}'.`);
+                }
+            } catch (alterError) {
+                 console.warn(`[DB Initialize] No se pudo verificar o añadir columna '${column}' a la tabla '${table}' (puede que ya exista o haya otro problema):`, alterError);
+            }
         }
-
-         // --- Add 'inventory_item_id' and 'inventory_consumed_per_unit' to 'products' if they don't exist ---
-        try {
-             const productColumns = await dbInstance.all(`PRAGMA table_info(products)`);
-             const hasInvItemId = productColumns.some(col => col.name === 'inventory_item_id');
-             const hasInvConsumed = productColumns.some(col => col.name === 'inventory_consumed_per_unit');
-
-             if (!hasInvItemId) {
-                console.log("[DB Initialize] Adding 'inventory_item_id' column to 'products' table.");
-                await dbInstance.exec(`ALTER TABLE products ADD COLUMN inventory_item_id TEXT;`);
-                 // Add foreign key constraint separately if needed, though altering constraints is complex in SQLite
-                 console.log("[DB Initialize] 'inventory_item_id' column added.");
-             }
-             if (!hasInvConsumed) {
-                 console.log("[DB Initialize] Adding 'inventory_consumed_per_unit' column to 'products' table.");
-                 await dbInstance.exec(`ALTER TABLE products ADD COLUMN inventory_consumed_per_unit REAL DEFAULT 1;`);
-                 console.log("[DB Initialize] 'inventory_consumed_per_unit' column added.");
-             }
-             // Re-add foreign key constraint if columns were added (complex, might be better to recreate table in dev)
-             // For simplicity, we'll assume the FK was added initially or rely on the app logic
-             // console.log("[DB Initialize] Inventory columns checked/added to 'products'."); // Less verbose
-
-        } catch (addProductColumnError) {
-             console.warn("[DB Initialize] Could not check or add inventory columns to products:", addProductColumnError);
-        }
-
-
-        console.log("[DB Initialize] Schema initialization/verification finished.");
+        
+        console.log("[DB Initialize] Inicialización/verificación de esquema finalizada.");
     } catch (initError) {
-        console.error("[DB Initialize] Error during schema initialization:", initError);
-        throw initError; // Propagate error
+        console.error("[DB Initialize] Error durante inicialización de esquema:", initError);
+        throw initError; // Propagar error
     }
 }
 
-// Ejemplo de cómo cerrar la base de datos (opcional, depende del ciclo de vida de la app)
 export async function closeDb(): Promise<void> {
   if (db) {
     try {
         await db.close();
         db = null;
-        console.log("[DB] Database connection closed.");
+        console.log("[DB] Conexión de base de datos cerrada.");
     } catch (closeError) {
-        console.error("[DB] Error closing database connection:", closeError);
-        // Decide if you want to throw, but usually logging is sufficient here
+        console.error("[DB] Error cerrando conexión de base de datos:", closeError);
     }
-  } else {
-      // console.log("[DB] Close requested, but no active connection."); // Less verbose
   }
 }
 
-// Graceful shutdown handling (optional but good practice)
 process.on('SIGINT', async () => {
-    console.log('[DB] Received SIGINT. Closing database connection...');
+    console.log('[DB] SIGINT recibido. Cerrando conexión de base de datos...');
     await closeDb();
     process.exit(0);
 });
 process.on('SIGTERM', async () => {
-    console.log('[DB] Received SIGTERM. Closing database connection...');
+    console.log('[DB] SIGTERM recibido. Cerrando conexión de base de datos...');
     await closeDb();
     process.exit(0);
 });

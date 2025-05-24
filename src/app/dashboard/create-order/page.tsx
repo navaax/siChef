@@ -26,6 +26,7 @@ import {
     getItemsForPackage,
     getOverridesForPackageItem,
     getModifiersByCategory,
+    getServingStylesForCategory, // NUEVO: Para obtener estilos de servicio
 } from '@/services/product-service';
 import { adjustInventoryStock, getInventoryItems } from '@/services/inventory-service';
 import { printTicket, PrinterError } from '@/services/printer-service';
@@ -42,14 +43,15 @@ import type {
     SelectedModifierItem,
     SavedOrder,
     InventoryItem,
+    ModifierServingStyle, // NUEVO: Tipo para estilos de servicio
 } from '@/types/product-types';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog"; // Para diálogo de costo extra
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"; // Para estilos de servicio
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
 
 // --- Definiciones ---
-const PREDEFINED_SERVING_STYLES = ["Normal", "Aparte", "En Vasito", "Extra de esto"];
+// ELIMINADO: PREDEFINED_SERVING_STYLES ya no se usa, se obtendrán de la BD.
 
 // --- Funciones de Ayuda ---
 const formatCurrency = (amount: number | null | undefined): string => {
@@ -81,11 +83,13 @@ interface PackageDetailState {
 }
 
 interface ModifierInteractionState {
-    orderItemUniqueId: string | null; // Para identificar a qué OrderItem pertenece el modificador
+    orderItemUniqueId: string | null;
     modifierProductId: string | null;
-    modifierSlotId: string | null; // Para saber a qué slot pertenece (para recalcular precio si es necesario)
-    packageItemContextId?: string | null; // Si el modificador es de un item dentro de un paquete
-    anchorElement: HTMLElement | null; // Para anclar el Popover
+    modifierSlotId: string | null;
+    packageItemContextId?: string | null;
+    anchorElement: HTMLElement | null;
+    // NUEVO: Para estilos de servicio dinámicos
+    availableServingStyles?: ModifierServingStyle[];
 }
 
 // --- Componente ---
@@ -108,7 +112,6 @@ export default function CreateOrderPage() {
   const [packagesData, setPackagesData] = useState<Package[]>([]);
   const [inventoryMap, setInventoryMap] = useState<Map<string, InventoryItem>>(new Map());
 
-  // Estados para interacciones avanzadas con modificadores
   const [servingStylePopoverState, setServingStylePopoverState] = useState<ModifierInteractionState | null>(null);
   const [extraCostDialogState, setExtraCostDialogState] = useState<ModifierInteractionState & { currentExtraCost?: number } | null>(null);
   const [extraCostInput, setExtraCostInput] = useState<string>('');
@@ -122,6 +125,7 @@ export default function CreateOrderPage() {
         packageDetails: false,
         inventory: false,
         printing: false,
+        servingStyles: false, // NUEVO: Estado de carga para estilos de servicio
     });
 
 
@@ -175,24 +179,15 @@ export default function CreateOrderPage() {
         if (slotsDefinition && slotsDefinition.length > 0) {
              const optionsPromises = slotsDefinition.map(async (slotDef) => {
                  let options: Product[] = [];
-                 // Si allowedOptions existe y tiene items, usa esos IDs para obtener detalles de producto
                  if (slotDef.allowedOptions && slotDef.allowedOptions.length > 0) {
                      const optionDetailsPromises = slotDef.allowedOptions.map(opt => getProductById(opt.modifier_product_id));
                      options = (await Promise.all(optionDetailsPromises)).filter(p => p !== null) as Product[];
                  } else {
-                     // Si no hay allowedOptions, obtener todos los modificadores de la categoría vinculada
                      options = await getModifiersByCategory(slotDef.linked_category_id);
                  }
-                 // Aquí, slotDef.allowedOptions (si existe) ya tiene price_adjustment y is_default de la BD
-                 // Necesitamos mapear esto a las 'options' que son Product[] para la UI
                  const finalOptions = options.map(optProduct => {
                     const slotOptionConfig = slotDef.allowedOptions?.find(ao => ao.modifier_product_id === optProduct.id);
-                    return {
-                        ...optProduct,
-                        // El precio base del producto modificador ya está en optProduct.price
-                        // Si hay un price_adjustment en la configuración del slot, se sumará al seleccionar
-                        // is_default también vendría de slotOptionConfig si se usara para preselección
-                    };
+                    return { ...optProduct };
                  });
 
                  return { ...slotDef, options: finalOptions, selectedOptions: [] };
@@ -287,7 +282,7 @@ export default function CreateOrderPage() {
     slotId: string,
     optionProductId: string,
     optionName: string,
-    optionBasePrice: number, // Precio base del producto modificador
+    optionBasePrice: number,
     context: 'product' | 'package',
     packageItemId?: string
 ) => {
@@ -300,12 +295,11 @@ export default function CreateOrderPage() {
                 const maxQty = slot.max_quantity;
 
                 const modifierProductDefinition = slot.options.find(opt => opt.id === optionProductId);
-                if (!modifierProductDefinition) return slot; // Should not happen
+                if (!modifierProductDefinition) return slot;
 
-                // Considerar price_adjustment del slot si existe
                 const slotOptionConfig = slot.allowedOptions?.find(ao => ao.modifier_product_id === optionProductId);
                 const priceAdjustment = slotOptionConfig?.price_adjustment || 0;
-                const effectiveModifierPrice = optionBasePrice + priceAdjustment; // Precio a usar para este modificador en este slot
+                const effectiveModifierPrice = optionBasePrice + priceAdjustment;
 
                 if (modifierProductDefinition.inventory_item_id) {
                      const invItem = inventoryMap.get(modifierProductDefinition.inventory_item_id);
@@ -323,9 +317,9 @@ export default function CreateOrderPage() {
                         newSelections.push({
                             productId: optionProductId,
                             name: optionName,
-                            priceModifier: effectiveModifierPrice, // Usar precio efectivo
+                            priceModifier: effectiveModifierPrice,
                             slotId: slotId,
-                            // servingStyle y extraCost se añadirán por otras interacciones
+                            servingStyle: 'Normal', // Default serving style
                         });
                     } else {
                         toast({ title: "Límite Alcanzado", description: `No se puede seleccionar más de ${maxQty} ${slot.label.toLowerCase()}.`, variant: "default" });
@@ -352,50 +346,31 @@ export default function CreateOrderPage() {
     }
 };
 
-// Para abrir popover de estilos de servicio
-const handleModifierDoubleClick = (
+const handleModifierDoubleClick = async (
     event: React.MouseEvent<HTMLDivElement>,
-    orderItemUniqueId: string | undefined, // ID del OrderItem si el modificador ya está en el pedido
-    productId: string,
-    slotId: string,
+    orderItemUniqueId: string | undefined,
+    productId: string, // ID del producto modificador
+    slotId: string, // ID del slot al que pertenece el modificador
     context: 'product' | 'package',
     packageItemContextId?: string
 ) => {
-    event.preventDefault(); // Prevenir que se dispare el single click
-    // Si el modificador aún no está en el pedido (estamos en la pantalla de selección de modificadores)
-    // necesitamos una forma de identificar a qué OrderItem se añadirá.
-    // Por ahora, asumimos que si orderItemUniqueId no está, el popover afectará la próxima adición.
-    // Esto es complejo. Simplifiquemos: el popover SÓLO funciona para modificadores YA en el pedido.
-    // Para modificadores que se están seleccionando (antes de añadir al pedido), no habrá popover de estilo.
-    // El usuario los añade y LUEGO puede doble-clickear en el RESUMEN DEL PEDIDO para cambiar estilo.
-    // --> ESTO ES UN CAMBIO DE PLAN: Interacciones avanzadas sólo en el resumen del pedido.
-    // Por lo tanto, esta función NO se llamará desde las tarjetas de selección de modificadores.
+    event.preventDefault();
 
-    // --> REVERTIR PLAN: Mantener popover en tarjetas de selección.
-    // Encontrar el orderItem relevante o el slot de selección actual.
-    let targetOrderItem: OrderItem | undefined;
-    if (orderItemUniqueId) {
-        targetOrderItem = currentOrder.items.find(item => item.uniqueId === orderItemUniqueId);
-    }
-
-    // Necesitamos saber si este modificador está actualmente seleccionado en el panel de selección o en el pedido
     let isSelectedCurrently = false;
-    let currentServingStyle: string | undefined;
+    let targetSlotDefinition: ProductModifierSlot | ModifierSlotState | undefined;
 
-    if (context === 'product' && selectedProduct) { // Modificador de producto regular, en selección
-        const targetSlot = currentModifierSlots.find(s => s.id === slotId);
-        const selectedOpt = targetSlot?.selectedOptions.find(so => so.productId === productId);
+    if (context === 'product' && selectedProduct) {
+        targetSlotDefinition = currentModifierSlots.find(s => s.id === slotId);
+        const selectedOpt = targetSlotDefinition?.selectedOptions.find(so => so.productId === productId);
         isSelectedCurrently = !!selectedOpt;
-        currentServingStyle = selectedOpt?.servingStyle;
-    } else if (context === 'package' && selectedPackageDetail && packageItemContextId) { // Modificador de item de paquete, en selección
+    } else if (context === 'package' && selectedPackageDetail && packageItemContextId) {
         const targetItemSlots = selectedPackageDetail.itemSlots[packageItemContextId];
-        const targetSlot = targetItemSlots?.find(s => s.id === slotId);
-        const selectedOpt = targetSlot?.selectedOptions.find(so => so.productId === productId);
+        targetSlotDefinition = targetItemSlots?.find(s => s.id === slotId);
+        const selectedOpt = targetSlotDefinition?.selectedOptions.find(so => so.productId === productId);
         isSelectedCurrently = !!selectedOpt;
-        currentServingStyle = selectedOpt?.servingStyle;
-    } else if (targetOrderItem) { // Modificador ya en el pedido
-        // Lógica para encontrar el SelectedModifierItem en targetOrderItem...
-        // Esto se manejará en el resumen del pedido, no aquí.
+    } else if (orderItemUniqueId) {
+        // Lógica para modificadores ya en el pedido (puede requerir refactorización si esto se usa desde el resumen)
+        // Por ahora, nos enfocamos en la selección
         return;
     }
 
@@ -404,40 +379,51 @@ const handleModifierDoubleClick = (
         return;
     }
 
-    setServingStylePopoverState({
-        orderItemUniqueId: orderItemUniqueId || null, // Si es null, se aplica al item en `currentModifierSlots` o `selectedPackageDetail`
-        modifierProductId: productId,
-        modifierSlotId: slotId,
-        packageItemContextId: packageItemContextId,
-        anchorElement: event.currentTarget,
-    });
+    if (!targetSlotDefinition) return;
+
+    setIsLoading(prev => ({ ...prev, servingStyles: true }));
+    try {
+        const styles = await getServingStylesForCategory(targetSlotDefinition.linked_category_id);
+        if (styles.length === 0) {
+             toast({title: "Estilos no definidos", description: "No hay estilos de servicio configurados para esta categoría de modificador.", variant:"default"});
+             return;
+        }
+        setServingStylePopoverState({
+            orderItemUniqueId: orderItemUniqueId || null,
+            modifierProductId: productId,
+            modifierSlotId: slotId,
+            packageItemContextId: packageItemContextId,
+            anchorElement: event.currentTarget,
+            availableServingStyles: styles,
+        });
+    } catch (error) {
+        toast({title: "Error", description: "No se pudieron cargar los estilos de servicio.", variant:"destructive"});
+    } finally {
+        setIsLoading(prev => ({ ...prev, servingStyles: false }));
+    }
 };
 
 
-// Guardar estilo de servicio seleccionado desde el popover
-const handleSaveServingStyle = (style: string) => {
+const handleSaveServingStyle = (styleLabel: string) => {
     if (!servingStylePopoverState) return;
     const { orderItemUniqueId, modifierProductId, modifierSlotId, packageItemContextId } = servingStylePopoverState;
 
-    // Actualizar en el pedido actual si orderItemUniqueId está presente
     if (orderItemUniqueId) {
-        // Lógica para actualizar currentOrder.items[...].selectedModifiers[...]
-        // O currentOrder.items[...].packageItems[...].selectedModifiers[...]
-        // Esta parte es compleja y la dejaremos para el resumen del pedido
-    } else { // Actualizar en el estado de selección (currentModifierSlots o selectedPackageDetail)
-        if (selectedProduct && !packageItemContextId) { // Modificador de producto regular
+        // Lógica para actualizar currentOrder.items (se manejará en el resumen del pedido)
+    } else {
+        if (selectedProduct && !packageItemContextId) {
             setCurrentModifierSlots(prevSlots => prevSlots.map(slot => {
                 if (slot.id === modifierSlotId) {
                     return {
                         ...slot,
                         selectedOptions: slot.selectedOptions.map(opt =>
-                            opt.productId === modifierProductId ? { ...opt, servingStyle: style } : opt
+                            opt.productId === modifierProductId ? { ...opt, servingStyle: styleLabel } : opt
                         )
                     };
                 }
                 return slot;
             }));
-        } else if (selectedPackageDetail && packageItemContextId) { // Modificador de item de paquete
+        } else if (selectedPackageDetail && packageItemContextId) {
             setSelectedPackageDetail(prevDetail => {
                 if (!prevDetail) return null;
                 const updatedItemSlots = { ...prevDetail.itemSlots };
@@ -447,7 +433,7 @@ const handleSaveServingStyle = (style: string) => {
                             return {
                                 ...slot,
                                 selectedOptions: slot.selectedOptions.map(opt =>
-                                    opt.productId === modifierProductId ? { ...opt, servingStyle: style } : opt
+                                    opt.productId === modifierProductId ? { ...opt, servingStyle: styleLabel } : opt
                                 )
                             };
                         }
@@ -458,18 +444,16 @@ const handleSaveServingStyle = (style: string) => {
             });
         }
     }
-    setServingStylePopoverState(null); // Cerrar popover
-    toast({title: "Estilo Guardado", description: `Modificador servido: ${style}`});
+    setServingStylePopoverState(null);
+    toast({title: "Estilo Guardado", description: `Modificador servido: ${styleLabel}`});
 };
 
-// Abrir diálogo de costo extra (llamado desde el resumen del pedido)
 const handleOpenExtraCostDialog = (
     orderItemUniqueId: string,
     modifierProductId: string,
     modifierSlotId: string,
     packageItemContextId?: string
 ) => {
-    // Encontrar el SelectedModifierItem en currentOrder para obtener el extraCost actual
     const orderItem = currentOrder.items.find(item => item.uniqueId === orderItemUniqueId);
     if (!orderItem) return;
 
@@ -486,14 +470,13 @@ const handleOpenExtraCostDialog = (
         modifierProductId,
         modifierSlotId,
         packageItemContextId,
-        anchorElement: null, // No necesita ancla para diálogo
+        anchorElement: null,
         currentExtraCost: targetModifier?.extraCost || 0,
     });
     setExtraCostInput(String(targetModifier?.extraCost || 0));
 };
 
 
-// Guardar costo extra
 const handleSaveExtraCost = () => {
     if (!extraCostDialogState) return;
     const { orderItemUniqueId, modifierProductId, modifierSlotId, packageItemContextId } = extraCostDialogState;
@@ -532,11 +515,10 @@ const handleSaveExtraCost = () => {
                             : mod
                     );
                 }
-                // Recalcular precio total del item
                 let newItemTotalPrice = item.basePrice;
-                const allMods = packageItemContextId && updatedPackageItems
+                const allMods = (packageItemContextId && updatedPackageItems
                     ? updatedPackageItems.flatMap(pi => pi.selectedModifiers)
-                    : updatedSelectedModifiers;
+                    : updatedSelectedModifiers) || [];
 
                 allMods.forEach(mod => {
                     newItemTotalPrice += (mod.priceModifier || 0) + (mod.extraCost || 0);
@@ -567,16 +549,16 @@ const handleSaveExtraCost = () => {
     const chosenModifiers = currentModifierSlots.flatMap(slot => slot.selectedOptions);
     let modifierPriceTotal = 0;
     chosenModifiers.forEach(mod => {
-        modifierPriceTotal += (mod.priceModifier || 0) + (mod.extraCost || 0); // Incluir extraCost
+        modifierPriceTotal += (mod.priceModifier || 0) + (mod.extraCost || 0);
     });
     const pricePerUnit = selectedProduct.price + modifierPriceTotal;
 
     addProductToOrder(selectedProduct, chosenModifiers, pricePerUnit);
     toast({
         title: `${selectedProduct.name} añadido`,
-        description: chosenModifiers.length > 0 ? `Modificadores: ${chosenModifiers.map(m => `${m.name}${m.servingStyle ? ` (${m.servingStyle})` : ''}`).join(', ')}` : 'Sin modificadores',
+        description: chosenModifiers.length > 0 ? `Modificadores: ${chosenModifiers.map(m => `${m.name}${m.servingStyle && m.servingStyle !== 'Normal' ? ` (${m.servingStyle})` : ''}`).join(', ')}` : 'Sin modificadores',
     });
-    setView('categories');
+    setView('categories'); // Volver a categorías
     resetProductSelection();
     setSelectedCategory(null);
     setProductsData([]);
@@ -636,7 +618,7 @@ const handleSaveExtraCost = () => {
                      const modProductDetails = productDetailsMap.get(modOption.productId);
                      if (modProductDetails?.inventory_item_id) {
                         const invItem = inventoryMap.get(modProductDetails.inventory_item_id);
-                        const consumed = (modProductDetails.inventory_consumed_per_unit ?? 0) * item.quantity;
+                        const consumed = (modProductDetails.inventory_consumed_per_unit ?? 0) * item.quantity; // Asumir que el consumo es por item del paquete
                          const currentStock = invItem?.current_stock ?? 0;
                          const alreadyConsumed = tempInventoryChanges[modProductDetails.inventory_item_id] || 0;
                         if (currentStock + alreadyConsumed < consumed) {
@@ -672,7 +654,7 @@ const handleSaveExtraCost = () => {
         };
         setCurrentOrder(prev => ({ ...prev, items: [...prev.items, newOrderItem] }));
         toast({ title: `Paquete "${packageDef.name}" añadido` });
-        setView('categories');
+        setView('categories'); // Volver a categorías
         resetPackageSelection();
         setSelectedCategory(null);
         setProductsData([]);
@@ -706,7 +688,7 @@ const handleSaveExtraCost = () => {
                 });
                 pricePerUnit = item.basePrice + modifierPriceTotal;
            } else {
-              pricePerUnit = item.basePrice; // El precio de los paquetes es fijo, los modificadores internos no alteran su precio de venta.
+              pricePerUnit = item.basePrice;
            }
           console.warn("Verificación de inventario al aumentar cantidad está simplificada.");
           return { ...item, quantity: newQuantity, totalPrice: pricePerUnit * newQuantity };
@@ -823,7 +805,7 @@ const handleSaveExtraCost = () => {
                      allProductIds.add(pkgItem.productId);
                      pkgItem.selectedModifiers.forEach(mod => allProductIds.add(mod.productId));
                  });
-                  item.selectedModifiers.forEach(mod => allProductIds.add(mod.productId));
+                  item.selectedModifiers.forEach(mod => allProductIds.add(mod.productId)); // Modificadores a nivel paquete (si los hubiera)
              }
          });
          const productDetailsMap = new Map<string, Product>();
@@ -855,8 +837,8 @@ const handleSaveExtraCost = () => {
                      const pkgItemDetails = productDetailsMap.get(pkgItem.productId); if (!pkgItemDetails) continue;
                      if (pkgItemDetails.inventory_item_id && pkgItemDetails.inventory_consumed_per_unit) {
                           const invItemId = pkgItemDetails.inventory_item_id;
-                           const packageItemDef = selectedPackageDetail?.packageItems.find(pi => pi.id === pkgItem.packageItemId);
-                           const itemQtyInPackage = packageItemDef?.quantity || 1;
+                           const packageItemDef = selectedPackageDetail?.packageItems.find(pi => pi.id === pkgItem.packageItemId); // Definición del item de paquete
+                           const itemQtyInPackage = packageItemDef?.quantity || 1; // Cantidad base del item en el paquete
                            const change = -(pkgItemDetails.inventory_consumed_per_unit * itemQtyInPackage * orderItem.quantity);
                           const currentData = inventoryAdjustments[invItemId] || { change: 0, name: inventoryMap.get(invItemId)?.name || 'Inv Item Desc.' };
                           inventoryAdjustments[invItemId] = { ...currentData, change: currentData.change + change };
@@ -865,7 +847,8 @@ const handleSaveExtraCost = () => {
                          const modDetails = productDetailsMap.get(modifier.productId);
                          if (modDetails?.inventory_item_id && modDetails.inventory_consumed_per_unit) {
                              const invItemId = modDetails.inventory_item_id;
-                              const change = -(modDetails.inventory_consumed_per_unit * orderItem.quantity);
+                             // Asumimos que el consumo del modificador es por cada item del paquete al que se aplica, multiplicado por la cantidad del paquete
+                             const change = -(modDetails.inventory_consumed_per_unit * orderItem.quantity);
                              const currentData = inventoryAdjustments[invItemId] || { change: 0, name: inventoryMap.get(invItemId)?.name || 'Inv Item Desc.' };
                              inventoryAdjustments[invItemId] = { ...currentData, change: currentData.change + change };
                          }
@@ -901,16 +884,22 @@ const handleSaveExtraCost = () => {
      const finalizedOrder: SavedOrder = {
       id: newOrderId, orderNumber: newOrderNumber, customerName: currentOrder.customerName,
       items: currentOrder.items.map(item => {
-          let components: { name: string; slotLabel?: string, servingStyle?: string, extraCost?: number }[] = [];
+          let components: SavedOrderItemComponent[] = [];
            if (item.type === 'package' && item.packageItems) {
                 item.packageItems.forEach(pkgItem => {
-                    components.push({ name: `${pkgItem.productName}`, slotLabel: 'Contenido' });
+                    components.push({ name: `${pkgItem.productName}`, slotLabel: 'Contenido' }); // Identificarlo como contenido
                     if (pkgItem.selectedModifiers.length > 0) {
                          pkgItem.selectedModifiers.forEach(mod => {
                              let slotLabel = 'Mod';
+                             // Intentar encontrar la etiqueta del slot original.
+                             // Esto puede ser complejo si el slot original no está en currentModifierSlots (ej. si se añadió un paquete directamente)
+                             // Se necesitaría una forma de acceder a la definición de slots del producto base del packageItem
+                             // Por simplicidad, usaremos una etiqueta genérica si no se encuentra
+                             // const slotDefinition = findSlotDefinition(pkgItem.productId, mod.slotId); // Hypothetical function
                              const slotsSource = selectedPackageDetail?.itemSlots[pkgItem.packageItemId] ?? currentModifierSlots;
                              const slot = slotsSource.find(s => s.id === mod.slotId);
                              slotLabel = slot?.label || `Mod (${pkgItem.productName})`;
+
                              components.push({ name: `↳ ${mod.name}`, slotLabel: slotLabel, servingStyle: mod.servingStyle, extraCost: mod.extraCost });
                          });
                     }
@@ -930,7 +919,7 @@ const handleSaveExtraCost = () => {
           };
       }),
       paymentMethod: currentOrder.paymentMethod, subtotal: currentOrder.subtotal, total: currentOrder.total,
-      status: 'pending', createdAt: new Date(),
+      status: 'pending', createdAt: new Date(), // CAMBIAR A PENDING
       paidAmount: currentOrder.paidAmount, changeGiven: currentOrder.changeDue,
     };
 
@@ -1039,7 +1028,7 @@ const handleSaveExtraCost = () => {
         );
 
      case 'modifiers':
-         if (isLoading.modifiers) {
+         if (isLoading.modifiers || isLoading.servingStyles) {
              return <div className="flex justify-center items-center h-full"><Loader2 className="h-8 w-8 animate-spin text-muted-foreground" /></div>;
          }
          if (!selectedProduct) return <p className="text-center text-muted-foreground py-10">Error: No hay producto seleccionado.</p>;
@@ -1077,7 +1066,6 @@ const handleSaveExtraCost = () => {
                                 return (
                                   <Popover key={option.id} open={servingStylePopoverState?.modifierProductId === option.id && servingStylePopoverState?.modifierSlotId === slot.id} onOpenChange={(open) => { if (!open) setServingStylePopoverState(null); }}>
                                     <PopoverTrigger asChild>
-                                      {/* Envolver Card con un div para asegurar un solo hijo para PopoverTrigger asChild */}
                                       <div
                                         onDoubleClick={(e) => handleModifierDoubleClick(e, undefined, option.id, slot.id, 'product')}
                                       >
@@ -1087,25 +1075,32 @@ const handleSaveExtraCost = () => {
                                             title={isDisabled ? `Max (${slot.max_quantity}) alcanzado` : isOutOfStock ? `Sin Stock (${optionInvItemName})` : option.name}
                                         >
                                             {isOutOfStock && <Badge variant="destructive" className="absolute -top-1.5 -right-1.5 text-xs px-1 py-0">Stock</Badge>}
-                                            <span className="text-xs md:text-sm block">{option.name} {currentSelection?.servingStyle && `(${currentSelection.servingStyle})`}</span>
+                                            <span className="text-xs md:text-sm block">{option.name} {currentSelection?.servingStyle && currentSelection.servingStyle !== 'Normal' && `(${currentSelection.servingStyle})`}</span>
                                             {option.price > 0 && <span className="block text-xs text-muted-foreground mt-0.5">{formatCurrency(option.price + (currentSelection?.extraCost || 0) )}</span>}
                                         </Card>
                                       </div>
                                     </PopoverTrigger>
                                     <PopoverContent className="w-56 p-2">
                                         <p className="text-xs font-medium mb-2 text-center">Estilo de Servicio para {option.name}</p>
-                                        <RadioGroup
-                                            defaultValue={currentSelection?.servingStyle || "Normal"}
-                                            onValueChange={(style) => handleSaveServingStyle(style)}
-                                            className="space-y-1"
-                                        >
-                                            {PREDEFINED_SERVING_STYLES.map(style => (
-                                                <div key={style} className="flex items-center space-x-2">
-                                                    <RadioGroupItem value={style} id={`${option.id}-${style}`} />
-                                                    <Label htmlFor={`${option.id}-${style}`} className="text-xs font-normal">{style}</Label>
+                                         {isLoading.servingStyles ? <Loader2 className="h-5 w-5 animate-spin mx-auto my-2"/> : (
+                                            <RadioGroup
+                                                value={currentSelection?.servingStyle || "Normal"}
+                                                onValueChange={(style) => handleSaveServingStyle(style)}
+                                                className="space-y-1"
+                                            >
+                                                {/* Opción Normal siempre disponible */}
+                                                <div key="Normal" className="flex items-center space-x-2">
+                                                    <RadioGroupItem value="Normal" id={`${option.id}-Normal`} />
+                                                    <Label htmlFor={`${option.id}-Normal`} className="text-xs font-normal">Normal</Label>
                                                 </div>
-                                            ))}
-                                        </RadioGroup>
+                                                {servingStylePopoverState?.availableServingStyles?.map(style => (
+                                                    <div key={style.id} className="flex items-center space-x-2">
+                                                        <RadioGroupItem value={style.label} id={`${option.id}-${style.id}`} />
+                                                        <Label htmlFor={`${option.id}-${style.id}`} className="text-xs font-normal">{style.label}</Label>
+                                                    </div>
+                                                ))}
+                                            </RadioGroup>
+                                         )}
                                     </PopoverContent>
                                   </Popover>
                                 );
@@ -1114,15 +1109,15 @@ const handleSaveExtraCost = () => {
                     </div>
                 ))}
              </div>
-            <Button onClick={handleAddProductWithModifiers} className="w-full mt-6" disabled={isLoading.modifiers}>
-               {isLoading.modifiers ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <PlusCircle className="mr-2 h-4 w-4" />}
+            <Button onClick={handleAddProductWithModifiers} className="w-full mt-6" disabled={isLoading.modifiers || isLoading.servingStyles}>
+               {isLoading.modifiers || isLoading.servingStyles ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <PlusCircle className="mr-2 h-4 w-4" />}
                Añadir al Pedido
             </Button>
           </>
         );
 
     case 'package-details':
-        if (isLoading.packageDetails) {
+        if (isLoading.packageDetails || isLoading.servingStyles) {
            return <div className="flex justify-center items-center h-full"><Loader2 className="h-8 w-8 animate-spin text-muted-foreground" /></div>;
         }
         if (!selectedPackageDetail) return <p className="text-center text-muted-foreground py-10">Error: No hay paquete seleccionado.</p>;
@@ -1171,21 +1166,27 @@ const handleSaveExtraCost = () => {
                                                         title={isDisabled ? `Max (${maxQty}) alcanzado` : isOutOfStock ? `Sin Stock (${optionInvItemName})` : option.name}
                                                     >
                                                         {isOutOfStock && <Badge variant="destructive" className="absolute -top-1.5 -right-1.5 text-xs px-1 py-0">Stock</Badge>}
-                                                        <span className="text-xs md:text-sm block">{option.name} {currentSelection?.servingStyle && `(${currentSelection.servingStyle})`}</span>
+                                                        <span className="text-xs md:text-sm block">{option.name} {currentSelection?.servingStyle && currentSelection.servingStyle !== 'Normal' && `(${currentSelection.servingStyle})`}</span>
                                                         {option.price > 0 && <span className="block text-xs text-muted-foreground mt-0.5">{formatCurrency(option.price + (currentSelection?.extraCost || 0))}</span>}
                                                     </Card>
                                                   </div>
                                                 </PopoverTrigger>
                                                 <PopoverContent className="w-56 p-2">
                                                    <p className="text-xs font-medium mb-2 text-center">Estilo de Servicio para {option.name}</p>
-                                                    <RadioGroup defaultValue={currentSelection?.servingStyle || "Normal"} onValueChange={(style) => handleSaveServingStyle(style)} className="space-y-1">
-                                                        {PREDEFINED_SERVING_STYLES.map(style => (
-                                                            <div key={style} className="flex items-center space-x-2">
-                                                                <RadioGroupItem value={style} id={`${item.id}-${option.id}-${style}`} />
-                                                                <Label htmlFor={`${item.id}-${option.id}-${style}`} className="text-xs font-normal">{style}</Label>
+                                                    {isLoading.servingStyles ? <Loader2 className="h-5 w-5 animate-spin mx-auto my-2"/> : (
+                                                        <RadioGroup value={currentSelection?.servingStyle || "Normal"} onValueChange={(style) => handleSaveServingStyle(style)} className="space-y-1">
+                                                            <div key="Normal" className="flex items-center space-x-2">
+                                                                <RadioGroupItem value="Normal" id={`${item.id}-${option.id}-Normal`} />
+                                                                <Label htmlFor={`${item.id}-${option.id}-Normal`} className="text-xs font-normal">Normal</Label>
                                                             </div>
-                                                        ))}
-                                                    </RadioGroup>
+                                                            {servingStylePopoverState?.availableServingStyles?.map(style => (
+                                                                <div key={style.id} className="flex items-center space-x-2">
+                                                                    <RadioGroupItem value={style.label} id={`${item.id}-${option.id}-${style.id}`} />
+                                                                    <Label htmlFor={`${item.id}-${option.id}-${style.id}`} className="text-xs font-normal">{style.label}</Label>
+                                                                </div>
+                                                            ))}
+                                                        </RadioGroup>
+                                                    )}
                                                 </PopoverContent>
                                               </Popover>
                                             );
@@ -1197,8 +1198,8 @@ const handleSaveExtraCost = () => {
                     </Card>
                  ))}
              </div>
-             <Button onClick={handleAddPackageToOrder} className="w-full mt-6" disabled={isLoading.packageDetails || isLoading.inventory}>
-                {isLoading.packageDetails || isLoading.inventory ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <PlusCircle className="mr-2 h-4 w-4" />}
+             <Button onClick={handleAddPackageToOrder} className="w-full mt-6" disabled={isLoading.packageDetails || isLoading.inventory || isLoading.servingStyles}>
+                {isLoading.packageDetails || isLoading.inventory || isLoading.servingStyles ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <PlusCircle className="mr-2 h-4 w-4" />}
                 Añadir Paquete al Pedido
             </Button>
             </>
@@ -1290,7 +1291,7 @@ const handleSaveExtraCost = () => {
                                                             <li key={`${mod.productId}-${modIdx}`} className="flex justify-between items-center">
                                                                 <span>
                                                                   {mod.name}
-                                                                  {mod.servingStyle && ` (${mod.servingStyle})`}
+                                                                  {mod.servingStyle && mod.servingStyle !== 'Normal' && ` (${mod.servingStyle})`}
                                                                   {(mod.priceModifier || 0) + (mod.extraCost || 0) > 0 ? ` (${formatCurrency((mod.priceModifier || 0) + (mod.extraCost || 0))})` : ''}
                                                                 </span>
                                                                 <Button variant="ghost" size="icon" className="h-4 w-4 text-primary/70" onClick={() => handleOpenExtraCostDialog(item.uniqueId, mod.productId, mod.slotId, pkgItem.packageItemId)}><DollarSign className="h-3 w-3"/></Button>
@@ -1305,7 +1306,7 @@ const handleSaveExtraCost = () => {
                                             <li key={`${mod.productId}-${idx}`} className="flex justify-between items-center">
                                                 <span>
                                                   {mod.name}
-                                                  {mod.servingStyle && ` (${mod.servingStyle})`}
+                                                  {mod.servingStyle && mod.servingStyle !== 'Normal' && ` (${mod.servingStyle})`}
                                                   {(mod.priceModifier || 0) + (mod.extraCost || 0) > 0 ? ` (${formatCurrency((mod.priceModifier || 0) + (mod.extraCost || 0))})` : ''}
                                                 </span>
                                                 <Button variant="ghost" size="icon" className="h-4 w-4 text-primary/70" onClick={() => handleOpenExtraCostDialog(item.uniqueId, mod.productId, mod.slotId)}><DollarSign className="h-3 w-3"/></Button>
@@ -1359,7 +1360,11 @@ const handleSaveExtraCost = () => {
                 <DialogHeader>
                     <DialogTitle>Añadir Costo Extra</DialogTitle>
                     <DialogDescription>
-                        Introduce un costo adicional para el modificador "{extraCostDialogState?.modifierProductId ? productsData.find(p=>p.id === extraCostDialogState.modifierProductId)?.name : ''}". Este se sumará a su precio.
+                        Introduce un costo adicional para el modificador "{
+                            extraCostDialogState?.modifierProductId
+                                ? (productsData.find(p=>p.id === extraCostDialogState.modifierProductId)?.name || currentModifierSlots.flatMap(s => s.options).find(o => o.id === extraCostDialogState.modifierProductId)?.name)
+                                : ''
+                        }". Este se sumará a su precio.
                     </DialogDescription>
                 </DialogHeader>
                 <div className="grid gap-4 py-4">

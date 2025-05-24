@@ -6,7 +6,7 @@ import { formatCurrency } from '@/lib/utils';
 import type { SavedOrder, SavedOrderItemComponent } from '@/types/product-types';
 
 // Función simple para escapar HTML
-function escapeHtml(unsafe: string): string {
+function escapeHtml(unsafe: string | undefined | null): string {
     if (!unsafe) return '';
     return unsafe
          .replace(/&/g, "&amp;")
@@ -34,7 +34,7 @@ export async function generateTicketData(order: SavedOrder): Promise<string> {
         .item-name { flex-grow: 1; margin-right: 5px; }
         .item-price { white-space: nowrap; }
         .components { margin-left: 15px; font-size: 9pt; color: #555; }
-        .component-detail { font-style: italic; } /* Estilo para detalles como 'Aparte' */
+        .component-detail { font-style: italic; }
         .separator { border-top: 1px dashed #000; margin: 5px 0; }
         .total-line { display: flex; justify-content: space-between; font-weight: bold; }
         .payment-line { display: flex; justify-content: space-between; }
@@ -45,7 +45,7 @@ export async function generateTicketData(order: SavedOrder): Promise<string> {
   `;
 
   // --- Encabezado ---
-  const businessName = localStorage.getItem('siChefSettings_businessName') || 'siChef POS'; // Obtener de config
+  const businessName = localStorage.getItem('siChefSettings_businessName') || 'siChef POS';
   html += `<div class="center bold">${escapeHtml(businessName)}</div>\n`;
   html += `<div class="center">Pedido #${escapeHtml(String(order.orderNumber))}</div>\n`;
   html += `<div class="center">${escapeHtml(format(order.createdAt, 'dd/MM/yyyy HH:mm'))}</div>\n`;
@@ -65,14 +65,15 @@ export async function generateTicketData(order: SavedOrder): Promise<string> {
       html += `<div class="components">\n`;
       item.components.forEach(comp => {
         let compText = `↳ ${escapeHtml(comp.name)}`;
-        if (comp.servingStyle && comp.servingStyle !== "Normal") {
+        if (comp.servingStyle && comp.servingStyle !== "Normal") { // Mostrar solo si no es "Normal"
             compText += ` <span class="component-detail">(${escapeHtml(comp.servingStyle)})</span>`;
         }
         if (comp.extraCost && comp.extraCost > 0) {
             compText += ` <span class="component-detail">(+${escapeHtml(formatCurrency(comp.extraCost))})</span>`;
         }
+        // Usar class_alias para evitar conflictos con style (aunque en HTML puro no es necesario)
         const compLabel = comp.slotLabel && comp.slotLabel !== 'Mod' && comp.slotLabel !== 'Contenido'
-            ? ` <span class_alias="component-detail">[${escapeHtml(comp.slotLabel)}]</span>` // Usar class_alias para evitar conflictos con style
+            ? ` <span class="component-detail">[${escapeHtml(comp.slotLabel)}]</span>`
             : '';
         html += `<div>${compText}${compLabel}</div>\n`;
       });
