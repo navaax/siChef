@@ -18,7 +18,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { useToast } from '@/hooks/use-toast';
 import { Loader2, CheckCircle, XCircle, PlusCircle, Edit, Trash2 } from 'lucide-react';
 import { printTicket, PrinterError } from '@/services/printer-service';
-import { randomUUID } from 'crypto'; // Para IDs de impresoras locales
+import { v4 as uuidv4 } from 'uuid'; // Importar uuid para generar IDs en cliente
 
 // Componente de sección reutilizable
 const SettingsSection = ({ title, description, children }: { title: string, description: string, children: React.ReactNode }) => (
@@ -150,7 +150,7 @@ export default function SettingsPage() {
       setConfiguredPrinters(prev => prev.map(p => p.id === editingPrinter.id ? { ...editingPrinter, name: printerName, connectionType: printerConnectionType, address: printerAddress, role: printerRole } : p));
       toast({ title: "Impresora Actualizada" });
     } else {
-      setConfiguredPrinters(prev => [...prev, { id: randomUUID(), name: printerName, connectionType: printerConnectionType, address: printerAddress, role: printerRole }]);
+      setConfiguredPrinters(prev => [...prev, { id: uuidv4(), name: printerName, connectionType: printerConnectionType, address: printerAddress, role: printerRole }]);
       toast({ title: "Impresora Añadida" });
     }
     setIsPrinterDialogOpen(false);
