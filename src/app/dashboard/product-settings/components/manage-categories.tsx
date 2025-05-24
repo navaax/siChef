@@ -21,6 +21,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '
 import { useToast } from '@/hooks/use-toast';
 import Image from 'next/image';
 import { cn } from '@/lib/utils';
+import { Separator } from '@/components/ui/separator'; // Importación añadida
 
 // Importar servicios y tipos
 import {
