@@ -5,7 +5,7 @@
 export interface Category {
   id: string;
   name: string;
-  type: 'producto' | 'modificador' | 'paquete'; // Se mantiene para posible agrupación UI
+  type: 'producto' | 'modificador' | 'paquete';
   imageUrl?: string;
 }
 
@@ -21,10 +21,10 @@ export interface Product {
   id: string;
   name: string;
   price: number;
-  categoryId: string; // Referencia tabla categories (tipo 'producto' o 'modificador')
+  categoryId: string;
   imageUrl?: string;
-  inventory_item_id?: string | null; // Permitir null explícitamente
-  inventory_consumed_per_unit?: number | null; // Permitir null explícitamente
+  inventory_item_id?: string | null;
+  inventory_consumed_per_unit?: number | null;
 }
 
 export interface Package {
@@ -35,84 +35,80 @@ export interface Package {
     category_id?: string | null; // Opcional: Para agrupación UI, permite null
 }
 
-
-// Representa un slot en un producto donde se pueden elegir modificadores
 export interface ProductModifierSlot {
     id: string;
-    product_id: string; // Referencia tabla products
+    product_id: string;
     label: string;
-    linked_category_id: string; // Referencia tabla categories (tipo 'modificador')
+    linked_category_id: string;
     min_quantity: number;
     max_quantity: number;
-    // NUEVO: Opciones específicas permitidas para este slot, si se definen
     allowedOptions?: ProductModifierSlotOption[];
 }
 
-// NUEVO: Representa una opción de modificador específica permitida para un slot
 export interface ProductModifierSlotOption {
-    id: string; // ID de la entrada en la tabla product_modifier_slot_options
+    id: string;
     product_modifier_slot_id: string;
-    modifier_product_id: string; // Referencia tabla products (el modificador permitido)
-    // Para UI joining (opcional, se puede unir en el servicio):
+    modifier_product_id: string;
     modifier_product_name?: string;
     modifier_product_price?: number;
+    // Nuevos campos para configuración detallada de la opción dentro del slot
+    is_default?: boolean;
+    price_adjustment?: number; // Ajuste al precio base del modificador, específico para este slot
 }
 
-// Representa un item dentro de un paquete
 export interface PackageItem {
     id: string;
-    package_id: string; // Referencia tabla packages
-    product_id: string; // Referencia tabla products
+    package_id: string;
+    product_id: string;
     quantity: number;
     display_order: number;
-    // Para UI joining:
-    product_name?: string; // Unido en la capa de servicio
+    product_name?: string;
 }
 
-// Representa overrides para slots modificadores para un item específico *dentro de un paquete*
 export interface PackageItemModifierSlotOverride {
     id: string;
-    package_item_id: string; // Referencia tabla package_items
-    product_modifier_slot_id: string; // Referencia tabla product_modifier_slots
+    package_item_id: string;
+    product_modifier_slot_id: string;
     min_quantity: number;
     max_quantity: number;
-     // Para UI joining:
-    product_modifier_slot_label?: string; // Unido en la capa de servicio
+    product_modifier_slot_label?: string;
 }
 
 
 // --- Tipos de UI / Gestión de Pedidos (pueden extenderse de tipos base) ---
 
 export interface SelectedModifierItem {
-    productId: string; // ID del producto modificador seleccionado
+    productId: string;
     name: string;
-    priceModifier?: number; // Precio del modificador en sí
-    slotId: string; // A qué slot pertenece esta selección
-    packageItemId?: string; // Si el modificador es para un item dentro de un paquete
+    priceModifier?: number; // Precio del modificador en sí (base + price_adjustment del slot + extraCost del pedido)
+    slotId: string;
+    packageItemId?: string;
+    // Nuevos campos para interacciones avanzadas
+    servingStyle?: string; // e.g., "Aparte", "En Vasito"
+    extraCost?: number; // Costo adicional específico para esta instancia en el pedido
 }
 
 export interface OrderItem {
   type: 'product' | 'package';
-  id: string; // productId o packageId
+  id: string;
   name: string;
   quantity: number;
-  basePrice: number; // Precio base del producto o precio fijo del paquete
-  selectedModifiers: SelectedModifierItem[]; // Modificadores aplicados directamente (para productos) o detalles complejos (para paquetes)
-  totalPrice: number; // Precio total para esta línea de pedido (cantidad * (base + mods))
-  uniqueId: string; // ID único para esta línea en el pedido actual
+  basePrice: number;
+  selectedModifiers: SelectedModifierItem[];
+  totalPrice: number;
+  uniqueId: string;
 
-  // Solo para items de tipo 'package' en el pedido
   packageItems?: {
-    packageItemId: string; // ID de la definición en package_items
+    packageItemId: string;
     productId: string;
     productName: string;
-    selectedModifiers: SelectedModifierItem[]; // Modificadores seleccionados *para este item específico dentro del paquete*
+    selectedModifiers: SelectedModifierItem[];
   }[];
 }
 
 
 export interface CurrentOrder {
-  id: string; // Podría ser generado al guardar
+  id: string;
   customerName: string;
   items: OrderItem[];
   subtotal: number;
@@ -124,23 +120,22 @@ export interface CurrentOrder {
 
 // --- Tipos de Historial de Pedidos / Reportes ---
 
-// Representa un componente/modificador tal como se guarda en el historial
 export interface SavedOrderItemComponent {
     name: string;
-    slotLabel?: string; // De qué grupo de modificadores viene (si aplica)
+    slotLabel?: string;
+    servingStyle?: string; // Estilo de servicio para el modificador
+    extraCost?: number; // Costo extra aplicado al modificador
 }
 
-// Representa un item de pedido tal como se guarda en el historial
 export interface SavedOrderItem {
-  id: string; // productId o packageId
+  id: string;
   name: string;
   quantity: number;
-  price: number; // Precio base unitario del producto o paquete al momento de la venta
-  totalItemPrice: number; // Precio total calculado para esta línea (cantidad * (precio + mods))
-  components: SavedOrderItemComponent[]; // Lista de modificadores o contenido del paquete
+  price: number;
+  totalItemPrice: number;
+  components: SavedOrderItemComponent[];
 }
 
-// Representa un pedido guardado en el historial
 export interface SavedOrder {
   id: string;
   orderNumber: number;
@@ -151,6 +146,6 @@ export interface SavedOrder {
   total: number;
   status: 'pending' | 'completed' | 'cancelled';
   createdAt: Date;
-  paidAmount?: number; // Cantidad pagada si fue efectivo
-  changeGiven?: number; // Cambio dado si fue efectivo
+  paidAmount?: number;
+  changeGiven?: number;
 }
