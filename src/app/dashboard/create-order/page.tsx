@@ -76,15 +76,13 @@ interface PackageDetailState {
     packageDef: Package;
     packageItems: PackageItem[];
     itemSlots: Record<string, ModifierSlotState[]>; // Slot definitions for each package item
-    // Modifier selections for package items will also need to handle multi-instance if a package can be added > 1 qty
-    // For now, package quantity is assumed to be 1.
 }
 
 interface ModifierInteractionState {
-    orderItemUniqueId: string | null;
-    modifierProductId: string | null;
-    modifierSlotId: string | null;
-    packageItemContextId?: string | null;
+    orderItemUniqueId: string | null; // ID del OrderItem si se edita un modificador de un pedido existente
+    modifierProductId: string | null; // ID del producto modificador
+    modifierSlotId: string | null; // ID del slot al que pertenece
+    packageItemContextId?: string | null; // ID del item de paquete si el modificador es de un paquete
     anchorElement: HTMLElement | null;
     availableServingStyles?: ModifierServingStyle[];
 }
@@ -97,7 +95,7 @@ export default function CreateOrderPage() {
   const [selectedPackage, setSelectedPackage] = useState<Package | null>(null);
   const [selectedPackageDetail, setSelectedPackageDetail] = useState<PackageDetailState | null>(null);
   
-  const [currentModifierSlots, setCurrentModifierSlots] = useState<ModifierSlotState[]>([]); // Defines AVAILABLE slots for selectedProduct
+  const [currentModifierSlots, setCurrentModifierSlots] = useState<ModifierSlotState[]>([]);
   
   const [customerName, setCustomerName] = useState('');
   const [isRegisteringCustomer, setIsRegisteringCustomer] = useState(false);
@@ -115,21 +113,21 @@ export default function CreateOrderPage() {
   const [extraCostDialogState, setExtraCostDialogState] = useState<ModifierInteractionState & { currentExtraCost?: number } | null>(null);
   const [extraCostInput, setExtraCostInput] = useState<string>('');
 
-  // States for quantity dialog
+  // States for quantity dialog (used for products without modifiers and packages)
   const [itemPendingQuantity, setItemPendingQuantity] = useState<{ data: Product | Package; type: 'product' | 'package' } | null>(null);
   const [pendingQuantityInput, setPendingQuantityInput] = useState<string>("1");
   const [isQuantityDialogOpen, setIsQuantityDialogOpen] = useState(false);
 
   // States for multi-instance modifier configuration
-  const [currentProductConfigQuantity, setCurrentProductConfigQuantity] = useState(1);
-  const [modifierConfigurations, setModifierConfigurations] = useState<SelectedModifierItem[][]>([]);
-  const [currentInstanceIndexForConfiguration, setCurrentInstanceIndexForConfiguration] = useState(0);
+  const [currentProductConfigQuantity, setCurrentProductConfigQuantity] = useState(1); // Quantity of the main product being configured with modifiers
+  const [modifierConfigurations, setModifierConfigurations] = useState<SelectedModifierItem[][]>([]); // Array of modifier selections, one for each instance
+  const [currentInstanceIndexForConfiguration, setCurrentInstanceIndexForConfiguration] = useState(0); // Index of the product instance being configured
 
   const [isLoading, setIsLoading] = useState({
         categories: true,
         products: false,
         packages: false,
-        modifiers: false, // For loading slot definitions
+        modifiers: false, 
         packageDetails: false,
         inventory: false,
         printing: false,
@@ -138,15 +136,11 @@ export default function CreateOrderPage() {
 
   const { toast } = useToast();
 
-  // Dynamically calculate subtotal and total
   const subtotal = useMemo(() => {
     return currentOrder.items.reduce((sum, item) => sum + item.totalPrice, 0);
   }, [currentOrder.items]);
 
-  const total = useMemo(() => {
-    // For now, total is the same as subtotal. Could include taxes/discounts later.
-    return subtotal;
-  }, [subtotal]);
+  const total = useMemo(() => totalSubtotal);
 
   useEffect(() => {
     async function fetchInitialData() {
@@ -177,7 +171,7 @@ export default function CreateOrderPage() {
     setPackagesData([]);
     try {
         const fetchedProducts = await getProductsByCategory(categoryId);
-        const fetchedPackages = await getPackagesByCategoryUI(categoryId); // Corrected function name
+        const fetchedPackages = await getPackagesByCategoryUI(categoryId);
 
         setProductsData(fetchedProducts);
         setPackagesData(fetchedPackages);
@@ -203,16 +197,11 @@ export default function CreateOrderPage() {
                      options = await getModifiersByCategory(slotDef.linked_category_id);
                  }
                  const finalOptions = options.map(optProduct => {
-                    // Apply specific config from slotDef.allowedOptions if present
                     const slotOptionConfig = slotDef.allowedOptions?.find(ao => ao.modifier_product_id === optProduct.id);
-                    return { ...optProduct,
-                             // These would be used if we had default selections or price adjustments at slot level
-                             // is_default_in_slot: slotOptionConfig?.is_default, 
-                             // price_adjustment_in_slot: slotOptionConfig?.price_adjustment 
-                           };
+                    return { ...optProduct };
                  });
 
-                 return { ...slotDef, options: finalOptions }; // selectedOptions removed, will be per-instance
+                 return { ...slotDef, options: finalOptions };
              });
             preparedSlots = await Promise.all(optionsPromises);
         }
@@ -233,8 +222,6 @@ export default function CreateOrderPage() {
 
             const packageItems = await getItemsForPackage(packageId);
             const itemSlotsPromises = packageItems.map(async (item) => {
-                // This part would need to be adapted if package items themselves could have quantities > 1
-                // and individual modifier configs. For now, assume package item quantity is fixed by definition.
                 const baseSlots = await fetchAndPrepareModifierSlots(item.product_id);
                 const overrides = await getOverridesForPackageItem(item.id);
                 const finalSlots = baseSlots.map(slot => {
@@ -258,7 +245,7 @@ export default function CreateOrderPage() {
             setView('package-details');
         } catch (error) {
             toast({ title: "Error", description: `Fallo al cargar detalles del paquete: ${error instanceof Error ? error.message : 'Error desconocido'}`, variant: "destructive" });
-            setView('products'); // Fallback to products view
+            setView('products');
         } finally {
             setIsLoading(prev => ({ ...prev, packageDetails: false }));
         }
@@ -284,29 +271,39 @@ export default function CreateOrderPage() {
     setView('products');
   };
 
-  // Step 1: User clicks on a product, open quantity dialog
-  const handleProductClick = (product: Product) => {
+  const handleProductClick = async (product: Product) => {
     if (product.inventory_item_id) {
-      const invItem = inventoryMap.get(product.inventory_item_id);
-      const consumed = product.inventory_consumed_per_unit ?? 0;
-      if (!invItem || invItem.current_stock < consumed) { // Check for at least 1 unit
-           toast({ title: "Sin Stock", description: `No hay suficiente ${invItem?.name || 'inventario'} para ${product.name}.`, variant: "destructive" });
-           return;
-      }
+        const invItem = inventoryMap.get(product.inventory_item_id);
+        const consumed = product.inventory_consumed_per_unit ?? 0;
+        if (!invItem || invItem.current_stock < consumed) {
+            toast({ title: "Sin Stock", description: `No hay suficiente ${invItem?.name || 'inventario'} para ${product.name}.`, variant: "destructive" });
+            return;
+        }
     }
-    setItemPendingQuantity({ data: product, type: 'product' });
+
+    const slots = await fetchAndPrepareModifierSlots(product.id);
+    if (slots.length > 0) {
+        setSelectedProduct(product);
+        setCurrentModifierSlots(slots);
+        setCurrentProductConfigQuantity(1); // Default to 1 instance
+        setModifierConfigurations([[]]); // Initialize for one instance
+        setCurrentInstanceIndexForConfiguration(0);
+        setView('modifiers');
+    } else {
+        // Product has no modifiers, open quantity dialog
+        setItemPendingQuantity({ data: product, type: 'product' });
+        setPendingQuantityInput("1");
+        setIsQuantityDialogOpen(true);
+    }
+  };
+
+  const handlePackageClick = (pkg: Package) => {
+    // Packages always go through quantity dialog first
+    setItemPendingQuantity({ data: pkg, type: 'package' });
     setPendingQuantityInput("1");
     setIsQuantityDialogOpen(true);
   };
 
-  // Step 1.Package: User clicks on a package, open quantity dialog
-  const handlePackageClick = (pkg: Package) => {
-    setItemPendingQuantity({ data: pkg, type: 'package' });
-    setPendingQuantityInput("1"); // Typically packages are added 1 at a time, but allow setting qty
-    setIsQuantityDialogOpen(true);
-  };
-
-  // Step 2: User confirms quantity, then proceed
   const handleConfirmQuantity = async () => {
     if (!itemPendingQuantity) return;
 
@@ -316,58 +313,31 @@ export default function CreateOrderPage() {
       return;
     }
 
-    // Check inventory for the total quantity if it's a product
-    if (itemPendingQuantity.type === 'product') {
-      const product = itemPendingQuantity.data as Product;
-      if (product.inventory_item_id) {
-        const invItem = inventoryMap.get(product.inventory_item_id);
-        const consumedTotal = (product.inventory_consumed_per_unit ?? 0) * confirmedQuantity;
-        if (!invItem || invItem.current_stock < consumedTotal) {
-          toast({ title: "Sin Stock Suficiente", description: `Solo hay ${invItem?.current_stock && invItem.inventory_consumed_per_unit ? Math.floor(invItem.current_stock / invItem.inventory_consumed_per_unit) : 0} unidades de ${product.name} disponibles.`, variant: "destructive" });
-          return;
-        }
-      }
-    }
-
-    setCurrentProductConfigQuantity(confirmedQuantity);
-    setIsQuantityDialogOpen(false);
-
     const itemData = itemPendingQuantity.data;
     const itemType = itemPendingQuantity.type;
 
-    if (itemType === 'product') {
-      const product = itemData as Product;
-      setSelectedProduct(product);
-      const slots = await fetchAndPrepareModifierSlots(product.id);
-      if (slots.length > 0) {
-        const initialConfigs: SelectedModifierItem[][] = Array(confirmedQuantity).fill(null).map(() => []);
-        setModifierConfigurations(initialConfigs);
-        setCurrentInstanceIndexForConfiguration(0);
-        setCurrentModifierSlots(slots);
-        setView('modifiers');
-      } else {
-        // Product has no modifiers, add 'confirmedQuantity' of this product as one OrderItem
-        addProductToOrder(product, [], product.price, confirmedQuantity);
-        toast({ title: `${product.name} (x${confirmedQuantity}) añadido`, description: 'Sin modificadores.' });
+    if (itemType === 'product') { // This path is now only for products WITHOUT modifiers
+        const product = itemData as Product;
+        if (product.inventory_item_id) {
+            const invItem = inventoryMap.get(product.inventory_item_id);
+            const consumedTotal = (product.inventory_consumed_per_unit ?? 0) * confirmedQuantity;
+            if (!invItem || invItem.current_stock < consumedTotal) {
+                toast({ title: "Sin Stock Suficiente", description: `Solo hay ${invItem?.current_stock && invItem.inventory_consumed_per_unit ? Math.floor(invItem.current_stock / invItem.inventory_consumed_per_unit) : 0} unidades de ${product.name} disponibles.`, variant: "destructive" });
+                return;
+            }
+        }
+        addProductToOrder(product, [], product.price, confirmedQuantity); // Add with confirmed quantity
+        toast({ title: `${product.name} (x${confirmedQuantity}) añadido` });
         resetAndGoToCategories();
-      }
     } else if (itemType === 'package') {
-      const pkg = itemData as Package;
-      // For packages, if quantity > 1, we add the package multiple times.
-      // The internal configuration of one package instance is handled by fetchPackageDetails.
-      for (let i = 0; i < confirmedQuantity; i++) {
-        // We'll add package to order after its details are fetched and configured.
-        // For now, just set the selected package and fetch its details.
-        // The handleAddPackageToOrder will then be called once for each package instance if qty > 1,
-        // or the quantity on the OrderItem for package can be set.
-        // For simplicity, let's assume package configuration happens once, then it's added N times.
-        // OR, we can make fetchPackageDetails only fetch definition, and add N order items.
-        // Let's stick to configuring one package and then using currentProductConfigQuantity in handleAddPackageToOrder
-        // This means handleAddPackageToOrder will need to know currentProductConfigQuantity.
-      }
-      setSelectedPackage(pkg);
-      await fetchPackageDetails(pkg.id); // This will set view to 'package-details'
+        const pkg = itemData as Package;
+        // For packages, currentProductConfigQuantity will be used by handleAddPackageToOrder
+        setCurrentProductConfigQuantity(confirmedQuantity); // Store confirmed quantity for the package
+        setSelectedPackage(pkg);
+        await fetchPackageDetails(pkg.id); // This sets view to 'package-details'
     }
+
+    setIsQuantityDialogOpen(false);
     setItemPendingQuantity(null);
   };
 
@@ -378,8 +348,8 @@ export default function CreateOrderPage() {
     optionProductId: string,
     optionName: string,
     optionBasePrice: number,
-    context: 'product' | 'package', // 'product' for multi-instance, 'package' for package item
-    packageItemUniqueId?: string // Unique ID of the package item in selectedPackageDetail (if context is 'package')
+    context: 'product' | 'package',
+    packageItemUniqueId?: string
   ) => {
     if (context === 'product' && view === 'modifiers') {
         setModifierConfigurations(prevConfigs => {
@@ -418,8 +388,8 @@ export default function CreateOrderPage() {
                         name: optionName,
                         priceModifier: effectiveModifierPrice,
                         slotId: slotId,
-                        servingStyle: 'Normal', // Default serving style
-                        extraCost: 0, // Default extra cost
+                        servingStyle: 'Normal',
+                        extraCost: 0,
                     });
                 } else {
                     toast({ title: "Límite Alcanzado", description: `No se puede seleccionar más de ${targetSlotDefinition.max_quantity} ${targetSlotDefinition.label.toLowerCase()}.`, variant: "default" });
@@ -430,18 +400,16 @@ export default function CreateOrderPage() {
             return newConfigs;
         });
     } else if (context === 'package' && packageItemUniqueId && selectedPackageDetail) {
-        // Logic for package item modifiers (remains largely the same as before for single package instance config)
         setSelectedPackageDetail(prevDetail => {
             if (!prevDetail) return null;
             const updatedItemSlots = { ...prevDetail.itemSlots };
             if(updatedItemSlots[packageItemUniqueId]) {
-                // This logic needs to be adapted from the original single-product modifier logic
                 const targetSlotsForPackageItem = updatedItemSlots[packageItemUniqueId];
                 updatedItemSlots[packageItemUniqueId] = targetSlotsForPackageItem.map(slot => {
                      if (slot.id === slotId) {
                         const isSelected = slot.selectedOptions.some(opt => opt.productId === optionProductId);
                         let newSelections = [...slot.selectedOptions];
-                        const minQty = slot.min_quantity; // Use override min/max if present
+                        const minQty = slot.min_quantity;
                         const maxQty = slot.max_quantity;
 
                         const modifierProductDef = slot.options.find(opt => opt.id === optionProductId);
@@ -490,34 +458,30 @@ export default function CreateOrderPage() {
 
 const handleModifierDoubleClick = async (
     event: React.MouseEvent<HTMLDivElement>,
-    // orderItemUniqueId: string | undefined, // Not used during pre-order configuration
     modifierProductId: string, 
     slotId: string,
     context: 'product' | 'package',
-    packageItemContextId?: string // For package items
+    packageItemContextId?: string
 ) => {
     event.preventDefault();
 
     let isSelectedCurrently = false;
     let targetSlotDefinition: ProductModifierSlot | ModifierSlotState | undefined;
-    let currentServingStyle: string | undefined = 'Normal';
 
     if (context === 'product' && view === 'modifiers') {
         targetSlotDefinition = currentModifierSlots.find(s => s.id === slotId);
         const currentInstanceConfig = modifierConfigurations[currentInstanceIndexForConfiguration] || [];
         const selectedOpt = currentInstanceConfig.find(so => so.productId === modifierProductId && so.slotId === slotId);
         isSelectedCurrently = !!selectedOpt;
-        currentServingStyle = selectedOpt?.servingStyle;
     } else if (context === 'package' && selectedPackageDetail && packageItemContextId) {
         const targetItemSlots = selectedPackageDetail.itemSlots[packageItemContextId];
         targetSlotDefinition = targetItemSlots?.find(s => s.id === slotId);
         const selectedOpt = targetSlotDefinition?.selectedOptions.find(so => so.productId === modifierProductId);
         isSelectedCurrently = !!selectedOpt;
-        currentServingStyle = selectedOpt?.servingStyle;
     }
 
     if (!isSelectedCurrently) {
-        toast({title: "Opción no seleccionada", description: "Selecciona el modificador primero con un clic.", variant:"default"});
+        // Removed the toast for single click to avoid interference with double click
         return;
     }
     if (!targetSlotDefinition) return;
@@ -530,7 +494,7 @@ const handleModifierDoubleClick = async (
              return;
         }
         setServingStylePopoverState({
-            orderItemUniqueId: null, // Not tied to an order item yet
+            orderItemUniqueId: null,
             modifierProductId: modifierProductId,
             modifierSlotId: slotId,
             packageItemContextId: context === 'package' ? packageItemContextId : null,
@@ -549,7 +513,7 @@ const handleSaveServingStyle = (styleLabel: string) => {
     if (!servingStylePopoverState) return;
     const { modifierProductId, modifierSlotId, packageItemContextId } = servingStylePopoverState;
 
-    if (view === 'modifiers' && !packageItemContextId) { // Configuring a multi-instance product
+    if (view === 'modifiers' && !packageItemContextId) {
         setModifierConfigurations(prevConfigs => {
             const newConfigs = [...prevConfigs];
             const currentInstanceConfig = newConfigs[currentInstanceIndexForConfiguration] || [];
@@ -558,7 +522,7 @@ const handleSaveServingStyle = (styleLabel: string) => {
             );
             return newConfigs;
         });
-    } else if (view === 'package-details' && selectedPackageDetail && packageItemContextId) { // Configuring a package item's modifier
+    } else if (view === 'package-details' && selectedPackageDetail && packageItemContextId) {
          setSelectedPackageDetail(prevDetail => {
             if (!prevDetail) return null;
             const updatedItemSlots = { ...prevDetail.itemSlots };
@@ -578,7 +542,6 @@ const handleSaveServingStyle = (styleLabel: string) => {
             return { ...prevDetail, itemSlots: updatedItemSlots };
         });
     }
-    // If servingStylePopoverState.orderItemUniqueId is present, it means we are editing an item already in the order summary
     else if (servingStylePopoverState.orderItemUniqueId) {
          setCurrentOrder(prevOrder => ({
             ...prevOrder,
@@ -587,7 +550,7 @@ const handleSaveServingStyle = (styleLabel: string) => {
                     let updatedSelectedModifiers = [...item.selectedModifiers];
                     let updatedPackageItems = item.packageItems ? [...item.packageItems] : undefined;
 
-                    if (packageItemContextId && updatedPackageItems) { // Modifier inside a package item in the order
+                    if (packageItemContextId && updatedPackageItems) {
                         updatedPackageItems = updatedPackageItems.map(pkgItem => {
                             if (pkgItem.packageItemId === packageItemContextId) {
                                 return {
@@ -601,7 +564,7 @@ const handleSaveServingStyle = (styleLabel: string) => {
                             }
                             return pkgItem;
                         });
-                    } else { // Direct product modifier in the order
+                    } else {
                         updatedSelectedModifiers = updatedSelectedModifiers.map(mod =>
                             mod.productId === modifierProductId && mod.slotId === modifierSlotId
                                 ? { ...mod, servingStyle: styleLabel }
@@ -641,7 +604,7 @@ const handleOpenExtraCostDialog = (
         modifierProductId,
         modifierSlotId,
         packageItemContextId,
-        anchorElement: null, // Anchor not strictly needed for dialog
+        anchorElement: null,
         currentExtraCost: targetModifier?.extraCost || 0,
     });
     setExtraCostInput(String(targetModifier?.extraCost || 0));
@@ -664,7 +627,7 @@ const handleSaveExtraCost = () => {
             if (item.uniqueId === orderItemUniqueId) {
                 let updatedSelectedModifiers = [...item.selectedModifiers];
                 let updatedPackageItems = item.packageItems ? [...item.packageItems] : undefined;
-                let itemBasePrice = item.basePrice; // Price of the main product or package
+                let itemBasePrice = item.basePrice;
 
                 if (packageItemContextId && updatedPackageItems) {
                     updatedPackageItems = updatedPackageItems.map(pkgItem => {
@@ -680,7 +643,7 @@ const handleSaveExtraCost = () => {
                         }
                         return pkgItem;
                     });
-                } else { // Modificador de un producto directo
+                } else { 
                     updatedSelectedModifiers = updatedSelectedModifiers.map(mod =>
                         mod.productId === modifierProductId && mod.slotId === modifierSlotId
                             ? { ...mod, extraCost: cost }
@@ -688,29 +651,12 @@ const handleSaveExtraCost = () => {
                     );
                 }
                 
-                // Recalculate total price for this OrderItem
                 let newItemTotalPrice = itemBasePrice;
                 if (item.type === 'product') {
                     updatedSelectedModifiers.forEach(mod => {
                         newItemTotalPrice += (mod.priceModifier || 0) + (mod.extraCost || 0);
                     });
                 } else if (item.type === 'package' && updatedPackageItems) {
-                    // Package base price already includes its items' base prices.
-                    // We only add costs from modifiers applied directly to the package,
-                    // or modifiers of items within the package if their prices are additive to the package total.
-                    // For now, assuming package price is fixed and only direct package modifiers add cost.
-                    // Or if modifiers within package items are meant to add to the package total:
-                    updatedPackageItems.forEach(pi => {
-                        pi.selectedModifiers.forEach(mod => {
-                           // This logic depends on how package prices are structured.
-                           // If package price is all-inclusive, only *extra* costs on top should be added.
-                           // If modifiers in package items add to *their* item's cost, and package sums them up,
-                           // then this recalc is more complex.
-                           // Current logic: assume package total price is base, and only modifiers *on the package directly* add to it.
-                           // The extra cost for modifiers *within* package items affect the display/ticket, not the package total directly here.
-                        });
-                    });
-                     // For modifiers applied directly to the package (if any, rare for this structure)
                      updatedSelectedModifiers.forEach(mod => {
                          newItemTotalPrice += (mod.priceModifier || 0) + (mod.extraCost || 0);
                      });
@@ -726,6 +672,67 @@ const handleSaveExtraCost = () => {
 
     setExtraCostDialogState(null);
     toast({ title: "Costo Extra Guardado" });
+};
+
+// --- New handlers for config quantity in modifier view ---
+const handleDecrementConfigQuantity = () => {
+    if (currentProductConfigQuantity > 1) {
+        const newQuantity = currentProductConfigQuantity - 1;
+        setCurrentProductConfigQuantity(newQuantity);
+        setModifierConfigurations(prev => prev.slice(0, newQuantity));
+        if (currentInstanceIndexForConfiguration >= newQuantity) {
+            setCurrentInstanceIndexForConfiguration(newQuantity - 1);
+        }
+    }
+};
+
+const handleIncrementConfigQuantity = () => {
+    if (selectedProduct && selectedProduct.inventory_item_id) {
+        const invItem = inventoryMap.get(selectedProduct.inventory_item_id);
+        const consumedPerUnit = selectedProduct.inventory_consumed_per_unit ?? 0;
+        // Check if there's enough stock for *one more* unit of the main product
+        // This check assumes each 'instance' will consume inventory.
+        // A more complex check would sum up total consumption based on `currentProductConfigQuantity + 1`.
+        // For now, we check if we can add at least one more.
+        if (!invItem || invItem.current_stock < consumedPerUnit * (currentProductConfigQuantity + 1) ) {
+            toast({ title: "Sin Stock Suficiente", description: `No hay suficiente ${invItem?.name || 'inventario'} para añadir otra unidad de ${selectedProduct.name}.`, variant: "destructive" });
+            return;
+        }
+    }
+    const newQuantity = currentProductConfigQuantity + 1;
+    setCurrentProductConfigQuantity(newQuantity);
+    setModifierConfigurations(prev => [...prev, []]); // Add new empty config for the new instance
+};
+
+const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    let newQuantity = parseInt(e.target.value, 10);
+    if (isNaN(newQuantity) || newQuantity < 1) {
+        newQuantity = 1; // Default to 1 if invalid
+    }
+
+    if (selectedProduct && selectedProduct.inventory_item_id) {
+        const invItem = inventoryMap.get(selectedProduct.inventory_item_id);
+        const consumedTotal = (selectedProduct.inventory_consumed_per_unit ?? 0) * newQuantity;
+        if (!invItem || invItem.current_stock < consumedTotal) {
+            toast({ title: "Sin Stock Suficiente", description: `Solo hay ${invItem?.current_stock && invItem.inventory_consumed_per_unit ? Math.floor(invItem.current_stock / invItem.inventory_consumed_per_unit) : 0} unidades de ${selectedProduct.name} disponibles.`, variant: "destructive" });
+            // Optionally revert to max possible quantity or previous quantity
+            return; // Or set to max available
+        }
+    }
+    
+    setCurrentProductConfigQuantity(newQuantity);
+    setModifierConfigurations(prev => {
+        const currentLength = prev.length;
+        if (newQuantity > currentLength) {
+            return [...prev, ...Array(newQuantity - currentLength).fill([])];
+        } else if (newQuantity < currentLength) {
+            return prev.slice(0, newQuantity);
+        }
+        return prev;
+    });
+    if (currentInstanceIndexForConfiguration >= newQuantity) {
+        setCurrentInstanceIndexForConfiguration(Math.max(0, newQuantity - 1));
+    }
 };
 
 
@@ -748,18 +755,17 @@ const handleSaveExtraCost = () => {
 
     if (!allInstancesValid) return;
 
-    modifierConfigurations.forEach((instanceConfig, index) => {
+    modifierConfigurations.forEach((instanceConfig) => {
         let modifierPriceTotalForInstance = 0;
         instanceConfig.forEach(mod => {
             modifierPriceTotalForInstance += (mod.priceModifier || 0) + (mod.extraCost || 0);
         });
         const pricePerUnitForInstance = selectedProduct.price + modifierPriceTotalForInstance;
-        addProductToOrder(selectedProduct, instanceConfig, pricePerUnitForInstance, 1); // Add each instance as quantity 1
+        addProductToOrder(selectedProduct, instanceConfig, pricePerUnitForInstance, 1);
     });
 
     toast({
         title: `${selectedProduct.name} (x${currentProductConfigQuantity}) añadido(s)`,
-        // Description could list a summary if needed, or be simpler
     });
     resetAndGoToCategories();
   };
@@ -769,30 +775,27 @@ const handleSaveExtraCost = () => {
         if (!selectedPackageDetail) return;
         const { packageDef, packageItems, itemSlots } = selectedPackageDetail;
         let inventoryOk = true;
-        const tempInventoryChanges: Record<string, number> = {}; // item_id: change_amount
+        const tempInventoryChanges: Record<string, number> = {};
 
-        // Gather all product IDs involved in the package (base items and their potential modifier options)
         const allProductIdsInPackage = new Set<string>();
         packageItems.forEach(item => allProductIdsInPackage.add(item.product_id));
-        Object.values(itemSlots).flat().forEach(slot => { // Iterate through all slots of all items
-            slot.options.forEach(opt => allProductIdsInPackage.add(opt.id)); // Add all possible modifier options
-            slot.selectedOptions.forEach(sel => allProductIdsInPackage.add(sel.productId)); // Add selected modifiers
+        Object.values(itemSlots).flat().forEach(slot => {
+            slot.options.forEach(opt => allProductIdsInPackage.add(opt.id));
+            slot.selectedOptions.forEach(sel => allProductIdsInPackage.add(sel.productId));
         });
 
-        // Pre-fetch details for all involved products/modifiers to check inventory efficiently
         const productDetailsMap = new Map<string, Product>();
         const productFetchPromises = Array.from(allProductIdsInPackage).map(id =>
             getProductById(id).catch(err => {
                 console.error(`Error obteniendo detalles para ID de producto ${id} en paquete:`, err);
                 toast({ title: "Error Interno", description: `No se pudo obtener detalle del producto ID ${id}.`, variant: "destructive" });
-                return null; // Return null on error so Promise.all doesn't reject immediately
+                return null;
             })
         );
         const fetchedProducts = await Promise.all(productFetchPromises);
         fetchedProducts.forEach(p => { if (p) productDetailsMap.set(p.id, p); });
 
 
-        // Validate inventory for each item and its selected modifiers
         for (const item of packageItems) {
             const productDetails = productDetailsMap.get(item.product_id);
             if (!productDetails) {
@@ -802,11 +805,11 @@ const handleSaveExtraCost = () => {
 
             if (productDetails.inventory_item_id) {
                 const invItem = inventoryMap.get(productDetails.inventory_item_id);
-                const consumed = (productDetails.inventory_consumed_per_unit ?? 0) * item.quantity * currentProductConfigQuantity; // Multiply by package quantity
+                const consumed = (productDetails.inventory_consumed_per_unit ?? 0) * item.quantity * currentProductConfigQuantity;
                 const currentStock = invItem?.current_stock ?? 0;
                 const alreadyConsumed = tempInventoryChanges[productDetails.inventory_item_id] || 0;
 
-                if (currentStock + alreadyConsumed < consumed) { // Use +alreadyConsumed as changes are negative
+                if (currentStock + alreadyConsumed < consumed) { 
                     toast({ title: "Sin Stock", description: `No hay suficiente ${invItem?.name || 'inventario'} para ${item.product_name} en paquete.`, variant: "destructive" });
                     inventoryOk = false; break;
                 } else if (consumed > 0) {
@@ -814,7 +817,6 @@ const handleSaveExtraCost = () => {
                 }
             }
 
-            // Validate modifiers for this package item
             const slotsForItem = itemSlots[item.id] || [];
             for (const slot of slotsForItem) {
                 if (slot.selectedOptions.length < slot.min_quantity) {
@@ -825,7 +827,6 @@ const handleSaveExtraCost = () => {
                      const modProductDetails = productDetailsMap.get(modOption.productId);
                      if (modProductDetails?.inventory_item_id) {
                         const invItem = inventoryMap.get(modProductDetails.inventory_item_id);
-                        // Assume modifier consumption is per package instance
                         const consumed = (modProductDetails.inventory_consumed_per_unit ?? 0) * currentProductConfigQuantity;
                          const currentStock = invItem?.current_stock ?? 0;
                          const alreadyConsumed = tempInventoryChanges[modProductDetails.inventory_item_id] || 0;
@@ -844,22 +845,18 @@ const handleSaveExtraCost = () => {
 
         if (!inventoryOk) return;
 
-        // If all validations pass, add the package(s) to the order
         for (let i = 0; i < currentProductConfigQuantity; i++) {
-            const packagePrice = packageDef.price; // Package price is fixed
+            const packagePrice = packageDef.price;
             const newOrderItem: OrderItem = {
-                type: 'package', id: packageDef.id, name: packageDef.name, quantity: 1, // Each instance is quantity 1
+                type: 'package', id: packageDef.id, name: packageDef.name, quantity: 1,
                 basePrice: packagePrice,
-                // Modifiers for a package would typically be those applied TO the package itself,
-                // not aggregated from items. For now, this is empty.
                 selectedModifiers: [],
-                totalPrice: packagePrice, // Modifier costs within package items are part of their item definition, not added to package price here.
+                totalPrice: packagePrice,
                 uniqueId: Date.now().toString() + Math.random().toString(),
                  packageItems: packageItems.map(item => ({
-                     packageItemId: item.id, // This is the ID from 'package_items' table (definition)
+                     packageItemId: item.id,
                      productId: item.product_id,
                      productName: item.product_name || 'Producto Desconocido',
-                     // Crucially, capture the selected modifiers for THIS instance of the package item
                      selectedModifiers: (itemSlots[item.id] || []).flatMap(slot => slot.selectedOptions)
                 }))
             };
@@ -872,9 +869,9 @@ const handleSaveExtraCost = () => {
   const addProductToOrder = (product: Product, modifiers: SelectedModifierItem[], pricePerUnit: number, quantity: number) => {
     const newOrderItem: OrderItem = {
       type: 'product', id: product.id, name: product.name, quantity: quantity,
-      basePrice: product.price, // Base price of one unit of the product
+      basePrice: product.price,
       selectedModifiers: modifiers,
-      totalPrice: pricePerUnit * quantity, // Total for this line item (potentially multiple units of the same config)
+      totalPrice: pricePerUnit * quantity,
       uniqueId: Date.now().toString() + Math.random().toString(),
     };
     setCurrentOrder(prev => ({ ...prev, items: [...prev.items, newOrderItem] }));
@@ -886,28 +883,22 @@ const handleSaveExtraCost = () => {
       let updatedItems = prev.items.map(item => {
         if (item.uniqueId === uniqueId) {
           const newQuantity = Math.max(0, item.quantity + delta);
-           let pricePerUnit = item.basePrice; // Start with base
+           let pricePerUnit = item.basePrice;
             if (item.type === 'product') {
                 item.selectedModifiers.forEach(mod => {
                     pricePerUnit += (mod.priceModifier || 0) + (mod.extraCost || 0);
                 });
             } else if (item.type === 'package') {
-                // Package price is usually all-inclusive. Modifiers on package items are part of the package.
-                // Modifiers applied *directly* to the package (if any) would be added here.
-                item.selectedModifiers.forEach(mod => { // These are modifiers on the PACKAGE itself
+                item.selectedModifiers.forEach(mod => { 
                     pricePerUnit += (mod.priceModifier || 0) + (mod.extraCost || 0);
                 });
             }
-          // TODO: Detailed inventory check for quantity increase.
-          // This simplified check might not be sufficient if increasing quantity of an item
-          // that was added as multiple individual instances due to different modifier configs.
-          // For now, assume simple quantity change for an existing OrderItem.
           console.warn("Verificación de inventario al aumentar cantidad está simplificada y puede ser imprecisa para items complejos.");
           return { ...item, quantity: newQuantity, totalPrice: pricePerUnit * newQuantity };
         }
         return item;
       });
-      updatedItems = updatedItems.filter(item => item.quantity > 0); // Remove if quantity becomes 0
+      updatedItems = updatedItems.filter(item => item.quantity > 0);
       return { ...prev, items: updatedItems };
     });
   };
@@ -933,7 +924,7 @@ const handleSaveExtraCost = () => {
   const resetPackageSelection = () => {
     setSelectedPackage(null); 
     setSelectedPackageDetail(null);
-    setCurrentProductConfigQuantity(1); // Also reset for packages
+    setCurrentProductConfigQuantity(1);
   }
 
   const handleBack = () => {
@@ -942,11 +933,10 @@ const handleSaveExtraCost = () => {
     else if (view === 'products') { setView('categories'); setSelectedCategory(null); setProductsData([]); setPackagesData([]); }
   };
 
-  // Effect for cash payment calculation
   useEffect(() => {
     if (currentOrder.paymentMethod === 'cash') {
       const paid = parseFloat(paidAmountInput) || 0;
-      const change = paid - total; // Use memoized total
+      const change = paid - total;
       setCurrentOrder(prev => ({ ...prev, paidAmount: paid, changeDue: change >= 0 ? change : undefined }));
     } else {
       setCurrentOrder(prev => ({ ...prev, paidAmount: undefined, changeDue: undefined }));
@@ -984,7 +974,6 @@ const handleSaveExtraCost = () => {
     if (currentOrder.items.length === 0) {
       toast({ title: "Pedido Vacío", description: "Por favor añade items al pedido.", variant: 'destructive' }); return;
     }
-    // Use memoized total for payment check
     if (currentOrder.paymentMethod === 'cash' && (currentOrder.paidAmount === undefined || currentOrder.paidAmount < total)) {
        toast({ title: "Pago Incompleto", description: "La cantidad pagada en efectivo es menor que el total.", variant: 'destructive' }); return;
     }
@@ -997,7 +986,7 @@ const handleSaveExtraCost = () => {
              items: order.items?.map((item: any) => ({
                 id: item.id || 'unknown', name: item.name || 'Unknown Item',
                 quantity: typeof item.quantity === 'number' ? item.quantity : 0,
-                price: typeof item.price === 'number' ? item.price : 0, // This is basePrice
+                price: typeof item.price === 'number' ? item.price : 0,
                 totalItemPrice: typeof item.totalItemPrice === 'number' ? item.totalItemPrice : 0,
                 components: Array.isArray(item.components) ? item.components : [],
              })) || [],
@@ -1019,15 +1008,13 @@ const handleSaveExtraCost = () => {
           const allProductIds = new Set<string>();
           currentOrder.items.forEach(item => {
              if (item.type === 'product') {
-                allProductIds.add(item.id); // Base product
+                allProductIds.add(item.id);
                 item.selectedModifiers.forEach(mod => allProductIds.add(mod.productId));
              } else if (item.type === 'package' && item.packageItems) {
-                // For packages, inventory is typically handled by the products *within* them
                 item.packageItems.forEach(pkgItem => {
-                     allProductIds.add(pkgItem.productId); // Product within package
+                     allProductIds.add(pkgItem.productId);
                      pkgItem.selectedModifiers.forEach(mod => allProductIds.add(mod.productId));
                  });
-                  // Modifiers applied directly to the package itself (if any)
                   item.selectedModifiers.forEach(mod => allProductIds.add(mod.productId));
              }
          });
@@ -1049,7 +1036,6 @@ const handleSaveExtraCost = () => {
                      const modDetails = productDetailsMap.get(modifier.productId);
                      if (modDetails?.inventory_item_id && modDetails.inventory_consumed_per_unit) {
                          const invItemId = modDetails.inventory_item_id;
-                         // Assume modifier consumption is per unit of the parent product
                          const change = -(modDetails.inventory_consumed_per_unit * orderItem.quantity);
                          const currentData = inventoryAdjustments[invItemId] || { change: 0, name: inventoryMap.get(invItemId)?.name || 'Inv Item Desc.' };
                          inventoryAdjustments[invItemId] = { ...currentData, change: currentData.change + change };
@@ -1057,24 +1043,20 @@ const handleSaveExtraCost = () => {
                  }
              }
              else if (orderItem.type === 'package' && orderItem.packageItems) {
-                 // Iterate through each product within the package for inventory
                  for (const pkgItem of orderItem.packageItems) {
                      const pkgItemDetails = productDetailsMap.get(pkgItem.productId); if (!pkgItemDetails) continue;
                      if (pkgItemDetails.inventory_item_id && pkgItemDetails.inventory_consumed_per_unit) {
                           const invItemId = pkgItemDetails.inventory_item_id;
                            const packageDefinitionItem = selectedPackageDetail?.packageItems.find(piDef => piDef.id === pkgItem.packageItemId);
                            const itemQtyInPackage = packageDefinitionItem?.quantity || 1;
-                           // Total consumption = (consumed_per_unit * qty_in_package_definition * package_order_qty)
                            const change = -(pkgItemDetails.inventory_consumed_per_unit * itemQtyInPackage * orderItem.quantity);
                           const currentData = inventoryAdjustments[invItemId] || { change: 0, name: inventoryMap.get(invItemId)?.name || 'Inv Item Desc.' };
                           inventoryAdjustments[invItemId] = { ...currentData, change: currentData.change + change };
                      }
-                      // And modifiers of that package item
                       for (const modifier of pkgItem.selectedModifiers) {
                          const modDetails = productDetailsMap.get(modifier.productId);
                          if (modDetails?.inventory_item_id && modDetails.inventory_consumed_per_unit) {
                              const invItemId = modDetails.inventory_item_id;
-                             // Consumption of modifier per package instance
                              const change = -(modDetails.inventory_consumed_per_unit * orderItem.quantity);
                              const currentData = inventoryAdjustments[invItemId] || { change: 0, name: inventoryMap.get(invItemId)?.name || 'Inv Item Desc.' };
                              inventoryAdjustments[invItemId] = { ...currentData, change: currentData.change + change };
@@ -1091,7 +1073,7 @@ const handleSaveExtraCost = () => {
              }
          }
          await Promise.all(adjustmentPromises);
-          setInventoryMap(prevMap => { // Update local inventory map optimistically
+          setInventoryMap(prevMap => {
               const newMap = new Map(prevMap);
               for (const [itemId, { change }] of Object.entries(inventoryAdjustments)) {
                   const currentItem = newMap.get(itemId);
@@ -1119,8 +1101,6 @@ const handleSaveExtraCost = () => {
                     components.push({ name: `${pkgItem.productName}`, slotLabel: 'Contenido' });
                     if (pkgItem.selectedModifiers.length > 0) {
                          pkgItem.selectedModifiers.forEach(mod => {
-                             // Try to find original slot label - this can be complex if definitions aren't readily available
-                             // For now, we'll rely on the slotId or a generic label if needed
                              const slotDefinition = selectedPackageDetail?.itemSlots[pkgItem.packageItemId]?.find(s => s.id === mod.slotId);
                              components.push({ name: `↳ ${mod.name}`, slotLabel: slotDefinition?.label || `Mod (${pkgItem.productName})`, servingStyle: mod.servingStyle, extraCost: mod.extraCost });
                          });
@@ -1129,20 +1109,20 @@ const handleSaveExtraCost = () => {
            }
            else if (item.type === 'product' && item.selectedModifiers.length > 0) {
                  item.selectedModifiers.forEach(mod => {
-                     const slotDefinition = currentModifierSlots.find(s => s.id === mod.slotId); // From original product config
+                     const slotDefinition = currentModifierSlots.find(s => s.id === mod.slotId);
                      components.push({ name: mod.name, slotLabel: slotDefinition?.label || 'Mod', servingStyle: mod.servingStyle, extraCost: mod.extraCost });
                  });
            }
           return {
               id: item.id, name: item.name, quantity: item.quantity,
-              price: item.basePrice, // Store base price per unit
-              totalItemPrice: item.totalPrice, // Store total for this line
+              price: item.basePrice,
+              totalItemPrice: item.totalPrice,
               components: components,
           };
       }),
       paymentMethod: currentOrder.paymentMethod, 
-      subtotal: subtotal, // Use memoized subtotal
-      total: total,       // Use memoized total
+      subtotal: subtotal,
+      total: total,
       status: 'pending', 
       createdAt: new Date(),
       paidAmount: currentOrder.paidAmount, changeGiven: currentOrder.changeDue,
@@ -1169,7 +1149,7 @@ const handleSaveExtraCost = () => {
     if (modifierConfigurations.length <= 1 || currentInstanceIndexForConfiguration < 0) return;
 
     const currentConfig = modifierConfigurations[currentInstanceIndexForConfiguration];
-    const newConfigs = modifierConfigurations.map(() => [...currentConfig]); // Deep copy
+    const newConfigs = modifierConfigurations.map(() => [...currentConfig]);
     setModifierConfigurations(newConfigs);
     toast({title: "Configuración Aplicada", description: "Modificadores de esta instancia aplicados a todas."});
   };
@@ -1177,15 +1157,38 @@ const handleSaveExtraCost = () => {
   const isViewLoading = 
     (view === 'categories' && isLoading.categories) ||
     (view === 'products' && (isLoading.products || isLoading.packages)) ||
-    (view === 'modifiers' && isLoading.modifiers) || // isLoading.servingStyles handled inside popover
-    (view === 'package-details' && isLoading.packageDetails); // isLoading.servingStyles handled inside popover
+    (view === 'modifiers' && isLoading.modifiers) ||
+    (view === 'package-details' && isLoading.packageDetails);
 
 
   // --- Lógica de Renderizado ---
+  const renderBackButton = () => {
+    if (view === 'products') {
+        return (
+            <Button variant="ghost" size="sm" onClick={handleBack} className="mb-2 md:mb-4 text-sm">
+                <ChevronLeft className="mr-2 h-4 w-4" /> Volver a Categorías
+            </Button>
+        );
+    } else if (view === 'modifiers' && selectedCategory) {
+        return (
+            <Button variant="ghost" size="sm" onClick={handleBack} className="mb-2 md:mb-4 text-sm">
+                <ChevronLeft className="mr-2 h-4 w-4" /> Volver a {selectedCategory.name}
+            </Button>
+        );
+    } else if (view === 'package-details' && selectedCategory) {
+         return (
+            <Button variant="ghost" size="sm" onClick={handleBack} className="mb-2 md:mb-4 text-sm">
+                <ChevronLeft className="mr-2 h-4 w-4" /> Volver a {selectedCategory.name}
+            </Button>
+        );
+    }
+    return <CardDescription className="text-xs md:text-sm">Selecciona categorías, productos, paquetes y modificadores.</CardDescription>;
+  };
+
+
   const renderContent = () => {
     switch (view) {
       case 'categories':
-        // isLoading.categories handled by isViewLoading
         const displayCategories = categoriesData.filter(cat => cat.type !== 'modificador');
         return (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 md:gap-4">
@@ -1209,12 +1212,9 @@ const handleSaveExtraCost = () => {
         );
 
       case 'products':
-        // isLoading.products || isLoading.packages handled by isViewLoading
         return (
           <>
-            <Button variant="ghost" size="sm" onClick={handleBack} className="mb-2 md:mb-4 text-sm">
-              <ChevronLeft className="mr-2 h-4 w-4" /> Volver a Categorías
-            </Button>
+            {/* El botón de retroceso se maneja en CardHeader ahora */}
             <h2 className="text-lg md:text-xl font-semibold mb-2 md:mb-4">{selectedCategory?.name}</h2>
              {packagesData.length > 0 && (
                  <>
@@ -1264,7 +1264,6 @@ const handleSaveExtraCost = () => {
         );
 
      case 'modifiers':
-         // isLoading.modifiers handled by isViewLoading
          if (!selectedProduct) return <p className="text-center text-muted-foreground py-10">Error: No hay producto seleccionado.</p>;
          
          const currentInstanceConfig = modifierConfigurations[currentInstanceIndexForConfiguration] || [];
@@ -1272,31 +1271,42 @@ const handleSaveExtraCost = () => {
         return (
           <div className="flex flex-col h-full">
             <div className="flex-shrink-0">
-                <Button variant="ghost" size="sm" onClick={handleBack} className="mb-2 text-sm">
-                <ChevronLeft className="mr-2 h-4 w-4" /> Volver a {selectedCategory?.name || 'Items'}
-                </Button>
-                <h2 className="text-lg md:text-xl font-semibold mb-1">{selectedProduct.name} - {formatCurrency(selectedProduct.price)}</h2>
-                <p className="text-xs md:text-sm text-muted-foreground mb-2">Configura modificadores. Doble clic para estilos de servicio.</p>
-                
-                <div className="flex items-center justify-between gap-2 mb-3 p-2 border rounded-md bg-muted/30">
-                    <div className="flex items-center gap-2">
-                        <Label htmlFor="product_instance_qty" className="text-sm font-medium">Cantidad Total:</Label>
-                        <span className="font-semibold text-primary">{currentProductConfigQuantity}</span>
+                {/* El botón de retroceso se maneja en CardHeader ahora */}
+                <div className="flex justify-between items-center mb-3 p-2 border rounded-md bg-muted/30">
+                    <div>
+                        <h2 className="text-lg md:text-xl font-semibold">{selectedProduct.name}</h2>
+                        <p className="text-sm text-muted-foreground">{formatCurrency(selectedProduct.price)}</p>
                     </div>
-                    {currentProductConfigQuantity > 1 && (
-                        <div className="flex items-center gap-2">
-                            <Button variant="outline" size="sm" onClick={() => setCurrentInstanceIndexForConfiguration(prev => Math.max(0, prev - 1))} disabled={currentInstanceIndexForConfiguration === 0}>Anterior</Button>
-                            <span className="text-sm text-muted-foreground whitespace-nowrap">Instancia {currentInstanceIndexForConfiguration + 1} de {currentProductConfigQuantity}</span>
-                            <Button variant="outline" size="sm" onClick={() => setCurrentInstanceIndexForConfiguration(prev => Math.min(currentProductConfigQuantity - 1, prev + 1))} disabled={currentInstanceIndexForConfiguration === currentProductConfigQuantity - 1}>Siguiente</Button>
-                        </div>
-                    )}
+                    <div className="flex items-center gap-2">
+                        <Button variant="outline" size="icon" onClick={handleDecrementConfigQuantity} disabled={currentProductConfigQuantity <= 1}>
+                            <MinusCircle className="h-5 w-5" />
+                        </Button>
+                        <Input
+                            type="number"
+                            value={currentProductConfigQuantity}
+                            onChange={handleConfigQuantityInputChange}
+                            className="w-16 h-9 text-center text-base"
+                            min="1"
+                        />
+                        <Button variant="outline" size="icon" onClick={handleIncrementConfigQuantity}>
+                            <PlusCircle className="h-5 w-5" />
+                        </Button>
+                    </div>
                 </div>
 
+                {currentProductConfigQuantity > 1 && (
+                    <div className="flex items-center justify-between gap-2 mb-3 p-2 border rounded-md bg-muted/30">
+                        <Button variant="outline" size="sm" onClick={() => setCurrentInstanceIndexForConfiguration(prev => Math.max(0, prev - 1))} disabled={currentInstanceIndexForConfiguration === 0}>Anterior</Button>
+                        <span className="text-sm text-muted-foreground whitespace-nowrap">Instancia {currentInstanceIndexForConfiguration + 1} de {currentProductConfigQuantity}</span>
+                        <Button variant="outline" size="sm" onClick={() => setCurrentInstanceIndexForConfiguration(prev => Math.min(currentProductConfigQuantity - 1, prev + 1))} disabled={currentInstanceIndexForConfiguration === currentProductConfigQuantity - 1}>Siguiente</Button>
+                    </div>
+                )}
+                 <p className="text-xs md:text-sm text-muted-foreground mb-2">Configura modificadores. Doble clic para estilos de servicio.</p>
             </div>
             
              {currentModifierSlots.length === 0 && <p className="text-muted-foreground my-4 text-center">No hay modificadores disponibles para este producto.</p>}
              
-             <ScrollArea className="flex-grow mb-3"> {/* ScrollArea for modifier slots */}
+             <ScrollArea className="flex-grow mb-3">
                 <div className="space-y-4 md:space-y-6 pr-2">
                     {currentModifierSlots.map(slot => {
                         const selectedForSlotInCurrentInstance = currentInstanceConfig.filter(sel => sel.slotId === slot.id);
@@ -1321,7 +1331,7 @@ const handleSaveExtraCost = () => {
                                             optionInvItemName = invItem?.name || 'Item Inventario';
                                             optionInventoryOk = !!invItem && invItem.current_stock >= (option.inventory_consumed_per_unit ?? 0);
                                         }
-                                        const isOutOfStock = !optionInventoryOk && !isSelectedInCurrentInstance; // Only out of stock if not already selected
+                                        const isOutOfStock = !optionInventoryOk && !isSelectedInCurrentInstance;
 
                                         return (
                                         <Popover key={option.id} open={servingStylePopoverState?.modifierProductId === option.id && servingStylePopoverState?.modifierSlotId === slot.id && servingStylePopoverState?.packageItemContextId === null} onOpenChange={(open) => { if (!open) setServingStylePopoverState(null); }}>
@@ -1385,19 +1395,16 @@ const handleSaveExtraCost = () => {
         );
 
     case 'package-details':
-        // isLoading.packageDetails handled by isViewLoading
         if (!selectedPackageDetail) return <p className="text-center text-muted-foreground py-10">Error: No hay paquete seleccionado.</p>;
         const { packageDef, packageItems, itemSlots } = selectedPackageDetail;
         return (
-            <div className="flex flex-col h-full"> {/* Ensure package details view can also scroll if content is long */}
+            <div className="flex flex-col h-full">
              <div className="flex-shrink-0">
-                 <Button variant="ghost" size="sm" onClick={handleBack} className="mb-2 text-sm">
-                    <ChevronLeft className="mr-2 h-4 w-4" /> Volver a {selectedCategory?.name || 'Items'}
-                 </Button>
+                {/* El botón de retroceso se maneja en CardHeader ahora */}
                  <h2 className="text-lg md:text-xl font-semibold mb-1">{packageDef.name} - {formatCurrency(packageDef.price)}</h2>
                  <p className="text-xs md:text-sm text-muted-foreground mb-2">Configura opciones para este paquete ({currentProductConfigQuantity > 1 ? `${currentProductConfigQuantity} paquetes` : '1 paquete'}). Doble clic en modificadores para estilos.</p>
              </div>
-             <ScrollArea className="flex-grow mb-3"> {/* ScrollArea for package items and their slots */}
+             <ScrollArea className="flex-grow mb-3">
                 <div className="space-y-4 md:space-y-6 pr-2">
                     {packageItems.map(item => (
                         <Card key={item.id} className="p-3 md:p-4">
@@ -1405,7 +1412,7 @@ const handleSaveExtraCost = () => {
                             <div className="space-y-3 md:space-y-4 pl-2 md:pl-4 border-l-2 border-muted ml-1">
                                 {(itemSlots[item.id] || []).length === 0 && <p className="text-sm text-muted-foreground">No hay opciones configurables.</p>}
                                 {(itemSlots[item.id] || []).map(slot => {
-                                    const currentPackageItemInstanceConfig = slot.selectedOptions || []; // From package structure
+                                    const currentPackageItemInstanceConfig = slot.selectedOptions || [];
                                     return (
                                         <div key={slot.id}>
                                             <h4 className="text-sm md:text-md font-medium mb-1 md:mb-2">{slot.label} <span className="text-xs md:text-sm text-muted-foreground">(Min: {slot.min_quantity}, Max: {slot.max_quantity})</span></h4>
@@ -1484,18 +1491,18 @@ const handleSaveExtraCost = () => {
   };
 
  return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6 h-[calc(100vh-theme(spacing.16))]"> {/* Adjusted gap for responsiveness */}
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6 h-[calc(100vh-theme(spacing.16))]">
       <div className="lg:col-span-2 h-full">
          <Card className="h-full flex flex-col shadow-md">
             <CardHeader className="pb-2 md:pb-4">
                 <CardTitle className="text-lg md:text-xl">Crear Pedido</CardTitle>
-                <CardDescription className="text-xs md:text-sm">Selecciona categorías, productos, paquetes y modificadores.</CardDescription>
+                {renderBackButton()}
             </CardHeader>
-            <CardContent className="flex-grow overflow-hidden p-3 md:p-4"> {/* Adjusted padding */}
+            <CardContent className="flex-grow overflow-hidden p-3 md:p-4">
                 {isViewLoading ? (
                     <div className="flex justify-center items-center h-full"><Loader2 className="h-8 w-8 animate-spin text-muted-foreground" /></div>
                 ) : (
-                     <ScrollArea className="h-full pr-2 md:pr-4" key={view === 'modifiers' ? `mod-scroll-${currentInstanceIndexForConfiguration}` : view}> 
+                     <ScrollArea className="h-full pr-2 md:pr-4" key={view === 'modifiers' ? `mod-scroll-${currentInstanceIndexForConfiguration}-${currentProductConfigQuantity}` : view}> 
                         {renderContent()} 
                      </ScrollArea>
                 )}
@@ -1537,7 +1544,6 @@ const handleSaveExtraCost = () => {
                )}
              </div>
              <Separator className="mb-3 md:mb-4" />
-             {/* Replaced ScrollArea with simple div for diagnostics */}
              <div className="flex-grow mb-3 md:mb-4 overflow-y-auto -mr-3 md:-mr-4 pr-3 md:pr-4" key={`order-summary-${currentOrder.items.length}`}>
                 {currentOrder.items.length === 0 ? (<p className="text-muted-foreground text-center py-8 text-sm md:text-base">El pedido está vacío.</p>) : (
                  <div className="space-y-2 md:space-y-3">
@@ -1637,7 +1643,6 @@ const handleSaveExtraCost = () => {
          </Card>
        </div>
 
-        {/* Dialogo para Cantidad de Producto/Paquete */}
         <Dialog open={isQuantityDialogOpen} onOpenChange={setIsQuantityDialogOpen}>
             <DialogContent className="sm:max-w-xs">
                 <DialogHeader>
@@ -1666,7 +1671,6 @@ const handleSaveExtraCost = () => {
         </Dialog>
 
 
-       {/* Dialogo para Costo Extra */}
        <Dialog open={!!extraCostDialogState} onOpenChange={() => setExtraCostDialogState(null)}>
             <DialogContent>
                 <DialogHeader>
@@ -1704,3 +1708,4 @@ const handleSaveExtraCost = () => {
     </div>
   );
 }
+
