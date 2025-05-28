@@ -3,6 +3,7 @@
 
 import * as React from 'react';
 import { useState, useEffect, useCallback } from 'react';
+import { useRouter } from 'next/navigation'; // Importar useRouter
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetFooter } from "@/components/ui/sheet"; // SheetFooter importado
@@ -22,6 +23,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter as DialogPrimiti
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import { cn } from '@/lib/utils';
 
 // Helper to format currency
 const formatCurrency = (amount: number | null | undefined): string => {
@@ -57,6 +59,7 @@ export default function HomePage() {
   const [isProcessingAction, setIsProcessingAction] = useState(false);
   const { toast } = useToast();
   const { username } = useAuth(); // Obtener usuario actual
+  const router = useRouter(); // Obtener router
 
   const [kanbanColumns, setKanbanColumns] = useState<KanbanColumn[]>([
     { id: 'preparing', title: 'En Preparación', icon: TimerIcon, orders: [] },
@@ -180,15 +183,27 @@ export default function HomePage() {
   };
 
   const handleEditOrder = (orderId: string) => {
-    console.log(`SIMULACIÓN: Pedido #${orderId} marcado para edición.`);
-    console.log(`SIMULACIÓN: Notificación enviada a cocina.`);
-    console.log(`SIMULACIÓN: Comanda para pedido #${orderId} se reimprimiría con la marca "PEDIDO MODIFICADO".`);
-    toast({
-        title: "Función de Edición No Implementada",
-        description: "Editar pedidos requiere manejo de estado complejo, inventario y notificaciones. Esta función aún no está disponible.",
-        variant: "default",
-    });
-    setIsSheetOpen(false);
+    if (!selectedOrder) {
+      toast({ title: "Error", description: "No hay pedido seleccionado para editar.", variant: "destructive" });
+      return;
+    }
+    console.log(`[HomePage] handleEditOrder llamado para orderId: ${orderId}, estado: ${selectedOrder.status}`);
+
+    if (selectedOrder.status !== 'pending') {
+      toast({
+        title: "No Editable",
+        description: `Los pedidos con estado '${selectedOrder.status}' no pueden ser editados.`,
+        variant: "default"
+      });
+      console.log(`[HomePage] Pedido ${orderId} no editable, estado: ${selectedOrder.status}`);
+      return;
+    }
+
+    // Navegar a la página de creación de pedidos con el ID del pedido a editar
+    const editUrl = `/dashboard/create-order?editOrderId=${orderId}`;
+    console.log(`[HomePage] Navegando a: ${editUrl}`);
+    router.push(editUrl);
+    setIsSheetOpen(false); // Cerrar el sheet después de iniciar la edición
   };
 
   // Abre el diálogo de cancelación
@@ -222,25 +237,25 @@ export default function HomePage() {
     setIsProcessingAction(true);
     toast({ title: "Procesando...", description: `Cancelando pedido #${orderToCancelForDialog.orderNumber}` });
 
+    // Determinar si se debe reponer inventario basado en el estado *antes* de la cancelación
     const shouldRestock = orderToCancelForDialog.status === 'pending';
 
     try {
         if (shouldRestock) {
-            console.log(`[HomePage] Reponiendo inventario para pedido cancelado ${orderToCancelForDialog.id}`);
+            console.log(`[HomePage] Reponiendo inventario para pedido cancelado ${orderToCancelForDialog.id} (estado: ${orderToCancelForDialog.status})`);
             const inventoryAdjustments: Record<string, { change: number, name: string }> = {};
             let productDetailsMap = new Map<string, Product>();
 
             const allProductIdsInOrder = new Set<string>();
             orderToCancelForDialog.items.forEach(item => {
-                allProductIdsInOrder.add(item.id);
-                 item.components.forEach(comp => {
-                    // Para la reposición, necesitamos el ID del producto original del componente (modificador)
-                    // Esto asume que 'comp.name' puede usarse para encontrar el producto.
-                    // Una mejor aproximación sería que 'SavedOrderItemComponent' guardara 'productId'.
-                    // Por ahora, esta parte es una simplificación.
-                    // Si los componentes no tienen ID de producto, no se pueden reponer automáticamente.
-                    // Aquí asumiremos que los componentes no consumen inventario por separado o que su producto base (item.id) es suficiente.
-                 });
+                allProductIdsInOrder.add(item.id); // ID del producto o paquete base
+                item.components.forEach(comp => {
+                   // Para la reposición, necesitamos el ID del producto original del componente (modificador)
+                   // Si `comp.productId` está disponible, úsalo.
+                    if (comp.productId) {
+                        allProductIdsInOrder.add(comp.productId);
+                    }
+                });
             });
             
             const productFetchPromises = Array.from(allProductIdsInOrder).map(id => getProductById(id).catch(() => null));
@@ -251,17 +266,30 @@ export default function HomePage() {
                 const itemDetails = productDetailsMap.get(orderItem.id);
                 if (itemDetails && itemDetails.inventory_item_id && itemDetails.inventory_consumed_per_unit) {
                     const invItemId = itemDetails.inventory_item_id;
-                    const change = +(itemDetails.inventory_consumed_per_unit * orderItem.quantity);
+                    const change = +(itemDetails.inventory_consumed_per_unit * orderItem.quantity); // Positivo para reponer
                     const currentData = inventoryAdjustments[invItemId] || { change: 0, name: inventoryMap.get(invItemId)?.name || 'Item de Inventario' };
                     inventoryAdjustments[invItemId] = { ...currentData, change: currentData.change + change };
                 }
-                // TODO: Iterar orderItem.components y reponer inventario si los modificadores consumen items.
-                // Necesitaría que SavedOrderItemComponent tenga productId.
+                
+                // Reponer inventario de modificadores
+                for (const component of orderItem.components) {
+                    if (component.productId && component.slotLabel !== 'Contenido') { // Asegurar que es un modificador con ID
+                        const modDetails = productDetailsMap.get(component.productId);
+                        if (modDetails?.inventory_item_id && modDetails.inventory_consumed_per_unit) {
+                            const invItemId = modDetails.inventory_item_id;
+                             // Los modificadores se consumen una vez por cada *unidad* del producto principal al que están asociados.
+                            const change = +(modDetails.inventory_consumed_per_unit * orderItem.quantity); // Positivo para reponer
+                            const currentData = inventoryAdjustments[invItemId] || { change: 0, name: inventoryMap.get(invItemId)?.name || 'Item de Inventario' };
+                            inventoryAdjustments[invItemId] = { ...currentData, change: currentData.change + change };
+                        }
+                    }
+                }
             }
 
             const adjustmentPromises: Promise<void>[] = [];
             for (const [itemId, { change }] of Object.entries(inventoryAdjustments)) {
                 if (change !== 0) {
+                    console.log(`[HomePage] Ajustando inventario para ${itemId}: ${change}`);
                     adjustmentPromises.push(adjustInventoryStock(itemId, change));
                 }
             }
@@ -276,11 +304,13 @@ export default function HomePage() {
                 }
              });
              setInventoryMap(newInvMap);
+        } else {
+             console.log(`[HomePage] NO se repone inventario para pedido cancelado ${orderToCancelForDialog.id} (estado: ${orderToCancelForDialog.status})`);
         }
 
         const updatedCancellationDetails = {
             reason: cancellationReasonInput,
-            cancelledBy: username,
+            cancelledBy: username || 'Desconocido', // Usar 'Desconocido' si username es null
             cancelledAt: new Date().toISOString(),
             authorizedPin: authorizationPinInput, // Guardar el PIN ingresado para registro
         };
@@ -317,14 +347,14 @@ export default function HomePage() {
     try {
         setAllOrders(prevOrders => {
             const updatedOrders = prevOrders.map(order =>
-                order.id === orderId ? { ...order, status: newStatus } : order
+                order.id === orderId ? { ...order, status: newStatus, updatedAt: new Date() } : order
             );
             localStorage.setItem('siChefOrders', JSON.stringify(updatedOrders));
             return updatedOrders;
         });
 
         if (selectedOrder && selectedOrder.id === orderId) {
-            setSelectedOrder(prev => prev ? { ...prev, status: newStatus } : null);
+            setSelectedOrder(prev => prev ? { ...prev, status: newStatus, updatedAt: new Date() } : null);
         }
         if (newStatus === 'completed' || newStatus === 'cancelled') {
             setIsSheetOpen(false);
@@ -468,13 +498,20 @@ export default function HomePage() {
                             Marcar como Entregado
                         </Button>
                     )}
-                    <Button 
-                        variant="outline" 
-                        size="sm" 
-                        onClick={() => handleEditOrder(selectedOrder!.id)} 
-                        disabled={isProcessingAction || selectedOrder.status !== 'pending'}
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => { // Added explicit block for logging
+                            if (selectedOrder) {
+                                console.log(`[HomePage] Edit button clicked for order: ${selectedOrder.id}, status: ${selectedOrder.status}`);
+                                handleEditOrder(selectedOrder.id);
+                            } else {
+                                console.warn("[HomePage] Edit button clicked but no selectedOrder.");
+                            }
+                        }}
+                        disabled={isProcessingAction || !selectedOrder || selectedOrder.status !== 'pending'}
                         className="flex-grow sm:flex-grow-0"
-                        title={selectedOrder.status !== 'pending' ? "Solo se pueden editar pedidos pendientes" : "Editar Pedido"}
+                        title={selectedOrder && selectedOrder.status !== 'pending' ? "Solo se pueden editar pedidos pendientes" : "Editar Pedido"}
                     >
                         <Pencil className="mr-2 h-4 w-4" /> Editar
                     </Button>
@@ -516,7 +553,7 @@ export default function HomePage() {
               {orderToCancelForDialog?.status === 'pending'
                 ? "El inventario asociado a este pedido será repuesto."
                 : "Este pedido ya fue completado. Anularlo NO repondrá el inventario automáticamente."}
-              <br/>Por favor, introduce el motivo y tu PIN de autorización.
+              <br/>Por favor, introduce el motivo y tu PIN de autorización (simulado).
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
@@ -565,4 +602,3 @@ export default function HomePage() {
     </div>
   );
 }
-
