@@ -6,49 +6,45 @@ import { open, type Database } from 'sqlite';
 import path from 'path';
 
 // Asegurar que la ruta del archivo de la base de datos sea correcta, especialmente en builds de producción
-const dbPath = path.join(process.cwd(), 'sichef.db');
+const dbPath = process.cwd().endsWith('.next')
+  ? path.join(process.cwd(), '../../sichef.db') // En producción (dentro de .next)
+  : path.join(process.cwd(), 'sichef.db'); // En desarrollo
 
 let db: Database | null = null;
 let isInitializing = false; // Bandera para prevenir inicializaciones concurrentes
 let initializationPromise: Promise<Database> | null = null; // Promesa para la inicialización en curso
 
 export async function getDb(): Promise<Database> {
-  // Si la inicialización ya está en progreso, esperar a que se complete
   if (isInitializing && initializationPromise) {
     console.log(`[DB] Esperando inicialización en curso...`);
     return initializationPromise;
   }
 
-  // Si la BD ya está inicializada, retornarla
   if (db) {
-    // console.log("[DB] Retornando conexión de base de datos existente."); // Evitar logging excesivo
     return db;
   }
 
-  // Iniciar inicialización
   isInitializing = true;
   initializationPromise = (async () => {
     try {
       console.log(`[DB] Intentando abrir base de datos en: ${dbPath}`);
-      // Añadir logging verboso para el driver sqlite3
       const verboseSqlite3 = sqlite3.verbose();
       const newDb = await open({
         filename: dbPath,
-        driver: verboseSqlite3.Database // Usar driver verboso para más logs
+        driver: verboseSqlite3.Database
       });
       console.log("[DB] Base de datos abierta exitosamente. Inicializando esquema...");
-      await initializeDb(newDb); // Asegurar que el esquema se cree/actualice
-      db = newDb; // Asignar a la variable global *después* de una inicialización exitosa
+      await initializeDb(newDb);
+      db = newDb;
       console.log("[DB] Conexión de base de datos establecida e inicializada.");
-      isInitializing = false; // Resetear bandera
-      initializationPromise = null; // Limpiar promesa
       return db;
     } catch (error) {
-      isInitializing = false; // Resetear bandera en error
-      initializationPromise = null; // Limpiar promesa
-      db = null; // Asegurar que db sea null en error
+      db = null;
       console.error("[DB] Falló al abrir o inicializar la base de datos:", error);
-      throw error; // Re-lanzar el error para indicar fallo
+      throw error;
+    } finally {
+      isInitializing = false;
+      initializationPromise = null;
     }
   })();
 
@@ -59,11 +55,9 @@ export async function getDb(): Promise<Database> {
 async function initializeDb(dbInstance: Database): Promise<void> {
     console.log("[DB Initialize] Iniciando inicialización de esquema...");
     try {
-        // Usar PRAGMA foreign_keys=ON; para forzar restricciones de clave foránea
         await dbInstance.exec('PRAGMA foreign_keys=ON;');
         console.log("[DB Initialize] PRAGMA foreign_keys=ON ejecutado.");
 
-        // --- Creación de Tablas ---
         await dbInstance.exec(`
             CREATE TABLE IF NOT EXISTS categories (
             id TEXT PRIMARY KEY,
@@ -225,10 +219,35 @@ async function initializeDb(dbInstance: Database): Promise<void> {
                 FOREIGN KEY (permission_id) REFERENCES permissions(id) ON DELETE CASCADE
             );
 
+             CREATE TABLE IF NOT EXISTS promotions (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                is_active INTEGER DEFAULT 1,
+                start_date TEXT,
+                end_date TEXT,
+                days_of_week TEXT,
+                product_id TEXT NOT NULL,
+                buy_quantity INTEGER NOT NULL,
+                nth_item_to_discount INTEGER NOT NULL,
+                discount_percentage REAL NOT NULL,
+                FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS clients (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                phone TEXT,
+                email TEXT UNIQUE,
+                address TEXT,
+                notes TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+
         `);
         console.log("[DB Initialize] Tablas base creadas o verificadas.");
 
-        // --- Añadir/Verificar columnas existentes ---
         const columnsToVerify = [
             { table: 'categories', column: 'type', definition: "TEXT NOT NULL CHECK(type IN ('producto', 'modificador', 'paquete')) DEFAULT 'producto'" },
             { table: 'products', column: 'inventory_item_id', definition: "TEXT" },
@@ -251,6 +270,18 @@ async function initializeDb(dbInstance: Database): Promise<void> {
             }
         }
         
+        // Trigger para actualizar 'updated_at' en la tabla 'clients'
+        await dbInstance.exec(`
+            CREATE TRIGGER IF NOT EXISTS update_clients_updated_at
+            AFTER UPDATE ON clients
+            FOR EACH ROW
+            BEGIN
+                UPDATE clients SET updated_at = CURRENT_TIMESTAMP WHERE id = OLD.id;
+            END;
+        `);
+        console.log("[DB Initialize] Trigger 'update_clients_updated_at' creado o verificado.");
+
+
         console.log("[DB Initialize] Inicialización/verificación de esquema finalizada.");
     } catch (initError) {
         console.error("[DB Initialize] Error durante inicialización de esquema:", initError);
@@ -280,4 +311,3 @@ process.on('SIGTERM', async () => {
     await closeDb();
     process.exit(0);
 });
-

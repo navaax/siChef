@@ -3,6 +3,8 @@ import { getDb, closeDb } from '../lib/db';
 import { randomUUID } from 'crypto';
 import type { Category, InventoryItem, Product, Package, PackageItem, ProductModifierSlot, ProductModifierSlotOption, PackageItemModifierSlotOverride, ModifierServingStyle } from '../types/product-types';
 import type { Employee, Position, Role, Permission } from '../types/user-management-types';
+import type { Promotion } from '../types/promotion-types';
+import type { Client } from '../types/client-types'; // Importar tipo Client
 
 // --- Seed Data ---
 
@@ -91,6 +93,8 @@ const permissions: Permission[] = [
     { id: 'perm_create_orders', name: 'Crear Pedidos', description: 'Permite crear y finalizar nuevos pedidos.' },
     { id: 'perm_manage_inventory', name: 'Gestionar Inventario', description: 'Permite añadir, editar y eliminar items de inventario.' },
     { id: 'perm_manage_products', name: 'Gestionar Productos', description: 'Permite gestionar categorías, productos, modificadores y paquetes.' },
+    { id: 'perm_manage_clients', name: 'Gestionar Clientes', description: 'Permite administrar la cartera de clientes.' },
+    { id: 'perm_manage_promotions', name: 'Gestionar Promociones', description: 'Permite crear y administrar promociones.' },
     { id: 'perm_view_reports', name: 'Ver Reportes', description: 'Permite acceder y generar reportes de ventas.' },
     { id: 'perm_manage_cash_register', name: 'Gestionar Caja', description: 'Permite iniciar y cerrar sesiones de caja.' },
     { id: 'perm_manage_users', name: 'Gestionar Usuarios', description: 'Permite administrar empleados, puestos y roles.' },
@@ -114,6 +118,45 @@ const employees: Employee[] = [
     { id: 'emp_cashier_user', full_name: 'Cajero Uno', pin: '0000', position_id: 'pos_cashier', reports_to_employee_id: 'emp_admin_user', status: 'active' },
 ];
 
+const promotions: Promotion[] = [
+    {
+        id: 'promo-alitas-2x1-mitad',
+        name: 'Alitas 2x1 (2da a Mitad)',
+        description: 'En la compra de 2 órdenes de alitas 6pz, la segunda va a mitad de precio.',
+        is_active: true,
+        start_date: new Date(new Date().setDate(new Date().getDate() - 7)).toISOString(), // Hace 7 días
+        end_date: new Date(new Date().setDate(new Date().getDate() + 30)).toISOString(), // Dentro de 30 días
+        days_of_week: '0,1,2,3,4,5,6', // Todos los días
+        product_id: 'prod-alitas-6',
+        buy_quantity: 2,
+        nth_item_to_discount: 2,
+        discount_percentage: 0.50
+    }
+];
+
+const clients: Client[] = [
+    {
+        id: 'client-001',
+        name: 'Cliente Mostrador',
+        phone: 'N/A',
+        email: 'mostrador@sichef.com',
+        address: 'N/A',
+        notes: 'Cliente genérico para ventas de mostrador.',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+    },
+    {
+        id: 'client-002',
+        name: 'Juan Pérez',
+        phone: '5512345678',
+        email: 'juan.perez@example.com',
+        address: 'Calle Falsa 123, Colonia Centro',
+        notes: 'Cliente frecuente. Prefiere salsas picantes.',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+    }
+];
+
 
 async function seedDatabase() {
   const db = await getDb();
@@ -123,6 +166,8 @@ async function seedDatabase() {
     await db.run('BEGIN TRANSACTION;');
 
     console.log('Limpiando datos existentes...');
+    await db.run('DELETE FROM clients;');
+    await db.run('DELETE FROM promotions;');
     await db.run('DELETE FROM role_permissions;');
     await db.run('DELETE FROM employee_roles;');
     await db.run('DELETE FROM employees;');
@@ -249,7 +294,6 @@ async function seedDatabase() {
     await employeeStmt.finalize();
     console.log(`${employees.length} empleados insertados.`);
 
-    // Asignar todos los permisos al rol de Administrador
     const adminRole = roles.find(r => r.id === 'role_admin');
     if (adminRole) {
         const rolePermissionStmt = await db.prepare('INSERT INTO role_permissions (role_id, permission_id) VALUES (?, ?)');
@@ -260,7 +304,6 @@ async function seedDatabase() {
         console.log(`Todos los permisos asignados al rol "${adminRole.name}".`);
     }
 
-    // Asignar rol Administrador al empleado Administrador
     const adminEmployee = employees.find(e => e.id === 'emp_admin_user');
     if (adminEmployee && adminRole) {
         const empRoleStmt = await db.prepare('INSERT INTO employee_roles (employee_id, role_id) VALUES (?, ?)');
@@ -268,7 +311,6 @@ async function seedDatabase() {
         await empRoleStmt.finalize();
         console.log(`Rol "${adminRole.name}" asignado al empleado "${adminEmployee.full_name}".`);
     }
-     // Asignar rol Cajero al empleado Cajero
     const cashierEmployee = employees.find(e => e.id === 'emp_cashier_user');
     const cashierRole = roles.find(r => r.id === 'role_cashier');
     if (cashierEmployee && cashierRole) {
@@ -276,8 +318,7 @@ async function seedDatabase() {
         await empRoleStmt.run(cashierEmployee.id, cashierRole.id);
         await empRoleStmt.finalize();
         console.log(`Rol "${cashierRole.name}" asignado al empleado "${cashierEmployee.full_name}".`);
-        // Asignar permisos específicos al rol Cajero
-        const cashierPerms = ['perm_create_orders', 'perm_manage_cash_register'];
+        const cashierPerms = ['perm_create_orders', 'perm_manage_cash_register', 'perm_view_dashboard'];
         const rolePermStmt = await db.prepare('INSERT INTO role_permissions (role_id, permission_id) VALUES (?, ?)');
         for (const permId of cashierPerms) {
             if (permissions.find(p => p.id === permId)) {
@@ -287,6 +328,24 @@ async function seedDatabase() {
         await rolePermStmt.finalize();
         console.log(`Permisos de cajero asignados al rol "${cashierRole.name}".`);
     }
+
+    // Insert Promotions
+    console.log('Insertando promociones...');
+    const promoStmt = await db.prepare('INSERT INTO promotions (id, name, description, is_active, start_date, end_date, days_of_week, product_id, buy_quantity, nth_item_to_discount, discount_percentage) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+    for (const promo of promotions) {
+        await promoStmt.run(promo.id, promo.name, promo.description, promo.is_active ? 1:0, promo.start_date, promo.end_date, promo.days_of_week, promo.product_id, promo.buy_quantity, promo.nth_item_to_discount, promo.discount_percentage);
+    }
+    await promoStmt.finalize();
+    console.log(`${promotions.length} promociones insertadas.`);
+
+    // Insert Clients
+    console.log('Insertando clientes...');
+    const clientStmt = await db.prepare('INSERT INTO clients (id, name, phone, email, address, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+    for (const client of clients) {
+        await clientStmt.run(client.id, client.name, client.phone, client.email, client.address, client.notes, client.created_at, client.updated_at);
+    }
+    await clientStmt.finalize();
+    console.log(`${clients.length} clientes insertados.`);
 
 
     await db.run('COMMIT;');
