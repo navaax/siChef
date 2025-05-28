@@ -1,3 +1,4 @@
+
 // src/app/dashboard/home/page.tsx
 "use client";
 
@@ -10,18 +11,20 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { format } from 'date-fns';
-import { Pencil, XCircle, PackageIcon, TimerIcon, CheckCircle2, AlertTriangle, Loader2 } from 'lucide-react'; // Added Loader2
-import type { SavedOrder, SavedOrderItem, SavedOrderItemComponent } from '@/types/product-types';
+import { Pencil, XCircle, PackageIcon, TimerIcon, CheckCircle2, AlertTriangle, Loader2 } from 'lucide-react';
+import type { SavedOrder, SavedOrderItem, SavedOrderItemComponent, Product, InventoryItem } from '@/types/product-types'; // Added Product, InventoryItem
 import { useToast } from '@/hooks/use-toast';
 import { OrderKanbanColumn } from '@/components/dashboard/home/OrderKanbanColumn';
-import type { OrderKanbanCardProps } from '@/components/dashboard/home/OrderKanbanCard'; // Import type
+import type { OrderKanbanCardProps } from '@/components/dashboard/home/OrderKanbanCard';
+import { getProductById } from '@/services/product-service'; // Para reposición de inventario
+import { adjustInventoryStock, getInventoryItems } from '@/services/inventory-service'; // Para reposición de inventario
 
 // Helper to format currency
 const formatCurrency = (amount: number | null | undefined): string => {
     if (typeof amount !== 'number' || isNaN(amount)) {
-        return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(0);
+        return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(0);
     }
-    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount);
+    return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(amount);
 };
 
 // Helper to get status badge variant
@@ -47,8 +50,7 @@ export default function HomePage() {
   const [allOrders, setAllOrders] = useState<SavedOrder[]>([]);
   const [selectedOrder, setSelectedOrder] = useState<SavedOrder | null>(null);
   const [isSheetOpen, setIsSheetOpen] = useState(false);
-  const [isCancelling, setIsCancelling] = useState(false);
-  const [isUpdatingStatus, setIsUpdatingStatus] = useState(false); // New state for status updates
+  const [isProcessingAction, setIsProcessingAction] = useState(false); // Combina isCancelling y isUpdatingStatus
   const { toast } = useToast();
 
   const [kanbanColumns, setKanbanColumns] = useState<KanbanColumn[]>([
@@ -56,35 +58,47 @@ export default function HomePage() {
     { id: 'delayed', title: 'Con Demora', icon: AlertTriangle, orders: [] },
     { id: 'delivered', title: 'Entregado', icon: CheckCircle2, orders: [] },
   ]);
+  const [inventoryMap, setInventoryMap] = useState<Map<string, InventoryItem>>(new Map()); // Needed for inventory names
 
-  // Load orders from localStorage on mount
+  // Load orders and inventory from localStorage/service on mount
   useEffect(() => {
-    const storedOrders = localStorage.getItem('siChefOrders');
-    if (storedOrders) {
-      try {
-        const parsedOrders: SavedOrder[] = JSON.parse(storedOrders).map((order: any) => ({
-            ...order,
-            createdAt: new Date(order.createdAt),
-            items: order.items?.map((item: any) => ({
-                id: item.id || 'unknown',
-                name: item.name || 'Unknown Item',
-                quantity: typeof item.quantity === 'number' ? item.quantity : 0,
-                price: typeof item.price === 'number' ? item.price : 0,
-                totalItemPrice: typeof item.totalItemPrice === 'number' ? item.totalItemPrice : 0,
-                components: Array.isArray(item.components) ? item.components : [],
-            })) || [],
-             subtotal: typeof order.subtotal === 'number' ? order.subtotal : 0,
-             total: typeof order.total === 'number' ? order.total : 0,
-             status: ['pending', 'completed', 'cancelled'].includes(order.status) ? order.status : 'pending',
-             paymentMethod: ['cash', 'card'].includes(order.paymentMethod) ? order.paymentMethod : 'card',
-        })).sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()); // Sort by most recent
-        setAllOrders(parsedOrders);
-      } catch (error) {
-         console.error("Fallo al parsear pedidos desde localStorage:", error);
-         localStorage.removeItem('siChefOrders'); // Limpiar datos potencialmente corruptos
-          toast({ title: "Error al Cargar Pedidos", description: "No se pudieron cargar los datos de ventas anteriores. El almacenamiento podría estar corrupto.", variant: "destructive" });
-      }
+    async function loadInitialData() {
+        const storedOrders = localStorage.getItem('siChefOrders');
+        if (storedOrders) {
+          try {
+            const parsedOrders: SavedOrder[] = JSON.parse(storedOrders).map((order: any) => ({
+                ...order,
+                createdAt: new Date(order.createdAt),
+                items: order.items?.map((item: any) => ({
+                    id: item.id || 'unknown',
+                    name: item.name || 'Unknown Item',
+                    quantity: typeof item.quantity === 'number' ? item.quantity : 0,
+                    price: typeof item.price === 'number' ? item.price : 0,
+                    totalItemPrice: typeof item.totalItemPrice === 'number' ? item.totalItemPrice : 0,
+                    components: Array.isArray(item.components) ? item.components : [],
+                })) || [],
+                 subtotal: typeof order.subtotal === 'number' ? order.subtotal : 0,
+                 total: typeof order.total === 'number' ? order.total : 0,
+                 status: ['pending', 'completed', 'cancelled'].includes(order.status) ? order.status : 'pending',
+                 paymentMethod: ['cash', 'card'].includes(order.paymentMethod) ? order.paymentMethod : 'card',
+            })).sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+            setAllOrders(parsedOrders);
+          } catch (error) {
+             console.error("Fallo al parsear pedidos desde localStorage:", error);
+             localStorage.removeItem('siChefOrders');
+              toast({ title: "Error al Cargar Pedidos", description: "No se pudieron cargar los datos de ventas anteriores.", variant: "destructive" });
+          }
+        }
+        try {
+            const fetchedInventory = await getInventoryItems();
+            const invMap = new Map<string, InventoryItem>();
+            fetchedInventory.forEach(item => invMap.set(item.id, item));
+            setInventoryMap(invMap);
+        } catch (error) {
+            toast({ title: "Error al Cargar Inventario", description: "No se pudo cargar la información de inventario.", variant: "destructive" });
+        }
     }
+    loadInitialData();
   }, [toast]);
 
   const handleMoveToDelayed = useCallback((orderId: string) => {
@@ -108,7 +122,6 @@ export default function HomePage() {
   }, [toast]);
 
 
-  // Distribute orders into Kanban columns
   useEffect(() => {
     const newPreparing: OrderKanbanCardProps[] = [];
     const newDelayed: OrderKanbanCardProps[] = [];
@@ -118,9 +131,7 @@ export default function HomePage() {
       if (order.status === 'cancelled') {
         return;
       }
-
       const isCurrentlyInDelayedVisualColumn = kanbanColumns.find(col => col.id === 'delayed')?.orders.some(o => o.order.id === order.id);
-
       const cardProps: OrderKanbanCardProps = {
         order,
         onCardClick: () => handleRowClick(order),
@@ -167,19 +178,84 @@ export default function HomePage() {
   };
 
   const handleCancelOrder = async (orderToCancel: SavedOrder) => {
-    if (isCancelling || isUpdatingStatus) return;
+    if (isProcessingAction) return;
 
-    if (!confirm(`¿Estás seguro que quieres cancelar el pedido #${orderToCancel.orderNumber}? Esta acción no se puede deshacer y el inventario NO se repondrá automáticamente.`)) {
+    let confirmationMessage = `¿Estás seguro que quieres cancelar el pedido #${orderToCancel.orderNumber}?`;
+    let shouldRestock = false;
+
+    if (orderToCancel.status === 'pending') {
+        confirmationMessage += " Esta acción repondrá el inventario asociado.";
+        shouldRestock = true;
+    } else if (orderToCancel.status === 'completed') {
+        confirmationMessage += " Esta es una anulación. El inventario NO se repondrá automáticamente.";
+    } else {
+        toast({ title: "Acción no permitida", description: "Este pedido no se puede cancelar en su estado actual.", variant: "default" });
         return;
     }
 
-    setIsCancelling(true);
-    toast({ title: "Cancelando Pedido...", description: `Procesando cancelación para el pedido #${orderToCancel.orderNumber}` });
+    if (!confirm(confirmationMessage)) {
+        return;
+    }
+
+    setIsProcessingAction(true);
+    toast({ title: "Procesando...", description: `Cancelando pedido #${orderToCancel.orderNumber}` });
 
     try {
-        // Aquí NO se repone el inventario automáticamente.
-        console.warn(`Pedido ${orderToCancel.id} cancelado. El inventario NO se repone automáticamente.`);
-        toast({ title: "Inventario No Repuesto", description: `Puede ser necesario un ajuste manual del inventario para el pedido cancelado #${orderToCancel.orderNumber}.`, variant: "default" });
+        if (shouldRestock) {
+            console.log(`[HomePage] Reponiendo inventario para pedido cancelado ${orderToCancel.id}`);
+            const inventoryAdjustments: Record<string, { change: number, name: string }> = {};
+            let productDetailsMap = new Map<string, Product>();
+
+            // Collect all product IDs from the order to fetch details in batch
+            const allProductIdsInOrder = new Set<string>();
+            orderToCancel.items.forEach(item => {
+                allProductIdsInOrder.add(item.id); // ID of the base product/package
+                item.components.forEach(comp => {
+                    // Assuming comp.name is the product name. We need a way to map this back to a product ID
+                    // This part is tricky because SavedOrderItemComponent only has `name`.
+                    // For accurate restocking, we need the product ID of each component.
+                    // This structure is insufficient for easy restocking.
+                    // A temporary simplification: We'll assume components don't consume separate inventory for now.
+                    // TODO: Revisit SavedOrder structure if component-level restocking is needed.
+                });
+            });
+            
+            // Fetch details for base products/packages in the order
+            const productFetchPromises = Array.from(allProductIdsInOrder).map(id => getProductById(id).catch(() => null));
+            const fetchedProducts = (await Promise.all(productFetchPromises)).filter(p => p !== null) as Product[];
+            fetchedProducts.forEach(p => productDetailsMap.set(p.id, p));
+
+            for (const orderItem of orderToCancel.items) {
+                const itemDetails = productDetailsMap.get(orderItem.id);
+                if (itemDetails && itemDetails.inventory_item_id && itemDetails.inventory_consumed_per_unit) {
+                    const invItemId = itemDetails.inventory_item_id;
+                    // POSITIVE change because we are RESTOCKING
+                    const change = +(itemDetails.inventory_consumed_per_unit * orderItem.quantity);
+                    const currentData = inventoryAdjustments[invItemId] || { change: 0, name: inventoryMap.get(invItemId)?.name || 'Item de Inventario' };
+                    inventoryAdjustments[invItemId] = { ...currentData, change: currentData.change + change };
+                }
+                // TODO: Iterate orderItem.components to restock modifiers if they consume inventory
+                // This requires components to have product_id and inventory_consumed_per_unit
+            }
+
+            const adjustmentPromises: Promise<void>[] = [];
+            for (const [itemId, { change }] of Object.entries(inventoryAdjustments)) {
+                if (change !== 0) {
+                    adjustmentPromises.push(adjustInventoryStock(itemId, change));
+                }
+            }
+            await Promise.all(adjustmentPromises);
+             // Optionally re-fetch inventoryMap if displayed directly on this page, or rely on context/next load
+            const newInvMap = new Map(inventoryMap);
+            for (const [itemId, { change }] of Object.entries(inventoryAdjustments)) {
+                const currentItem = newInvMap.get(itemId);
+                if (currentItem) {
+                    newInvMap.set(itemId, { ...currentItem, current_stock: currentItem.current_stock + change });
+                }
+            }
+            setInventoryMap(newInvMap);
+            console.log(`[HomePage] Inventario repuesto para pedido ${orderToCancel.id}`);
+        }
 
         setAllOrders(prevOrders => {
             const updatedOrders = prevOrders.map(order =>
@@ -193,19 +269,18 @@ export default function HomePage() {
             setSelectedOrder(prev => prev ? { ...prev, status: 'cancelled' } : null);
         }
 
-        toast({ title: "Pedido Cancelado", description: `El pedido #${orderToCancel.orderNumber} ha sido marcado como cancelado.`, variant: "destructive" });
+        toast({ title: "Pedido Cancelado", description: `El pedido #${orderToCancel.orderNumber} ha sido marcado como cancelado. ${shouldRestock ? 'Inventario repuesto.' : 'Inventario NO repuesto.'}`, variant: "destructive" });
     } catch (error) {
         console.error("Error cancelando pedido:", error);
-        toast({ title: "Falló la Cancelación", description: "Ocurrió un error mientras se cancelaba el pedido.", variant: "destructive" });
+        toast({ title: "Falló la Cancelación", description: `Ocurrió un error: ${error instanceof Error ? error.message : 'Error desconocido'}.`, variant: "destructive" });
     } finally {
-        setIsCancelling(false);
+        setIsProcessingAction(false);
     }
   };
 
   const handleUpdateOrderStatus = async (orderId: string, newStatus: SavedOrder['status']) => {
-    if (isUpdatingStatus || isCancelling) return;
-
-    setIsUpdatingStatus(true);
+    if (isProcessingAction) return;
+    setIsProcessingAction(true);
     toast({ title: "Actualizando Estado...", description: `Cambiando estado del pedido a '${newStatus}'.`});
 
     try {
@@ -220,17 +295,15 @@ export default function HomePage() {
         if (selectedOrder && selectedOrder.id === orderId) {
             setSelectedOrder(prev => prev ? { ...prev, status: newStatus } : null);
         }
-         // Cerrar el sheet después de la acción si aún está abierto
-        if (newStatus === 'completed') {
+        if (newStatus === 'completed' || newStatus === 'cancelled') {
             setIsSheetOpen(false);
         }
-
         toast({ title: "Estado Actualizado", description: `El pedido #${selectedOrder?.orderNumber || orderId} ahora está '${newStatus}'.` });
     } catch (error) {
         console.error("Error actualizando estado del pedido:", error);
         toast({ title: "Falló la Actualización", description: "Ocurrió un error al cambiar el estado del pedido.", variant: "destructive" });
     } finally {
-        setIsUpdatingStatus(false);
+        setIsProcessingAction(false);
     }
   };
 
@@ -257,7 +330,6 @@ export default function HomePage() {
         </CardContent>
       </Card>
 
-      {/* Sheet para Detalles del Pedido */}
       <Sheet open={isSheetOpen} onOpenChange={setIsSheetOpen}>
         <SheetContent className="sm:max-w-lg w-[90vw] md:w-[450px] p-0 flex flex-col">
            {selectedOrder ? (
@@ -296,6 +368,8 @@ export default function HomePage() {
                                 <li key={compIdx}>
                                      {comp.slotLabel && comp.slotLabel !== 'Mod' && comp.slotLabel !== 'Contenido' && `[${comp.slotLabel}] `}
                                      {comp.name}
+                                     {comp.servingStyle && comp.servingStyle !== "Normal" && ` (${comp.servingStyle})`}
+                                     {comp.extraCost && comp.extraCost > 0 && ` (+${formatCurrency(comp.extraCost)})`}
                                 </li>
                             ))}
                           </ul>
@@ -342,46 +416,54 @@ export default function HomePage() {
               </div>
             </ScrollArea>
 
-            {selectedOrder.status !== 'cancelled' && selectedOrder.status !== 'completed' && (
+            {selectedOrder.status !== 'cancelled' && (
                <div className="p-6 border-t mt-auto bg-muted/30">
                  <div className="flex flex-col sm:flex-row justify-end gap-2">
-                    {selectedOrder.status === 'pending' && ( // O si está en 'delayed' que también es 'pending'
+                    {selectedOrder.status === 'pending' && (
                         <Button
                             variant="default"
                             size="sm"
                             onClick={() => handleUpdateOrderStatus(selectedOrder!.id, 'completed')}
-                            disabled={isUpdatingStatus || isCancelling}
+                            disabled={isProcessingAction}
                             className="flex-grow sm:flex-grow-0"
                         >
-                            {isUpdatingStatus && !isCancelling ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-2 h-4 w-4" />}
+                            {isProcessingAction ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-2 h-4 w-4" />}
                             Marcar como Entregado
                         </Button>
                     )}
-                    <Button variant="outline" size="sm" onClick={() => handleEditOrder(selectedOrder!.id)} disabled className="flex-grow sm:flex-grow-0">
-                        <Pencil className="mr-2 h-4 w-4" /> Editar (Deshabilitado)
-                    </Button>
-                    <Button
-                        variant="destructive"
-                        size="sm"
-                        onClick={() => handleCancelOrder(selectedOrder!)}
-                        disabled={isCancelling || isUpdatingStatus}
+                    <Button 
+                        variant="outline" 
+                        size="sm" 
+                        onClick={() => handleEditOrder(selectedOrder!.id)} 
+                        disabled={isProcessingAction || selectedOrder.status === 'completed' || selectedOrder.status === 'cancelled'}
                         className="flex-grow sm:flex-grow-0"
+                        title={selectedOrder.status !== 'pending' ? "Solo se pueden editar pedidos pendientes" : "Editar Pedido"}
                     >
-                        {isCancelling ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <XCircle className="mr-2 h-4 w-4" />}
-                        Cancelar Pedido
+                        <Pencil className="mr-2 h-4 w-4" /> Editar
                     </Button>
+                    {(selectedOrder.status === 'pending' || selectedOrder.status === 'completed') && (
+                        <Button
+                            variant="destructive"
+                            size="sm"
+                            onClick={() => handleCancelOrder(selectedOrder!)}
+                            disabled={isProcessingAction}
+                            className="flex-grow sm:flex-grow-0"
+                        >
+                            {isProcessingAction ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <XCircle className="mr-2 h-4 w-4" />}
+                            {selectedOrder.status === 'completed' ? 'Anular Pedido' : 'Cancelar Pedido'}
+                        </Button>
+                    )}
                  </div>
-                 <p className="text-xs text-muted-foreground mt-2 text-right">Nota: Cancelar no repone automáticamente el inventario.</p>
+                 {(selectedOrder.status === 'pending' || selectedOrder.status === 'completed') && (
+                   <p className="text-xs text-muted-foreground mt-2 text-right">
+                    {selectedOrder.status === 'pending' ? 'Cancelar repone inventario.' : 'Anular NO repone inventario.'}
+                   </p>
+                 )}
                 </div>
             )}
              {selectedOrder.status === 'cancelled' && (
                 <div className="p-6 border-t mt-auto bg-destructive/10 text-center">
-                    <p className="text-sm font-medium text-destructive">Este pedido ha sido cancelado.</p>
-                 </div>
-             )}
-             {selectedOrder.status === 'completed' && (
-                <div className="p-6 border-t mt-auto bg-green-500/10 text-center">
-                    <p className="text-sm font-medium text-green-700">Este pedido ha sido completado.</p>
+                    <p className="text-sm font-medium text-destructive">Este pedido fue cancelado.</p>
                  </div>
              )}
             </>
@@ -393,3 +475,4 @@ export default function HomePage() {
     </div>
   );
 }
+
