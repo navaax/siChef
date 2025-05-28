@@ -1,4 +1,3 @@
-
 // src/app/dashboard/home/page.tsx
 "use client";
 
@@ -6,18 +5,23 @@ import * as React from 'react';
 import { useState, useEffect, useCallback } from 'react';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetFooter } from "@/components/ui/sheet"; // SheetFooter importado
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { format } from 'date-fns';
 import { Pencil, XCircle, PackageIcon, TimerIcon, CheckCircle2, AlertTriangle, Loader2 } from 'lucide-react';
-import type { SavedOrder, SavedOrderItem, SavedOrderItemComponent, Product, InventoryItem } from '@/types/product-types'; // Added Product, InventoryItem
+import type { SavedOrder, SavedOrderItem, SavedOrderItemComponent, Product, InventoryItem } from '@/types/product-types';
 import { useToast } from '@/hooks/use-toast';
 import { OrderKanbanColumn } from '@/components/dashboard/home/OrderKanbanColumn';
 import type { OrderKanbanCardProps } from '@/components/dashboard/home/OrderKanbanCard';
-import { getProductById } from '@/services/product-service'; // Para reposición de inventario
-import { adjustInventoryStock, getInventoryItems } from '@/services/inventory-service'; // Para reposición de inventario
+import { getProductById } from '@/services/product-service';
+import { adjustInventoryStock, getInventoryItems } from '@/services/inventory-service';
+import { useAuth } from '@/contexts/auth-context'; // Importar useAuth
+import { Dialog, DialogContent, DialogDescription, DialogFooter as DialogPrimitiveFooter, DialogHeader, DialogTitle, DialogClose } from "@/components/ui/dialog"; // Dialog para cancelación
+import { Label } from '@/components/ui/label';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 
 // Helper to format currency
 const formatCurrency = (amount: number | null | undefined): string => {
@@ -50,17 +54,24 @@ export default function HomePage() {
   const [allOrders, setAllOrders] = useState<SavedOrder[]>([]);
   const [selectedOrder, setSelectedOrder] = useState<SavedOrder | null>(null);
   const [isSheetOpen, setIsSheetOpen] = useState(false);
-  const [isProcessingAction, setIsProcessingAction] = useState(false); // Combina isCancelling y isUpdatingStatus
+  const [isProcessingAction, setIsProcessingAction] = useState(false);
   const { toast } = useToast();
+  const { username } = useAuth(); // Obtener usuario actual
 
   const [kanbanColumns, setKanbanColumns] = useState<KanbanColumn[]>([
     { id: 'preparing', title: 'En Preparación', icon: TimerIcon, orders: [] },
     { id: 'delayed', title: 'Con Demora', icon: AlertTriangle, orders: [] },
     { id: 'delivered', title: 'Entregado', icon: CheckCircle2, orders: [] },
   ]);
-  const [inventoryMap, setInventoryMap] = useState<Map<string, InventoryItem>>(new Map()); // Needed for inventory names
+  const [inventoryMap, setInventoryMap] = useState<Map<string, InventoryItem>>(new Map());
 
-  // Load orders and inventory from localStorage/service on mount
+  // Estado para el diálogo de cancelación
+  const [isCancelOrderDialogOpen, setIsCancelOrderDialogOpen] = useState(false);
+  const [orderToCancelForDialog, setOrderToCancelForDialog] = useState<SavedOrder | null>(null);
+  const [cancellationReasonInput, setCancellationReasonInput] = useState('');
+  const [authorizationPinInput, setAuthorizationPinInput] = useState('');
+
+
   useEffect(() => {
     async function loadInitialData() {
         const storedOrders = localStorage.getItem('siChefOrders');
@@ -81,6 +92,7 @@ export default function HomePage() {
                  total: typeof order.total === 'number' ? order.total : 0,
                  status: ['pending', 'completed', 'cancelled'].includes(order.status) ? order.status : 'pending',
                  paymentMethod: ['cash', 'card'].includes(order.paymentMethod) ? order.paymentMethod : 'card',
+                 cancellationDetails: order.cancellationDetails // Cargar detalles de cancelación si existen
             })).sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
             setAllOrders(parsedOrders);
           } catch (error) {
@@ -168,74 +180,83 @@ export default function HomePage() {
   };
 
   const handleEditOrder = (orderId: string) => {
-    console.log(`Editando pedido: ${orderId}`);
+    console.log(`SIMULACIÓN: Pedido #${orderId} marcado para edición.`);
+    console.log(`SIMULACIÓN: Notificación enviada a cocina.`);
+    console.log(`SIMULACIÓN: Comanda para pedido #${orderId} se reimprimiría con la marca "PEDIDO MODIFICADO".`);
     toast({
         title: "Función de Edición No Implementada",
-        description: "Editar pedidos requiere manejo de estado complejo y de inventario.",
+        description: "Editar pedidos requiere manejo de estado complejo, inventario y notificaciones. Esta función aún no está disponible.",
         variant: "default",
     });
     setIsSheetOpen(false);
   };
 
-  const handleCancelOrder = async (orderToCancel: SavedOrder) => {
-    if (isProcessingAction) return;
-
-    let confirmationMessage = `¿Estás seguro que quieres cancelar el pedido #${orderToCancel.orderNumber}?`;
-    let shouldRestock = false;
-
-    if (orderToCancel.status === 'pending') {
-        confirmationMessage += " Esta acción repondrá el inventario asociado.";
-        shouldRestock = true;
-    } else if (orderToCancel.status === 'completed') {
-        confirmationMessage += " Esta es una anulación. El inventario NO se repondrá automáticamente.";
-    } else {
-        toast({ title: "Acción no permitida", description: "Este pedido no se puede cancelar en su estado actual.", variant: "default" });
+  // Abre el diálogo de cancelación
+  const triggerCancelOrderDialog = (orderToCancel: SavedOrder) => {
+    if (orderToCancel.status === 'cancelled') {
+        toast({ title: "Pedido ya Cancelado", description: "Este pedido ya ha sido cancelado.", variant: "default" });
         return;
     }
+    setOrderToCancelForDialog(orderToCancel);
+    setCancellationReasonInput('');
+    setAuthorizationPinInput('');
+    setIsCancelOrderDialogOpen(true);
+    setIsSheetOpen(false); // Cerrar el sheet de detalles si estaba abierto
+  };
 
-    if (!confirm(confirmationMessage)) {
+
+  const handleConfirmCancellation = async () => {
+    if (!orderToCancelForDialog || !username) {
+        toast({title: "Error", description: "No se seleccionó un pedido para cancelar o el usuario no está identificado.", variant: "destructive"});
+        return;
+    }
+    if (!cancellationReasonInput.trim()) {
+        toast({title: "Motivo Requerido", description: "Por favor, introduce un motivo para la cancelación.", variant: "destructive"});
+        return;
+    }
+    if (authorizationPinInput.length < 4) { // Simulación de PIN
+        toast({title: "PIN Inválido", description: "Por favor, introduce un PIN de autorización válido (mín. 4 dígitos).", variant: "destructive"});
         return;
     }
 
     setIsProcessingAction(true);
-    toast({ title: "Procesando...", description: `Cancelando pedido #${orderToCancel.orderNumber}` });
+    toast({ title: "Procesando...", description: `Cancelando pedido #${orderToCancelForDialog.orderNumber}` });
+
+    const shouldRestock = orderToCancelForDialog.status === 'pending';
 
     try {
         if (shouldRestock) {
-            console.log(`[HomePage] Reponiendo inventario para pedido cancelado ${orderToCancel.id}`);
+            console.log(`[HomePage] Reponiendo inventario para pedido cancelado ${orderToCancelForDialog.id}`);
             const inventoryAdjustments: Record<string, { change: number, name: string }> = {};
             let productDetailsMap = new Map<string, Product>();
 
-            // Collect all product IDs from the order to fetch details in batch
             const allProductIdsInOrder = new Set<string>();
-            orderToCancel.items.forEach(item => {
-                allProductIdsInOrder.add(item.id); // ID of the base product/package
-                item.components.forEach(comp => {
-                    // Assuming comp.name is the product name. We need a way to map this back to a product ID
-                    // This part is tricky because SavedOrderItemComponent only has `name`.
-                    // For accurate restocking, we need the product ID of each component.
-                    // This structure is insufficient for easy restocking.
-                    // A temporary simplification: We'll assume components don't consume separate inventory for now.
-                    // TODO: Revisit SavedOrder structure if component-level restocking is needed.
-                });
+            orderToCancelForDialog.items.forEach(item => {
+                allProductIdsInOrder.add(item.id);
+                 item.components.forEach(comp => {
+                    // Para la reposición, necesitamos el ID del producto original del componente (modificador)
+                    // Esto asume que 'comp.name' puede usarse para encontrar el producto.
+                    // Una mejor aproximación sería que 'SavedOrderItemComponent' guardara 'productId'.
+                    // Por ahora, esta parte es una simplificación.
+                    // Si los componentes no tienen ID de producto, no se pueden reponer automáticamente.
+                    // Aquí asumiremos que los componentes no consumen inventario por separado o que su producto base (item.id) es suficiente.
+                 });
             });
             
-            // Fetch details for base products/packages in the order
             const productFetchPromises = Array.from(allProductIdsInOrder).map(id => getProductById(id).catch(() => null));
             const fetchedProducts = (await Promise.all(productFetchPromises)).filter(p => p !== null) as Product[];
             fetchedProducts.forEach(p => productDetailsMap.set(p.id, p));
 
-            for (const orderItem of orderToCancel.items) {
+            for (const orderItem of orderToCancelForDialog.items) {
                 const itemDetails = productDetailsMap.get(orderItem.id);
                 if (itemDetails && itemDetails.inventory_item_id && itemDetails.inventory_consumed_per_unit) {
                     const invItemId = itemDetails.inventory_item_id;
-                    // POSITIVE change because we are RESTOCKING
                     const change = +(itemDetails.inventory_consumed_per_unit * orderItem.quantity);
                     const currentData = inventoryAdjustments[invItemId] || { change: 0, name: inventoryMap.get(invItemId)?.name || 'Item de Inventario' };
                     inventoryAdjustments[invItemId] = { ...currentData, change: currentData.change + change };
                 }
-                // TODO: Iterate orderItem.components to restock modifiers if they consume inventory
-                // This requires components to have product_id and inventory_consumed_per_unit
+                // TODO: Iterar orderItem.components y reponer inventario si los modificadores consumen items.
+                // Necesitaría que SavedOrderItemComponent tenga productId.
             }
 
             const adjustmentPromises: Promise<void>[] = [];
@@ -245,38 +266,48 @@ export default function HomePage() {
                 }
             }
             await Promise.all(adjustmentPromises);
-             // Optionally re-fetch inventoryMap if displayed directly on this page, or rely on context/next load
-            const newInvMap = new Map(inventoryMap);
-            for (const [itemId, { change }] of Object.entries(inventoryAdjustments)) {
-                const currentItem = newInvMap.get(itemId);
-                if (currentItem) {
-                    newInvMap.set(itemId, { ...currentItem, current_stock: currentItem.current_stock + change });
+            console.log(`[HomePage] Inventario repuesto para pedido ${orderToCancelForDialog.id}`);
+             // Actualizar inventario local si es necesario (o confiar en la próxima carga)
+             const newInvMap = new Map(inventoryMap);
+             Object.entries(inventoryAdjustments).forEach(([itemId, { change }]) => {
+                const currentInvItem = newInvMap.get(itemId);
+                if (currentInvItem) {
+                    newInvMap.set(itemId, { ...currentInvItem, current_stock: currentInvItem.current_stock + change });
                 }
-            }
-            setInventoryMap(newInvMap);
-            console.log(`[HomePage] Inventario repuesto para pedido ${orderToCancel.id}`);
+             });
+             setInventoryMap(newInvMap);
         }
+
+        const updatedCancellationDetails = {
+            reason: cancellationReasonInput,
+            cancelledBy: username,
+            cancelledAt: new Date().toISOString(),
+            authorizedPin: authorizationPinInput, // Guardar el PIN ingresado para registro
+        };
 
         setAllOrders(prevOrders => {
             const updatedOrders = prevOrders.map(order =>
-                order.id === orderToCancel.id ? { ...order, status: 'cancelled' } : order
+                order.id === orderToCancelForDialog.id ? { ...order, status: 'cancelled', cancellationDetails: updatedCancellationDetails } : order
             );
             localStorage.setItem('siChefOrders', JSON.stringify(updatedOrders));
             return updatedOrders;
         });
 
-        if (selectedOrder && selectedOrder.id === orderToCancel.id) {
-            setSelectedOrder(prev => prev ? { ...prev, status: 'cancelled' } : null);
+        if (selectedOrder && selectedOrder.id === orderToCancelForDialog.id) {
+            setSelectedOrder(prev => prev ? { ...prev, status: 'cancelled', cancellationDetails: updatedCancellationDetails } : null);
         }
 
-        toast({ title: "Pedido Cancelado", description: `El pedido #${orderToCancel.orderNumber} ha sido marcado como cancelado. ${shouldRestock ? 'Inventario repuesto.' : 'Inventario NO repuesto.'}`, variant: "destructive" });
+        toast({ title: "Pedido Cancelado", description: `El pedido #${orderToCancelForDialog.orderNumber} ha sido cancelado. ${shouldRestock ? 'Inventario repuesto.' : 'Inventario NO repuesto.'}`, variant: "destructive" });
     } catch (error) {
         console.error("Error cancelando pedido:", error);
         toast({ title: "Falló la Cancelación", description: `Ocurrió un error: ${error instanceof Error ? error.message : 'Error desconocido'}.`, variant: "destructive" });
     } finally {
         setIsProcessingAction(false);
+        setIsCancelOrderDialogOpen(false);
+        setOrderToCancelForDialog(null);
     }
   };
+
 
   const handleUpdateOrderStatus = async (orderId: string, newStatus: SavedOrder['status']) => {
     if (isProcessingAction) return;
@@ -412,13 +443,19 @@ export default function HomePage() {
                         {selectedOrder.status}
                       </Badge>
                     </div>
+                    {selectedOrder.status === 'cancelled' && selectedOrder.cancellationDetails && (
+                        <div className="mt-2 text-xs text-muted-foreground border-t pt-2">
+                            <p><strong>Cancelado por:</strong> {selectedOrder.cancellationDetails.cancelledBy}</p>
+                            <p><strong>Fecha Cancelación:</strong> {format(new Date(selectedOrder.cancellationDetails.cancelledAt), 'Pp')}</p>
+                            <p><strong>Motivo:</strong> {selectedOrder.cancellationDetails.reason}</p>
+                        </div>
+                    )}
                 </div>
               </div>
             </ScrollArea>
 
-            {selectedOrder.status !== 'cancelled' && (
-               <div className="p-6 border-t mt-auto bg-muted/30">
-                 <div className="flex flex-col sm:flex-row justify-end gap-2">
+            <SheetFooter className="p-6 border-t mt-auto bg-muted/30">
+                 <div className="flex flex-col sm:flex-row justify-end gap-2 w-full">
                     {selectedOrder.status === 'pending' && (
                         <Button
                             variant="default"
@@ -435,7 +472,7 @@ export default function HomePage() {
                         variant="outline" 
                         size="sm" 
                         onClick={() => handleEditOrder(selectedOrder!.id)} 
-                        disabled={isProcessingAction || selectedOrder.status === 'completed' || selectedOrder.status === 'cancelled'}
+                        disabled={isProcessingAction || selectedOrder.status !== 'pending'}
                         className="flex-grow sm:flex-grow-0"
                         title={selectedOrder.status !== 'pending' ? "Solo se pueden editar pedidos pendientes" : "Editar Pedido"}
                     >
@@ -445,7 +482,7 @@ export default function HomePage() {
                         <Button
                             variant="destructive"
                             size="sm"
-                            onClick={() => handleCancelOrder(selectedOrder!)}
+                            onClick={() => triggerCancelOrderDialog(selectedOrder!)}
                             disabled={isProcessingAction}
                             className="flex-grow sm:flex-grow-0"
                         >
@@ -455,23 +492,76 @@ export default function HomePage() {
                     )}
                  </div>
                  {(selectedOrder.status === 'pending' || selectedOrder.status === 'completed') && (
-                   <p className="text-xs text-muted-foreground mt-2 text-right">
+                   <p className="text-xs text-muted-foreground mt-2 text-right w-full">
                     {selectedOrder.status === 'pending' ? 'Cancelar repone inventario.' : 'Anular NO repone inventario.'}
                    </p>
                  )}
-                </div>
-            )}
-             {selectedOrder.status === 'cancelled' && (
-                <div className="p-6 border-t mt-auto bg-destructive/10 text-center">
-                    <p className="text-sm font-medium text-destructive">Este pedido fue cancelado.</p>
-                 </div>
-             )}
+                  {selectedOrder.status === 'cancelled' && (
+                    <p className="text-sm font-medium text-destructive text-center w-full">Este pedido fue cancelado.</p>
+                 )}
+            </SheetFooter>
             </>
            ) : (
                 <div className="p-6 text-center text-muted-foreground flex items-center justify-center h-full">Selecciona un pedido para ver detalles.</div>
            )}
         </SheetContent>
       </Sheet>
+
+      {/* Diálogo para Cancelar Pedido */}
+      <Dialog open={isCancelOrderDialogOpen} onOpenChange={(open) => { if (!open) { setIsCancelOrderDialogOpen(false); setOrderToCancelForDialog(null); }}}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Cancelar Pedido #{orderToCancelForDialog?.orderNumber}</DialogTitle>
+            <DialogDescription>
+              {orderToCancelForDialog?.status === 'pending'
+                ? "El inventario asociado a este pedido será repuesto."
+                : "Este pedido ya fue completado. Anularlo NO repondrá el inventario automáticamente."}
+              <br/>Por favor, introduce el motivo y tu PIN de autorización.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div>
+              <Label htmlFor="cancellationReason">Motivo de Cancelación</Label>
+              <Textarea
+                id="cancellationReason"
+                value={cancellationReasonInput}
+                onChange={(e) => setCancellationReasonInput(e.target.value)}
+                placeholder="Ej: Cliente se arrepintió, Error en toma de pedido..."
+                rows={3}
+              />
+            </div>
+            <div>
+              <Label htmlFor="authorizationPin">PIN de Autorización (Simulado)</Label>
+              <Input
+                id="authorizationPin"
+                type="password"
+                value={authorizationPinInput}
+                onChange={(e) => setAuthorizationPinInput(e.target.value)}
+                placeholder="Introduce tu PIN (mín. 4 dígitos)"
+                maxLength={6}
+                inputMode="numeric"
+              />
+            </div>
+          </div>
+          <DialogPrimitiveFooter>
+            <DialogClose asChild>
+              <Button type="button" variant="outline" disabled={isProcessingAction}>
+                Cancelar Proceso
+              </Button>
+            </DialogClose>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={handleConfirmCancellation}
+              disabled={isProcessingAction || !cancellationReasonInput.trim() || authorizationPinInput.length < 4}
+            >
+              {isProcessingAction ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <XCircle className="mr-2 h-4 w-4" />}
+              Confirmar Cancelación de Pedido
+            </Button>
+          </DialogPrimitiveFooter>
+        </DialogContent>
+      </Dialog>
+
     </div>
   );
 }

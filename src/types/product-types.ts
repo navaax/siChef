@@ -53,7 +53,6 @@ export interface ProductModifierSlotOption {
     modifier_product_id: string; // ID del producto (de tipo 'modificador') que es esta opción
     modifier_product_name?: string; // Nombre del producto modificador (para UI)
     modifier_product_price?: number; // Precio base del producto modificador (para UI)
-    // Nuevos campos para configuración detallada de la opción DENTRO de este slot específico:
     is_default?: boolean; // ¿Es la opción por defecto en este slot?
     price_adjustment?: number; // Ajuste (+/-) al precio base del producto modificador, SOLO para este slot
 }
@@ -94,7 +93,6 @@ export interface SelectedModifierItem {
     priceModifier?: number; // Precio final del modificador (precio_base + price_adjustment_del_slot + extraCost_del_pedido)
     slotId: string; // ID del ProductModifierSlot al que pertenece
     packageItemId?: string; // Si el modificador es de un item dentro de un paquete
-    // Nuevos campos para interacciones avanzadas
     servingStyle?: string; // Estilo de servicio seleccionado (ej. "Aparte", "En Vasito")
     extraCost?: number; // Costo adicional específico para esta instancia en el pedido
 }
@@ -109,7 +107,6 @@ export interface OrderItem {
   totalPrice: number; // Precio total del item (cantidad * (basePrice + suma de modificadores))
   uniqueId: string; // ID único para la línea del pedido en la UI
 
-  // Si type es 'package', esto contendrá los items del paquete y sus modificadores seleccionados
   packageItems?: {
     packageItemId: string; // ID del PackageItem (definición del paquete)
     productId: string;
@@ -123,8 +120,7 @@ export interface CurrentOrder {
   id: string; // ID del pedido (puede ser temporal o de la BD)
   customerName: string;
   items: OrderItem[];
-  subtotal: number;
-  total: number;
+  // subtotal y total ahora se calculan con useMemo en el componente
   paymentMethod: 'cash' | 'card';
   paidAmount?: number; // Para pagos en efectivo
   changeDue?: number; // Para pagos en efectivo
@@ -160,4 +156,19 @@ export interface SavedOrder {
   createdAt: Date; // Fecha de creación
   paidAmount?: number;
   changeGiven?: number;
+  cancellationDetails?: { // Detalles de cancelación
+    reason: string;
+    cancelledBy?: string; // Username del que canceló
+    cancelledAt: string; // Timestamp ISO
+    authorizedPin?: string; // PIN ingresado (para registro)
+  };
+}
+
+// Para el pedido pausado
+export interface PausedOrder extends Omit<CurrentOrder, 'subtotal' | 'total'> {
+  pausedId: string;
+  pausedAt: string; // ISO string
+  // Re-añadir subtotal y total ya que CurrentOrder no los tiene directamente
+  subtotal: number; 
+  total: number;
 }
