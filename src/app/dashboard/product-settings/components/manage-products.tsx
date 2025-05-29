@@ -2,14 +2,14 @@
 'use client';
 
 import * as React from 'react';
-import { useState, useEffect, useMemo } from 'react';
-import { useForm, type SubmitHandler, Controller } from 'react-hook-form';
+import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useForm, type SubmitHandler } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
 
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from '@/components/ui/button';
-import { PlusCircle, Edit, Trash2, Loader2, Save, X, MinusCircle, Settings, CheckSquare, Square, List } from 'lucide-react';
+import { PlusCircle, Edit, Trash2, Loader2, Save, X, MinusCircle, Settings, List } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogClose } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Input } from '@/components/ui/input';
@@ -33,11 +33,11 @@ import {
     getModifierSlotsForProduct,
     addModifierSlot,
     deleteModifierSlot,
-    getModifiersByCategory, // Para obtener modificadores de una categoría
-    addModifierSlotOption, // Para añadir opciones específicas
-    deleteModifierSlotOption, // Para eliminar opciones específicas
-    getModifierSlotOptions, // Para obtener las opciones actuales
-    updateModifierSlotOptionConfig, // Para actualizar config de opciones
+    getModifiersByCategory,
+    addModifierSlotOption,
+    deleteModifierSlotOption,
+    getModifierSlotOptions,
+    updateModifierSlotOptionConfig,
 } from '@/services/product-service';
 
 // Importar tipos
@@ -47,7 +47,7 @@ import type { Category, Product, InventoryItem, ProductModifierSlot, ProductModi
 const productSchema = z.object({
     name: z.string().min(1, "Nombre es requerido"),
     price: z.coerce.number().min(0, "Precio debe ser positivo"),
-    categoryId: z.string().min(1, "Categoría es requerida"), // Refiere a Categoría tipo 'producto' o 'modificador'
+    categoryId: z.string().min(1, "Categoría es requerida"),
     imageUrl: z.string().url("Debe ser una URL válida").optional().or(z.literal('')),
     inventory_item_id: z.string().nullable().optional(),
     inventory_consumed_per_unit: z.coerce.number().min(0, "Consumo debe ser positivo").optional().nullable(),
@@ -68,15 +68,13 @@ const addModifierSlotSchema = z.object({
 });
 type AddModifierSlotFormValues = z.infer<typeof addModifierSlotSchema>;
 
-// --- Props del Componente ---
 interface ManageProductsProps {
     categories: Category[];
     inventoryItems: InventoryItem[];
     initialProducts: Product[];
-    onDataChange: () => Promise<void>; // Callback para refrescar datos
+    onDataChange: () => Promise<void>;
 }
 
-// --- Componente Principal ---
 const ManageProducts: React.FC<ManageProductsProps> = ({
     categories,
     inventoryItems,
@@ -86,29 +84,25 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
     const [products, setProducts] = useState<Product[]>(initialProducts);
     const [isFormOpen, setIsFormOpen] = useState(false);
     const [editingProduct, setEditingProduct] = useState<Product | null>(null);
-    const [isSubmitting, setIsSubmitting] = useState(false); // Estado de carga del form
-    const [isDeleting, setIsDeleting] = useState<string | null>(null); // Estado de carga de eliminación
+    const [isSubmitting, setIsSubmitting] = useState(false);
+    const [isDeleting, setIsDeleting] = useState<string | null>(null);
     const [currentModifierSlots, setCurrentModifierSlots] = useState<ProductModifierSlot[]>([]);
     const [isModifierSlotsLoading, setIsModifierSlotsLoading] = useState(false);
-    const [editingSlotOptions, setEditingSlotOptions] = useState<ProductModifierSlot | null>(null); // Slot cuyas opciones se están editando
-    const [optionsForEditingSlot, setOptionsForEditingSlot] = useState<Product[]>([]); // Productos modificadores de la categoría vinculada
-    const [isLoadingOptions, setIsLoadingOptions] = useState(false); // Carga para opciones de slot
-
-    // Estado para los inputs de edición de slot option config
+    const [editingSlotOptions, setEditingSlotOptions] = useState<ProductModifierSlot | null>(null);
+    const [optionsForEditingSlot, setOptionsForEditingSlot] = useState<Product[]>([]);
+    const [isLoadingOptions, setIsLoadingOptions] = useState(false);
     const [currentOptionIsDefault, setCurrentOptionIsDefault] = useState(false);
     const [currentOptionPriceAdjustment, setCurrentOptionPriceAdjustment] = useState('0');
 
-
     const { toast } = useToast();
+    console.log("[ManageProducts] Component Render. Editing Product State:", editingProduct, "Is Form Open:", isFormOpen);
 
-    // Actualizar estado local si los datos iniciales cambian
+
     useEffect(() => {
         setProducts(initialProducts);
     }, [initialProducts]);
 
-    // Filtrar categorías asignables a productos ('producto' o 'modificador')
     const productAssignableCategories = useMemo(() => categories.filter(c => c.type === 'producto' || c.type === 'modificador'), [categories]);
-    // Filtrar categorías para slots modificadores (solo tipo 'modificador')
     const modifierCategories = useMemo(() => categories.filter(c => c.type === 'modificador'), [categories]);
 
     const productForm = useForm<ProductFormValues>({
@@ -119,11 +113,12 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
         },
     });
 
-    // Cargar slots modificadores al editar un producto
-    const fetchSlotsForProduct = async (productId: string) => {
+    const fetchSlotsForProduct = useCallback(async (productId: string) => {
+        console.log(`[ManageProducts] fetchSlotsForProduct called for productId: ${productId}`);
         setIsModifierSlotsLoading(true);
         try {
             const slots = await getModifierSlotsForProduct(productId);
+            console.log(`[ManageProducts] Slots fetched for ${productId}:`, slots);
             setCurrentModifierSlots(slots);
         } catch (error) {
             console.error(`[ManageProducts] Error cargando slots para ${productId}:`, error);
@@ -132,17 +127,21 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
         } finally {
             setIsModifierSlotsLoading(false);
         }
-    };
+    }, [toast]);
 
     useEffect(() => {
-        if (editingProduct && isFormOpen) {
+        console.log("[ManageProducts] useEffect for slots. editingProduct:", editingProduct, "isFormOpen:", isFormOpen);
+        if (editingProduct && editingProduct.id && isFormOpen) {
+            console.log(`[ManageProducts] Calling fetchSlotsForProduct for ${editingProduct.id}`);
             fetchSlotsForProduct(editingProduct.id);
         } else {
+            console.log("[ManageProducts] Clearing currentModifierSlots.");
             setCurrentModifierSlots([]);
         }
-    }, [editingProduct, isFormOpen]);
+    }, [editingProduct, isFormOpen, fetchSlotsForProduct]);
 
     const handleOpenForm = (product: Product | null = null) => {
+        console.log("[ManageProducts] handleOpenForm called. Product:", product);
         setEditingProduct(product);
         if (product) {
             productForm.reset({
@@ -155,16 +154,16 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
                 name: '', price: 0, categoryId: '', imageUrl: '',
                 inventory_item_id: null, inventory_consumed_per_unit: 1,
             });
-             setCurrentModifierSlots([]); // Limpiar slots al añadir nuevo
         }
         setIsFormOpen(true);
     };
 
     const handleCloseForm = () => {
+         console.log("[ManageProducts] handleCloseForm called.");
          setIsFormOpen(false);
-         setEditingProduct(null); // Limpiar producto en edición
-         setCurrentModifierSlots([]); // Limpiar slots
-         setEditingSlotOptions(null); // Cerrar diálogo de opciones si está abierto
+         setEditingProduct(null);
+         setCurrentModifierSlots([]);
+         setEditingSlotOptions(null);
     }
 
     const handleFormSubmit: SubmitHandler<ProductFormValues> = async (values) => {
@@ -175,20 +174,18 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
             inventory_item_id: values.inventory_item_id || null,
              inventory_consumed_per_unit: values.inventory_item_id ? (values.inventory_consumed_per_unit ?? 1) : null,
         };
-
         console.log("[ManageProducts] Guardando producto:", JSON.stringify(dataToSave, null, 2));
-
         try {
-             let productId = editingProduct?.id;
-             if (productId) {
-                await updateProductService(productId, dataToSave as Partial<Omit<Product, 'id'>>);
+             if (editingProduct && editingProduct.id) {
+                await updateProductService(editingProduct.id, dataToSave as Partial<Omit<Product, 'id'>>);
                 toast({ title: "Éxito", description: "Producto actualizado." });
                 await onDataChange();
-                setEditingProduct(prev => prev ? { ...prev, ...dataToSave } : null);
+                // Mantener editingProduct con los datos actualizados para que la UI refleje los cambios
+                setEditingProduct(prev => prev ? { ...prev, ...dataToSave, id: prev.id } : null);
              } else {
                 const newProduct = await addProductService(dataToSave as Omit<Product, 'id'>);
                 toast({ title: "Éxito", description: "Producto añadido. Ahora puedes añadir modificadores." });
-                setEditingProduct(newProduct);
+                setEditingProduct(newProduct); // Crucial para que aparezca la sección de modificadores
                 await onDataChange();
              }
         } catch (error) {
@@ -217,16 +214,15 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
         }
     };
 
-    // --- Gestión de Slots Modificadores ---
     const handleAddModifierSlot = async (data: AddModifierSlotFormValues) => {
-        if (!editingProduct) return;
+        if (!editingProduct || !editingProduct.id) return;
         setIsModifierSlotsLoading(true);
         try {
             await addModifierSlot({
                 product_id: editingProduct.id,
                 ...data,
             });
-            await fetchSlotsForProduct(editingProduct.id);
+            await fetchSlotsForProduct(editingProduct.id); // Refrescar
             toast({ title: "Éxito", description: "Grupo modificador añadido." });
         } catch (error) {
             console.error(`[ManageProducts] Error al añadir slot:`, error);
@@ -237,11 +233,11 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
     };
 
     const handleDeleteModifierSlot = async (slotId: string) => {
-         if (!editingProduct) return;
+         if (!editingProduct || !editingProduct.id) return;
          setIsModifierSlotsLoading(true);
          try {
              await deleteModifierSlot(slotId);
-             await fetchSlotsForProduct(editingProduct.id);
+             await fetchSlotsForProduct(editingProduct.id); // Refrescar
              toast({ title: "Éxito", description: "Grupo modificador eliminado.", variant: 'destructive' });
          } catch (error) {
              console.error(`[ManageProducts] Error al eliminar slot ${slotId}:`, error);
@@ -251,7 +247,6 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
          }
     };
 
-    // --- Gestión de Opciones Específicas del Slot ---
     const handleOpenEditSlotOptions = async (slot: ProductModifierSlot) => {
          setIsLoadingOptions(true);
          setEditingSlotOptions(slot);
@@ -271,6 +266,7 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
     };
 
     const handleToggleSlotOption = async (slotId: string, modifierProductId: string, isCurrentlyAllowed: boolean) => {
+         if (!editingProduct || !editingProduct.id) return;
          setIsLoadingOptions(true);
          try {
             let updatedOption: ProductModifierSlotOption | null = null;
@@ -291,7 +287,6 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
                 });
                  toast({ title: "Opción Habilitada" });
             }
-
              setEditingSlotOptions(prevSlot => {
                  if (!prevSlot) return null;
                  let newAllowedOptions = [...(prevSlot.allowedOptions || [])];
@@ -307,11 +302,7 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
                  }
                  return { ...prevSlot, allowedOptions: newAllowedOptions };
              });
-
-             if (editingProduct) {
-                 await fetchSlotsForProduct(editingProduct.id);
-             }
-
+            await fetchSlotsForProduct(editingProduct.id); // Refrescar slots principales
          } catch (error) {
              console.error(`[ManageProducts] Error al ${isCurrentlyAllowed ? 'eliminar' : 'añadir'} opción ${modifierProductId} del slot ${slotId}:`, error);
              toast({ variant: "destructive", title: "Error Opción", description: `No se pudo actualizar la opción. ${error instanceof Error ? error.message : ''}` });
@@ -321,6 +312,7 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
      };
 
     const handleSaveOptionConfig = async (optionId: string) => {
+        if (!editingProduct || !editingProduct.id) return;
         const priceAdjustmentNum = parseFloat(currentOptionPriceAdjustment);
         if (isNaN(priceAdjustmentNum)) {
             toast({ variant: "destructive", title: "Error", description: "El ajuste de precio debe ser un número." });
@@ -333,10 +325,8 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
                 price_adjustment: priceAdjustmentNum
             });
             toast({ title: "Configuración Guardada", description: "Se actualizó la opción del modificador." });
-
-            if (editingSlotOptions) await handleOpenEditSlotOptions(editingSlotOptions);
-            if (editingProduct) await fetchSlotsForProduct(editingProduct.id);
-
+            if (editingSlotOptions) await handleOpenEditSlotOptions(editingSlotOptions); // Recargar opciones del slot actual
+            await fetchSlotsForProduct(editingProduct.id); // Refrescar slots principales
         } catch (error) {
             console.error(`[ManageProducts] Error guardando config para opción ${optionId}:`, error);
             toast({ variant: "destructive", title: "Error", description: `No se pudo guardar la configuración. ${error instanceof Error ? error.message : ''}`});
@@ -350,8 +340,6 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
         setOptionsForEditingSlot([]);
     };
 
-
-    // Helper para formatear moneda
     const formatCurrency = (amount: number | null | undefined): string => {
         if (typeof amount !== 'number' || isNaN(amount)) return '$0.00';
         return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(amount);
@@ -435,8 +423,7 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
                 </CardContent>
             </Card>
 
-            {/* Dialogo Añadir/Editar Producto */}
-             <Dialog open={isFormOpen} onOpenChange={(open) => { if (!open) handleCloseForm() }}>
+            <Dialog open={isFormOpen} onOpenChange={(open) => { if (!open) handleCloseForm() }}>
                  <DialogContent className="sm:max-w-3xl max-h-[90vh] flex flex-col">
                     <DialogHeader>
                         <DialogTitle>{editingProduct ? 'Editar Producto/Modificador' : 'Añadir Nuevo Producto/Modificador'}</DialogTitle>
@@ -444,8 +431,8 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
                              Define un producto vendible o una opción modificadora.
                         </DialogDescription>
                     </DialogHeader>
-                    <ScrollArea className="flex-grow pr-2"> {/* ScrollArea principal del diálogo */}
-                      <div className="space-y-6"> {/* Contenedor para todo el contenido scrolleable */}
+                    <ScrollArea className="flex-grow"> {/* Main scroll area for the dialog content */}
+                      <div className="space-y-6 p-1 pr-4"> {/* Container for all scrollable content, added padding */}
                         <Form {...productForm}>
                             <form onSubmit={productForm.handleSubmit(handleFormSubmit)} className="space-y-4">
                                 <FormField control={productForm.control} name="name" render={({ field }) => (
@@ -530,13 +517,13 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
                                     onAddSlot={handleAddModifierSlot}
                                     isLoading={isModifierSlotsLoading}
                                 />
-                                <div className="border rounded-md"> {/* No necesita ScrollArea aquí, el exterior lo maneja */}
-                                    {isModifierSlotsLoading && currentModifierSlots.length === 0 ? (
+                                <div className="border rounded-md">
+                                    {isModifierSlotsLoading ? (
                                         <div className="p-4 text-center min-h-[100px] flex items-center justify-center"><Loader2 className="h-5 w-5 animate-spin inline-block" /></div>
-                                    ) : !isModifierSlotsLoading && currentModifierSlots.length === 0 ? (
+                                    ) : currentModifierSlots.length === 0 ? (
                                         <p className="p-4 text-center text-sm text-muted-foreground min-h-[100px] flex items-center justify-center">No hay grupos modificadores definidos.</p>
                                     ) : (
-                                    <Table className="text-sm"> {/* La tabla puede crecer verticalmente */}
+                                    <Table className="text-sm">
                                         <TableHeader>
                                             <TableRow>
                                                 <TableHead>Etiqueta</TableHead>
@@ -578,17 +565,16 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
                                 </div>
                             </div>
                         )}
-                       </div> {/* Fin del contenedor scrolleable */}
+                       </div>
                     </ScrollArea>
-                    <DialogFooter className="mt-6 pt-4 border-t shrink-0">
+                    <DialogFooter className="mt-auto pt-4 border-t shrink-0"> {/* mt-auto para empujar al fondo */}
                             <Button type="button" variant="outline" onClick={handleCloseForm}>Cerrar</Button>
                     </DialogFooter>
                 </DialogContent>
              </Dialog>
 
-             {/* Dialogo para Editar Opciones Específicas del Slot */}
             <Dialog open={!!editingSlotOptions} onOpenChange={(open) => { if (!open) handleCloseEditSlotOptions(); }}>
-                <DialogContent className="sm:max-w-2xl max-h-[80vh] flex flex-col"> {/* Asegurar flex-col y max-h */}
+                <DialogContent className="sm:max-w-2xl max-h-[80vh] flex flex-col">
                     <DialogHeader>
                         <DialogTitle>Configurar Opciones para "{editingSlotOptions?.label}"</DialogTitle>
                         <DialogDescription>
@@ -602,8 +588,8 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
                     ) : optionsForEditingSlot.length === 0 && editingSlotOptions ? (
                         <p className="text-muted-foreground text-center py-4">No hay productos modificadores en la categoría "{modifierCategories.find(c => c.id === editingSlotOptions?.linked_category_id)?.name}".</p>
                     ) : (
-                        <ScrollArea className="flex-grow pr-2 -mr-2 mt-4"> {/* flex-grow para que ocupe espacio */}
-                            <div className="space-y-3">
+                        <ScrollArea className="flex-grow mt-4">
+                            <div className="space-y-3 pr-4"> {/* Added pr-4 for scrollbar */}
                                 {optionsForEditingSlot.map(option => {
                                     const currentSlotOptionConfig = editingSlotOptions?.allowedOptions?.find(allowed => allowed.modifier_product_id === option.id);
                                     const isAllowed = !!currentSlotOptionConfig;
@@ -632,38 +618,25 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
                                                     <div className="flex items-center space-x-2">
                                                         <Checkbox
                                                             id={`opt-default-${option.id}`}
-                                                            checked={currentSlotOptionConfig.is_default}
-                                                            onCheckedChange={(checked) => {
-                                                                setCurrentOptionIsDefault(!!checked);
-                                                                setEditingSlotOptions(prev => prev ? ({
-                                                                    ...prev,
-                                                                    allowedOptions: prev.allowedOptions?.map(o => o.id === currentSlotOptionConfig.id ? {...o, is_default: !!checked} : o)
-                                                                }) : null);
-                                                            }}
+                                                            checked={currentOptionIsDefault} // Bind to state
+                                                            onCheckedChange={(checked) => setCurrentOptionIsDefault(!!checked)}
                                                         />
                                                         <Label htmlFor={`opt-default-${option.id}`} className="text-xs font-normal">Marcar como opción por defecto</Label>
                                                     </div>
                                                     <div className="grid grid-cols-3 items-end gap-2">
-                                                        <FormField
-                                                            control={productForm.control}
-                                                            name={`priceAdjustment-${option.id}` as any}
-                                                            defaultValue={String(currentSlotOptionConfig.price_adjustment ?? 0)}
-                                                            render={({ field }) => (
-                                                                <FormItem className="col-span-2">
-                                                                    <FormLabel className="text-xs">Ajuste de Precio (+/-)</FormLabel>
-                                                                    <FormControl>
-                                                                        <Input
-                                                                            type="number"
-                                                                            step="0.01"
-                                                                            className="h-8 text-xs"
-                                                                            placeholder="0.00"
-                                                                            defaultValue={String(currentSlotOptionConfig.price_adjustment ?? 0)}
-                                                                            onChange={(e) => setCurrentOptionPriceAdjustment(e.target.value)}
-                                                                        />
-                                                                    </FormControl>
-                                                                </FormItem>
-                                                            )}
-                                                        />
+                                                        <FormItem className="col-span-2">
+                                                            <FormLabel className="text-xs">Ajuste de Precio (+/-)</FormLabel>
+                                                            <FormControl>
+                                                                <Input
+                                                                    type="number"
+                                                                    step="0.01"
+                                                                    className="h-8 text-xs"
+                                                                    placeholder="0.00"
+                                                                    value={currentOptionPriceAdjustment} // Bind to state
+                                                                    onChange={(e) => setCurrentOptionPriceAdjustment(e.target.value)}
+                                                                />
+                                                            </FormControl>
+                                                        </FormItem>
                                                         <Button
                                                             size="sm"
                                                             variant="outline"
@@ -682,20 +655,15 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
                             </div>
                         </ScrollArea>
                     )}
-
-                    <DialogFooter className="mt-4 pt-4 border-t shrink-0"> {/* shrink-0 para que no se encoja */}
-                        <DialogClose asChild>
-                            <Button type="button" variant="outline">Cerrar</Button>
-                        </DialogClose>
+                    <DialogFooter className="mt-auto pt-4 border-t shrink-0">
+                        <Button type="button" variant="outline" onClick={handleCloseEditSlotOptions}>Cerrar</Button>
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
-
         </div>
     );
 };
 
-// --- Componente Auxiliar para Añadir Slots ---
 interface AddModifierSlotFormProps {
     modifierCategories: Category[];
     onAddSlot: (data: AddModifierSlotFormValues) => Promise<void>;
@@ -745,3 +713,4 @@ const AddModifierSlotForm: React.FC<AddModifierSlotFormProps> = ({ modifierCateg
 }
 
 export default ManageProducts;
+

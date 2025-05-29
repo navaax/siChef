@@ -569,7 +569,7 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
              </Card>
 
               <Dialog open={isFormOpen} onOpenChange={(isOpen) => { if (!isOpen) handleCloseDialog(); }}>
-                 <DialogContent className="sm:max-w-3xl max-h-[90vh] flex flex-col overflow-hidden"> {/* overflow-hidden añadido */}
+                 <DialogContent className="sm:max-w-[600px] max-h-[90vh]">
                      <DialogHeader>
                          <DialogTitle>{editingPackage ? 'Editar Paquete' : 'Añadir Nuevo Paquete'}</DialogTitle>
                          <DialogDescription>
@@ -577,8 +577,8 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
                         </DialogDescription>
                      </DialogHeader>
 
-                     <ScrollArea className="flex-grow pr-6 -mr-6"> {/* Maneja scroll VERTICAL */}
-                       <div className="min-w-max overflow-x-auto py-1"> {/* NUEVO: Maneja scroll HORIZONTAL si el contenido es más ancho */}
+                     <ScrollArea className="max-h-[50vh] pr-3 -mr-3">
+                       <div className="min-w-max  py-1"> {/* NUEVO: Maneja scroll HORIZONTAL si el contenido es más ancho */}
                             <Form {...packageForm}>
                                 <form onSubmit={(e) => e.preventDefault()} className="space-y-4 border-b pb-6 mb-6">
                                     <FormField control={packageForm.control} name="name" render={({ field }) => (
