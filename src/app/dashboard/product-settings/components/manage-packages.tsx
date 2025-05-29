@@ -18,7 +18,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -154,7 +154,7 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
                     setIsItemDataLoading(false);
                     return;
                 }
-                const prods = allProductsAndModifiers.filter(p => p.categoryId === selectedCategoryId && categories.find(c => c.id === p.categoryId)?.type === 'producto');
+                const prods = allProductsAndModifiers.filter(p => p.categoryId === selectedCategoryId && allCategories.find(c => c.id === p.categoryId)?.type === 'producto');
                 console.log(`[ManagePackages] Productos filtrados para categoría ${selectedCategoryId} (tipo producto): ${prods.length}`, prods.map(p=>p.name));
                 setProductsInCategory(prods);
                  if (prods.length === 0) {
@@ -167,7 +167,7 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
                 setIsItemDataLoading(false);
             }
         }
-    }, [selectedCategoryId, addItemForm, toast, allProductsAndModifiers, categories]);
+    }, [selectedCategoryId, addItemForm, toast, allProductsAndModifiers, allCategories]); // Incluir allCategories aquí
 
 
     const loadPackageContents = useCallback(async (packageId: string) => {
