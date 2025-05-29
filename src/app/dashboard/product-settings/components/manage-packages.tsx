@@ -14,7 +14,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from '@/components/ui/button';
 import { PlusCircle, Edit, Trash2, Loader2, Save, X, MinusCircle, Settings, ChevronsUpDown } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogClose } from "@/components/ui/dialog";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter as AlertDialogPrimitiveFooter, AlertDialogHeader as AlertDialogPrimitiveHeader, AlertDialogTitle as AlertDialogPrimitiveTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter as AlertDialogPrimitiveFooter, AlertDialogHeader, AlertDialogPrimitiveHeader, AlertDialogTitle as AlertDialogPrimitiveTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -95,7 +95,7 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
     const [isDeleting, setIsDeleting] = useState<string | null>(null);
     const [pendingItems, setPendingItems] = useState<PendingPackageItem[]>([]);
     const [originalDbItems, setOriginalDbItems] = useState<PackageItem[]>([]); // Para comparar al guardar
-    const [isItemDataLoading, setIsItemDataLoading] = useState(false); // Para carga de productos en addItemForm
+    const [isItemFormLoading, setIsItemFormLoading] = useState(false); // Para carga de productos en addItemForm
     const [isPackageContentLoading, setIsPackageContentLoading] = useState(false); // Para carga de contenido de paquete existente
     const [editingOverridesForItemLocalId, setEditingOverridesForItemLocalId] = useState<string | null>(null);
     const [productsInCategory, setProductsInCategory] = useState<Product[]>([]);
@@ -145,15 +145,14 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
         addItemForm.resetField('product_id', { defaultValue: '' }); // Resetear selección de producto
 
         if (selectedCategoryId && selectedCategoryId !== '__NONE__') {
-            setIsItemDataLoading(true);
+            setIsItemFormLoading(true);
             try {
                 console.log(`[ManagePackages] Filtrando productos para categoría ${selectedCategoryId}. Total de productos/modificadores disponibles: ${allProductsAndModifiers?.length || 0}`);
                 if (!allProductsAndModifiers || allProductsAndModifiers.length === 0) {
                     console.warn("[ManagePackages] allProductsAndModifiers está vacío o no definido. No se pueden filtrar productos.");
-                    setIsItemDataLoading(false);
+                    setIsItemFormLoading(false);
                     return;
                 }
-                // Asegurarse de que solo se listan productos (no modificadores) al añadir a un paquete
                 const prods = allProductsAndModifiers.filter(p => {
                     const categoryOfProduct = allCategories.find(c => c.id === p.categoryId);
                     return p.categoryId === selectedCategoryId && categoryOfProduct?.type === 'producto';
@@ -167,7 +166,7 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
                 console.error("[ManagePackages] Error filtrando productos:", error);
                 toast({ variant: "destructive", title: "Error", description: "No se pudieron cargar los productos para la categoría." });
             } finally {
-                setIsItemDataLoading(false);
+                setIsItemFormLoading(false);
             }
         }
     }, [selectedCategoryId, addItemForm, toast, allProductsAndModifiers, allCategories]);
@@ -188,7 +187,6 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
                     console.warn(`[loadPackageContents] Package item ${item.id} (${item.product_name}) no tiene product_id. Omitiendo.`);
                     return null;
                 }
-                // Usar el nombre del producto de allProductsAndModifiers si está disponible, sino el de la BD
                 const productDetailsFromList = allProductsAndModifiers.find(p => p.id === item.product_id);
                 const productName = productDetailsFromList?.name || item.product_name || 'Producto Desconocido (Error BD)';
 
@@ -198,7 +196,7 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
                 ]);
                 console.log(`[loadPackageContents] Para ítem de paquete ${item.id} (${productName}), prod_id=${item.product_id}: Slots base=${slots.length}, Overrides BD=${overrides.length}`);
                 return {
-                    localId: item.id, // Este es el ID de la tabla package_items
+                    localId: item.id,
                     product_id: item.product_id,
                     product_name: productName,
                     quantity: item.quantity,
@@ -234,7 +232,7 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
             imageUrl: pkg.imageUrl || '',
             category_id: pkg.category_id || null
         });
-        loadPackageContents(pkg.id); // Cargar contenido existente
+        loadPackageContents(pkg.id);
         setIsFormOpen(true);
         const currentParams = new URLSearchParams(searchParams.toString());
         if (currentParams.get('editPackage') !== pkg.id) {
@@ -249,8 +247,8 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
             setEditingPackage(null);
             setPendingItems([]);
             setOriginalDbItems([]);
-            setProductsInCategory([]); // Limpiar productos de categoría al cerrar
-            addItemForm.reset(); // Resetear formulario de añadir ítem
+            setProductsInCategory([]); 
+            addItemForm.reset(); 
             const currentParams = new URLSearchParams(searchParams.toString());
             if (currentParams.has('editPackage')) {
                 currentParams.delete('editPackage');
@@ -286,28 +284,25 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
                 action = 'creado';
                 const newPackage = await addPackageService(packageDataToSave);
                 currentPackageId = newPackage.id;
-                setEditingPackage(newPackage); // Actualizar el estado del paquete en edición
+                setEditingPackage(newPackage);
                 console.log(`[FinalSave] Paquete ${currentPackageId} creado.`);
             }
 
             if (!currentPackageId) throw new Error("No se pudo obtener/crear el ID del paquete.");
 
-            // Sincronizar package_items
-            const dbItemsBeforeSave = [...originalDbItems]; // Copia de los items originales de la BD
+            const dbItemsBeforeSave = [...originalDbItems]; 
             const itemsToDeleteFromDb = dbItemsBeforeSave.filter(
                 dbItem => !pendingItems.some(pendingItem => pendingItem.localId === dbItem.id)
             );
 
             for (const itemToDelete of itemsToDeleteFromDb) {
                 console.log(`[FinalSave] Eliminando ítem de paquete de BD: ${itemToDelete.id} (${itemToDelete.product_name})`);
-                await deletePackageItem(itemToDelete.id); // Esto debería eliminar overrides por CASCADE
+                await deletePackageItem(itemToDelete.id);
             }
 
-            // Añadir o actualizar items y sus overrides
             for (const [index, pendingItem] of pendingItems.entries()) {
                 let dbItemId = pendingItem.localId;
                 const isNewDbItem = !dbItemsBeforeSave.some(dbItem => dbItem.id === pendingItem.localId);
-
 
                 if (isNewDbItem) {
                     console.log(`[FinalSave] Añadiendo nuevo ítem al paquete ${currentPackageId}: ${pendingItem.product_name}`);
@@ -318,30 +313,26 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
                         display_order: index,
                     };
                     const createdItem = await addPackageItem(newItemData);
-                    dbItemId = createdItem.id; // Usar el ID de BD real
+                    dbItemId = createdItem.id;
                     console.log(`[FinalSave] Nuevo ítem de paquete creado con ID de BD: ${dbItemId}`);
                 } else {
-                    // TODO: Implementar actualización de item existente si es necesario (ej. quantity, display_order)
                     console.log(`[FinalSave] Ítem de paquete existente ${dbItemId} (${pendingItem.product_name}). Procesando overrides.`);
                 }
 
-                // Sincronizar overrides para este dbItemId
                 const currentOverridesInDbForItem = await getOverridesForPackageItem(dbItemId);
                 const localOverridesMap = new Map(pendingItem.modifierOverrides?.map(ov => [ov.product_modifier_slot_id, ov]));
 
-                // Eliminar overrides de BD que ya no están en local
                 for (const dbOverride of currentOverridesInDbForItem) {
                     if (!localOverridesMap.has(dbOverride.product_modifier_slot_id)) {
                         console.log(`[FinalSave] Eliminando override de BD ${dbOverride.id} para ítem ${dbItemId}, slot ${dbOverride.product_modifier_slot_id}`);
                         await deletePackageItemOverride(dbOverride.id);
                     }
                 }
-                // Añadir o actualizar overrides locales a la BD
                 if (pendingItem.modifierOverrides) {
                     for (const localOverride of pendingItem.modifierOverrides) {
                         console.log(`[FinalSave] Estableciendo override para ítem ${dbItemId}, slot ${localOverride.product_modifier_slot_id}: Min=${localOverride.min_quantity}, Max=${localOverride.max_quantity}`);
                         await setPackageItemOverride({
-                            package_item_id: dbItemId, // Usar el ID de BD (nuevo o existente)
+                            package_item_id: dbItemId, 
                             product_modifier_slot_id: localOverride.product_modifier_slot_id,
                             min_quantity: localOverride.min_quantity,
                             max_quantity: localOverride.max_quantity,
@@ -351,14 +342,13 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
             }
 
             toast({ title: "Éxito", description: `Paquete ${action} con su contenido.` });
-            await onDataChange(); // Refrescar toda la data de la página principal
+            await onDataChange(); 
             
             if (action === 'creado' && currentPackageId) {
-                 handleCloseDialog(); // Cerrar después de crear
+                 handleCloseDialog(); 
             } else if (action === 'actualizado' && currentPackageId) {
-                 loadPackageContents(currentPackageId); // Recargar contenido del paquete actual
+                 loadPackageContents(currentPackageId); 
             }
-
 
         } catch (error) {
             const actionAttempted = editingPackage ? 'actualizar' : 'crear';
@@ -371,7 +361,7 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
 
 
      const handleAddPendingItem: SubmitHandler<AddPackageItemFormValues> = async (values) => {
-         setIsItemDataLoading(true);
+         setIsItemFormLoading(true);
          console.log(`[handleAddPendingItem] Intentando añadir producto ID: ${values.product_id} con cantidad: ${values.quantity}`);
          try {
              const productToAdd = productsInCategory.find(p => p.id === values.product_id);
@@ -385,7 +375,7 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
              console.log(`[handleAddPendingItem] Slots obtenidos para ${productToAdd.name}: ${slots.length}`);
 
              const newPendingItem: PendingPackageItem = {
-                 localId: uuidv4(), // ID temporal local
+                 localId: uuidv4(), 
                  product_id: productToAdd.id,
                  product_name: productToAdd.name,
                  quantity: values.quantity,
@@ -393,13 +383,13 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
                  modifierOverrides: [],
              };
              setPendingItems(prev => [...prev, newPendingItem]);
-             addItemForm.reset({ selectedCategoryId: selectedCategoryId, product_id: '', quantity: 1 }); // Mantener categoría seleccionada
+             addItemForm.reset({ selectedCategoryId: selectedCategoryId, product_id: '', quantity: 1 }); 
              toast({ title: "Ítem Añadido (Temporalmente)", description: `"${productToAdd.name}" listo para guardar en el paquete.` });
          } catch (error) {
              console.error("[ManagePackages] Error añadiendo ítem pendiente:", error);
              toast({ variant: "destructive", title: "Error al Añadir", description: `No se pudo añadir el producto temporalmente. ${error instanceof Error ? error.message : ''}` });
          } finally {
-             setIsItemDataLoading(false);
+             setIsItemFormLoading(false);
          }
      };
 
@@ -437,14 +427,12 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
                          max_quantity: max,
                     };
                 } else {
-                     // Aquí, no necesitamos 'id' ni 'package_item_id' para el estado local,
-                     // solo para la BD al guardar.
                      const newOverride: Omit<PackageItemModifierSlotOverride, 'id' | 'package_item_id' | 'product_modifier_slot_label'> = {
                          product_modifier_slot_id: slotId,
                          min_quantity: min,
                          max_quantity: max,
                     };
-                    newOverrides = [...existingOverrides, newOverride as PackageItemModifierSlotOverride]; // Type assertion para el estado local
+                    newOverrides = [...existingOverrides, newOverride as PackageItemModifierSlotOverride]; 
                 }
                  toast({ title: "Regla Guardada (Temporalmente)", description: `Regla para "${slotLabel}" actualizada.` });
                 return { ...item, modifierOverrides: newOverrides };
@@ -498,7 +486,7 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
 
              <Card>
                  <CardContent className="p-0">
-                     <ScrollArea className="h-[400px]">
+                     <ScrollArea className="h-[400px]"> {/* Altura ajustada para la lista de paquetes */}
                          <Table>
                              <TableHeader className="sticky top-0 bg-background z-10 shadow-sm">
                                 <TableRow>
@@ -538,12 +526,12 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
                                                             </Button>
                                                         </AlertDialogTrigger>
                                                         <AlertDialogContent>
-                                                            <AlertDialogPrimitiveHeader>
+                                                            <AlertDialogHeader>
                                                             <AlertDialogPrimitiveTitle>¿Estás seguro?</AlertDialogPrimitiveTitle>
                                                             <AlertDialogDescription>
                                                                 Esta acción eliminará el paquete "{pkg.name}" y todo su contenido. No se puede deshacer.
                                                             </AlertDialogDescription>
-                                                            </AlertDialogPrimitiveHeader>
+                                                            </AlertDialogHeader>
                                                             <AlertDialogPrimitiveFooter>
                                                             <AlertDialogCancel>Cancelar</AlertDialogCancel>
                                                             <AlertDialogAction onClick={() => handleDeletePackage(pkg.id, pkg.name)} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
@@ -564,7 +552,7 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
              </Card>
 
               <Dialog open={isFormOpen} onOpenChange={(isOpen) => { if (!isOpen) handleCloseDialog(); }}>
-                 <DialogContent className="sm:max-w-3xl max-h-[90vh] flex flex-col overflow-hidden">
+                 <DialogContent className="sm:max-w-3xl max-h-[90vh] flex flex-col overflow-hidden"> {/* Añadido overflow-hidden */}
                      <DialogHeader>
                          <DialogTitle>{editingPackage ? 'Editar Paquete' : 'Añadir Nuevo Paquete'}</DialogTitle>
                          <DialogDescription>
@@ -572,8 +560,7 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
                         </DialogDescription>
                      </DialogHeader>
 
-                     <ScrollArea className="flex-grow pr-6 -mr-6">
-                        <div> {/* Div contenedor para el contenido principal del diálogo */}
+                     <ScrollArea className="flex-grow pr-6 -mr-6"> {/* ScrollArea principal */}
                             <Form {...packageForm}>
                                 <form onSubmit={(e) => e.preventDefault()} className="space-y-4 border-b pb-6 mb-6">
                                     <FormField control={packageForm.control} name="name" render={({ field }) => (
@@ -621,9 +608,9 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
                                         )}/>
                                         <FormField control={addItemForm.control} name="product_id" render={({ field }) => (
                                             <FormItem className="flex-grow"> <FormLabel className="text-xs">Producto</FormLabel>
-                                                <Select onValueChange={field.onChange} value={field.value || '__NONE__'} disabled={!selectedCategoryId || selectedCategoryId === '__NONE__' || isItemDataLoading || productsInCategory.length === 0}>
+                                                <Select onValueChange={field.onChange} value={field.value || '__NONE__'} disabled={!selectedCategoryId || selectedCategoryId === '__NONE__' || isItemFormLoading || productsInCategory.length === 0}>
                                                     <FormControl><SelectTrigger>
-                                                        <SelectValue placeholder={isItemDataLoading ? "Cargando..." : (productsInCategory.length === 0 && selectedCategoryId && selectedCategoryId !== '__NONE__' ? "Sin productos" : "Selecciona producto")} />
+                                                        <SelectValue placeholder={isItemFormLoading ? "Cargando..." : (productsInCategory.length === 0 && selectedCategoryId && selectedCategoryId !== '__NONE__' ? "Sin productos" : "Selecciona producto")} />
                                                     </SelectTrigger></FormControl>
                                                     <SelectContent>
                                                         <SelectItem value="__NONE__" disabled>Selecciona producto</SelectItem>
@@ -639,16 +626,16 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
                                                 <FormControl><Input type="number" min="1" {...field} /></FormControl> <FormMessage />
                                             </FormItem>
                                         )}/>
-                                        <Button type="submit" size="sm" disabled={isItemDataLoading} title="Añadir Ítem al Paquete">
-                                            {isItemDataLoading ? <Loader2 className="h-4 w-4 animate-spin"/> : <PlusCircle className="h-4 w-4" />}
+                                        <Button type="submit" size="sm" disabled={isItemFormLoading} title="Añadir Ítem al Paquete">
+                                            {isItemFormLoading ? <Loader2 className="h-4 w-4 animate-spin"/> : <PlusCircle className="h-4 w-4" />}
                                         </Button>
                                     </form>
                                 </Form>
 
-                                <div className="h-[250px] border rounded-md">
+                                <div className="h-[250px] border rounded-md"> {/* Altura ajustada para la lista de ítems */}
                                     <ScrollArea className="h-full">
                                     {console.log("[Render PendingItems] isPackageContentLoading:", isPackageContentLoading, "pendingItems.length:", pendingItems.length)}
-                                    {isPackageContentLoading && editingPackage ? ( // Mostrar cargador si se está editando y cargando contenido
+                                    {isPackageContentLoading && editingPackage ? ( 
                                             <div className="flex justify-center items-center h-full text-muted-foreground">
                                                 <Loader2 className="h-6 w-6 animate-spin mr-2" /> Cargando contenido del paquete...
                                             </div>
@@ -691,7 +678,6 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
                                     </ScrollArea>
                                 </div>
                             </div>
-                        </div>
                      </ScrollArea>
 
                      <DialogFooter className="mt-auto pt-4 border-t shrink-0">
@@ -710,14 +696,13 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
                         <DialogTitle>Configurar Modificadores para "{pendingItems.find(i => i.localId === editingOverridesForItemLocalId)?.product_name}"</DialogTitle>
                         <DialogDescription>Ajusta las reglas de selección de modificadores para este producto dentro del paquete.</DialogDescription>
                     </DialogHeader>
-                     {isItemDataLoading && !pendingItems.find(i => i.localId === editingOverridesForItemLocalId)?.modifierSlots ? ( // Se usaba isItemDataLoading que es para el form de añadir.
+                     {isItemFormLoading && !pendingItems.find(i => i.localId === editingOverridesForItemLocalId)?.modifierSlots ? ( 
                         <div className="flex justify-center items-center h-40"><Loader2 className="h-8 w-8 animate-spin text-primary"/></div>
                     ) : (() => {
                         const currentItem = pendingItems.find(i => i.localId === editingOverridesForItemLocalId);
                         const slots = currentItem?.modifierSlots || [];
                         const overrides = currentItem?.modifierOverrides || [];
                         console.log(`[Dialog Overrides] Item: ${currentItem?.product_name}, Slots: ${slots.length}, Overrides en estado: ${overrides.length}`);
-
 
                         if (!currentItem) {
                              return <p className="text-center text-muted-foreground py-4">Error: No se encontró el ítem.</p>;
@@ -729,68 +714,16 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
                         return (
                             <ScrollArea className="max-h-[50vh] pr-2 -mr-2">
                                 <div className="space-y-4 p-1">
-                                    {slots.map(slot => {
-                                        const currentOverride = overrides.find(ov => ov.product_modifier_slot_id === slot.id);
-                                        const initialMin = currentOverride?.min_quantity ?? slot.min_quantity;
-                                        const initialMax = currentOverride?.max_quantity ?? slot.max_quantity;
-                                        const isOverridden = !!currentOverride;
-                                         // Estado local para los inputs de este slot
-                                         const [minInput, setMinInput] = React.useState(initialMin);
-                                         const [maxInput, setMaxInput] = React.useState(initialMax);
-
-                                         // Sincronizar inputs si los overrides cambian externamente (ej. al cargar)
-                                         React.useEffect(() => {
-                                             const updatedOverride = overrides.find(ov => ov.product_modifier_slot_id === slot.id);
-                                             setMinInput(updatedOverride?.min_quantity ?? slot.min_quantity);
-                                             setMaxInput(updatedOverride?.max_quantity ?? slot.max_quantity);
-                                         }, [overrides, slot.id, slot.min_quantity, slot.max_quantity]);
-
-
-                                        return (
-                                            <Card key={slot.id} className={cn("p-3", isOverridden && "border-blue-500 ring-1 ring-blue-500")}>
-                                                <div className="space-y-3">
-                                                    <div className="flex justify-between items-center">
-                                                        <Label htmlFor={`min-${slot.id}`} className="font-medium">{slot.label}</Label>
-                                                        {isOverridden && <Badge variant="outline" className="ml-2 text-blue-600 border-blue-500 text-xs px-1 py-0">
-                                                             Regla Activa
-                                                        </Badge>}
-                                                    </div>
-                                                    <p className="text-xs text-muted-foreground">Por defecto para este producto: Min {slot.min_quantity}, Max {slot.max_quantity}</p>
-                                                    <p className="text-xs text-muted-foreground">Configuración para este paquete:</p>
-                                                    <div className="flex items-end gap-3">
-                                                        <div className="flex-1">
-                                                            <Label htmlFor={`min-${slot.id}`} className="text-xs">Min Requerido (Paquete)</Label>
-                                                            <Input id={`min-${slot.id}`} type="number" min="0" value={minInput} onChange={e => setMinInput(parseInt(e.target.value, 10) || 0)} />
-                                                        </div>
-                                                        <div className="flex-1">
-                                                            <Label htmlFor={`max-${slot.id}`} className="text-xs">Max Permitido (Paquete)</Label>
-                                                            <Input id={`max-${slot.id}`} type="number" min="0" value={maxInput} onChange={e => setMaxInput(parseInt(e.target.value, 10) || 0)}/>
-                                                        </div>
-                                                        <div className="flex flex-col gap-1">
-                                                            <Button
-                                                                type="button" size="sm"
-                                                                onClick={() => {
-                                                                    if (maxInput < minInput) {
-                                                                        toast({ variant: 'destructive', title: 'Error', description: 'Máximo no puede ser menor que Mínimo.' });
-                                                                        return;
-                                                                    }
-                                                                    handleSaveLocalOverride(slot.id, minInput, maxInput);
-                                                                }}
-                                                                title="Guardar Regla"
-                                                            >
-                                                                <Save className="h-4 w-4"/>
-                                                            </Button>
-                                                            {isOverridden && (
-                                                                <Button type="button" variant="ghost" size="sm" className="text-destructive hover:text-destructive" onClick={() => handleDeleteLocalOverride(slot.id)} title="Eliminar Regla">
-                                                                    <Trash2 className="h-4 w-4"/>
-                                                                </Button>
-                                                            )}
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            </Card>
-                                        );
-                                    })}
+                                    {slots.map(slot => (
+                                      <ModifierSlotOverrideEditor
+                                        key={slot.id}
+                                        slot={slot}
+                                        currentOverride={overrides.find(ov => ov.product_modifier_slot_id === slot.id)}
+                                        onSaveOverride={handleSaveLocalOverride}
+                                        onDeleteOverride={handleDeleteLocalOverride}
+                                        toast={toast}
+                                      />
+                                    ))}
                                 </div>
                             </ScrollArea>
                         );
@@ -806,6 +739,82 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
      );
 };
 
-export default ManagePackages;
 
-    
+// Nuevo componente para editar overrides de un slot
+interface ModifierSlotOverrideEditorProps {
+  slot: ProductModifierSlot;
+  currentOverride: PackageItemModifierSlotOverride | undefined;
+  onSaveOverride: (slotId: string, min: number, max: number) => void;
+  onDeleteOverride: (slotId: string) => void;
+  toast: ({}: any) => void; // Simplificado para el ejemplo
+}
+
+const ModifierSlotOverrideEditor: React.FC<ModifierSlotOverrideEditorProps> = ({
+  slot,
+  currentOverride,
+  onSaveOverride,
+  onDeleteOverride,
+  toast
+}) => {
+  const initialMin = currentOverride?.min_quantity ?? slot.min_quantity;
+  const initialMax = currentOverride?.max_quantity ?? slot.max_quantity;
+  const isOverridden = !!currentOverride;
+
+  const [minInput, setMinInput] = React.useState(initialMin);
+  const [maxInput, setMaxInput] = React.useState(initialMax);
+
+  React.useEffect(() => {
+    setMinInput(currentOverride?.min_quantity ?? slot.min_quantity);
+    setMaxInput(currentOverride?.max_quantity ?? slot.max_quantity);
+  }, [currentOverride, slot.min_quantity, slot.max_quantity]);
+
+  const handleSave = () => {
+    if (maxInput < minInput) {
+      toast({ variant: 'destructive', title: 'Error', description: 'Máximo no puede ser menor que Mínimo.' });
+      return;
+    }
+    onSaveOverride(slot.id, minInput, maxInput);
+  };
+
+  return (
+    <Card className={cn("p-3", isOverridden && "border-blue-500 ring-1 ring-blue-500")}>
+        <div className="space-y-3">
+            <div className="flex justify-between items-center">
+                <Label htmlFor={`min-${slot.id}`} className="font-medium">{slot.label}</Label>
+                {isOverridden && <Badge variant="outline" className="ml-2 text-blue-600 border-blue-500 text-xs px-1 py-0">
+                     Regla Activa
+                </Badge>}
+            </div>
+            <p className="text-xs text-muted-foreground">Por defecto para este producto: Min {slot.min_quantity}, Max {slot.max_quantity}</p>
+            <p className="text-xs text-muted-foreground">Configuración para este paquete:</p>
+            <div className="flex items-end gap-3">
+                <div className="flex-1">
+                    <Label htmlFor={`min-${slot.id}`} className="text-xs">Min Requerido (Paquete)</Label>
+                    <Input id={`min-${slot.id}`} type="number" min="0" value={minInput} onChange={e => setMinInput(parseInt(e.target.value, 10) || 0)} />
+                </div>
+                <div className="flex-1">
+                    <Label htmlFor={`max-${slot.id}`} className="text-xs">Max Permitido (Paquete)</Label>
+                    <Input id={`max-${slot.id}`} type="number" min="0" value={maxInput} onChange={e => setMaxInput(parseInt(e.target.value, 10) || 0)}/>
+                </div>
+                <div className="flex flex-col gap-1">
+                    <Button
+                        type="button" size="sm"
+                        onClick={handleSave}
+                        title="Guardar Regla"
+                    >
+                        <Save className="h-4 w-4"/>
+                    </Button>
+                    {isOverridden && (
+                        <Button type="button" variant="ghost" size="sm" className="text-destructive hover:text-destructive" onClick={() => onDeleteOverride(slot.id)} title="Eliminar Regla">
+                            <Trash2 className="h-4 w-4"/>
+                        </Button>
+                    )}
+                </div>
+            </div>
+        </div>
+    </Card>
+  );
+};
+
+
+export default ManagePackages;
