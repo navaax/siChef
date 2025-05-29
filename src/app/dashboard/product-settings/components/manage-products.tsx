@@ -9,7 +9,7 @@ import * as z from 'zod';
 
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from '@/components/ui/button';
-import { PlusCircle, Edit, Trash2, Loader2, Save, X, MinusCircle, Settings, CheckSquare, Square, List } from 'lucide-react'; // Añadir iconos
+import { PlusCircle, Edit, Trash2, Loader2, Save, X, MinusCircle, Settings, CheckSquare, Square, List } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogClose } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Input } from '@/components/ui/input';
@@ -19,8 +19,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
 import { Separator } from '@/components/ui/separator';
-import { Checkbox } from '@/components/ui/checkbox'; // Importar Checkbox
-import { Badge } from '@/components/ui/badge'; // Importar Badge
+import { Checkbox } from '@/components/ui/checkbox';
+import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import Image from 'next/image';
 import { cn } from '@/lib/utils';
@@ -140,7 +140,7 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
         } else {
             setCurrentModifierSlots([]);
         }
-    }, [editingProduct, isFormOpen, toast]); // No es necesario toast como dependencia directa aqui
+    }, [editingProduct, isFormOpen]);
 
     const handleOpenForm = (product: Product | null = null) => {
         setEditingProduct(product);
@@ -183,18 +183,14 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
              if (productId) {
                 await updateProductService(productId, dataToSave as Partial<Omit<Product, 'id'>>);
                 toast({ title: "Éxito", description: "Producto actualizado." });
-                // Actualizar producto en la lista local si es necesario (o re-fetch)
                 await onDataChange();
-                // Mantener el producto en edición para gestión de slots
                 setEditingProduct(prev => prev ? { ...prev, ...dataToSave } : null);
              } else {
                 const newProduct = await addProductService(dataToSave as Omit<Product, 'id'>);
                 toast({ title: "Éxito", description: "Producto añadido. Ahora puedes añadir modificadores." });
-                setEditingProduct(newProduct); // Establecer como producto en edición para añadir slots
-                await onDataChange(); // Esto refrescará initialProducts, y useEffect actualizará 'products'
+                setEditingProduct(newProduct);
+                await onDataChange();
              }
-             // No cerrar el form automáticamente al guardar para permitir añadir/editar slots
-             // handleCloseForm();
         } catch (error) {
              const action = editingProduct ? 'actualizar' : 'añadir';
             console.error(`[ManageProducts] Error al ${action} producto:`, error);
@@ -211,7 +207,7 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
             toast({ title: "Éxito", description: `"${name}" eliminado.`, variant: "destructive" });
             await onDataChange();
              if (editingProduct?.id === id) {
-                 handleCloseForm(); // Cerrar form si se elimina el producto en edición
+                 handleCloseForm();
              }
         } catch (error) {
              console.error(`[ManageProducts] Error al eliminar producto ${id}:`, error);
@@ -226,11 +222,10 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
         if (!editingProduct) return;
         setIsModifierSlotsLoading(true);
         try {
-            const newSlot = await addModifierSlot({
+            await addModifierSlot({
                 product_id: editingProduct.id,
                 ...data,
             });
-            // Refrescar slots para el producto actual
             await fetchSlotsForProduct(editingProduct.id);
             toast({ title: "Éxito", description: "Grupo modificador añadido." });
         } catch (error) {
@@ -246,7 +241,6 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
          setIsModifierSlotsLoading(true);
          try {
              await deleteModifierSlot(slotId);
-              // Refrescar slots para el producto actual
              await fetchSlotsForProduct(editingProduct.id);
              toast({ title: "Éxito", description: "Grupo modificador eliminado.", variant: 'destructive' });
          } catch (error) {
@@ -262,57 +256,48 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
          setIsLoadingOptions(true);
          setEditingSlotOptions(slot);
          try {
-             // 1. Obtener las opciones YA seleccionadas para este slot
              const currentlyAllowedOptions = await getModifierSlotOptions(slot.id);
-             // Actualizar el estado del slot con las opciones obtenidas (importante para la UI)
              setEditingSlotOptions(prev => prev ? { ...prev, allowedOptions: currentlyAllowedOptions } : null);
-
-             // 2. Obtener TODOS los productos de la categoría vinculada
              const allOptionsInCategory = await getModifiersByCategory(slot.linked_category_id);
              setOptionsForEditingSlot(allOptionsInCategory);
-
          } catch (error) {
              console.error(`[ManageProducts] Error al preparar opciones para slot ${slot.id}:`, error);
              toast({ variant: "destructive", title: "Error Opciones", description: `No se pudieron cargar las opciones. ${error instanceof Error ? error.message : ''}` });
              setOptionsForEditingSlot([]);
-             setEditingSlotOptions(null); // Cerrar si hay error
+             setEditingSlotOptions(null);
          } finally {
              setIsLoadingOptions(false);
          }
     };
 
     const handleToggleSlotOption = async (slotId: string, modifierProductId: string, isCurrentlyAllowed: boolean) => {
-         setIsLoadingOptions(true); // Reutilizar estado de carga
+         setIsLoadingOptions(true);
          try {
             let updatedOption: ProductModifierSlotOption | null = null;
             if (isCurrentlyAllowed) {
-                // Encontrar el ID de la opción específica para eliminarla
                 const optionToDelete = editingSlotOptions?.allowedOptions?.find(opt => opt.modifier_product_id === modifierProductId);
                 if (optionToDelete) {
                     await deleteModifierSlotOption(optionToDelete.id);
                     toast({ title: "Opción Deshabilitada", variant: "destructive" });
                 } else {
-                    console.warn(`[ManageProducts] No se encontró la opción ${modifierProductId} para eliminar del slot ${slotId}`);
                     toast({ title: "Advertencia", description: "No se encontró la opción para eliminar.", variant: "default" });
                 }
             } else {
-                 // Añadir la opción (con valores por defecto para is_default y price_adjustment)
                  updatedOption = await addModifierSlotOption({
                     product_modifier_slot_id: slotId,
                     modifier_product_id: modifierProductId,
-                    is_default: false, // Valor por defecto al añadir
-                    price_adjustment: 0 // Valor por defecto al añadir
+                    is_default: false,
+                    price_adjustment: 0
                 });
                  toast({ title: "Opción Habilitada" });
             }
 
-            // Actualizar el estado local de allowedOptions en editingSlotOptions
              setEditingSlotOptions(prevSlot => {
                  if (!prevSlot) return null;
                  let newAllowedOptions = [...(prevSlot.allowedOptions || [])];
                  if (isCurrentlyAllowed) {
                      newAllowedOptions = newAllowedOptions.filter(opt => opt.modifier_product_id !== modifierProductId);
-                 } else if (updatedOption) { 
+                 } else if (updatedOption) {
                      const prodInfo = optionsForEditingSlot.find(p => p.id === modifierProductId);
                      newAllowedOptions.push({
                          ...updatedOption,
@@ -323,7 +308,6 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
                  return { ...prevSlot, allowedOptions: newAllowedOptions };
              });
 
-             // Refrescar la lista principal de slots en el diálogo principal (para que refleje el badge)
              if (editingProduct) {
                  await fetchSlotsForProduct(editingProduct.id);
              }
@@ -335,13 +319,6 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
              setIsLoadingOptions(false);
          }
      };
-
-    const handleOpenOptionConfigDialog = (option: ProductModifierSlotOption) => {
-        setCurrentOptionIsDefault(option.is_default ?? false);
-        setCurrentOptionPriceAdjustment(String(option.price_adjustment ?? 0));
-        // Guardar la opción que se está configurando, quizá en un nuevo estado si es necesario
-        // Para este ejemplo, asumimos que `option.id` es suficiente para llamar a `handleSaveOptionConfig`
-    };
 
     const handleSaveOptionConfig = async (optionId: string) => {
         const priceAdjustmentNum = parseFloat(currentOptionPriceAdjustment);
@@ -357,9 +334,8 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
             });
             toast({ title: "Configuración Guardada", description: "Se actualizó la opción del modificador." });
 
-            // Refrescar datos en el diálogo de opciones y en la lista de slots
-            if (editingSlotOptions) await handleOpenEditSlotOptions(editingSlotOptions); // Recarga las opciones para el slot actual
-            if (editingProduct) await fetchSlotsForProduct(editingProduct.id); // Recarga la lista de slots para el producto
+            if (editingSlotOptions) await handleOpenEditSlotOptions(editingSlotOptions);
+            if (editingProduct) await fetchSlotsForProduct(editingProduct.id);
 
         } catch (error) {
             console.error(`[ManageProducts] Error guardando config para opción ${optionId}:`, error);
@@ -468,141 +444,141 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
                              Define un producto vendible o una opción modificadora.
                         </DialogDescription>
                     </DialogHeader>
-                    <ScrollArea className="flex-grow pr-2">
-                    <Form {...productForm}>
-                        <form onSubmit={productForm.handleSubmit(handleFormSubmit)} className="space-y-4">
-                            <FormField control={productForm.control} name="name" render={({ field }) => (
-                                <FormItem><FormLabel>Nombre</FormLabel><FormControl><Input placeholder="e.g., Alitas 6pz, Salsa BBQ" {...field} /></FormControl><FormMessage /></FormItem>
-                            )}/>
-                            <div className="grid grid-cols-2 gap-4">
-                                <FormField control={productForm.control} name="price" render={({ field }) => (
-                                    <FormItem><FormLabel>Precio</FormLabel><FormControl><Input type="number" step="0.01" placeholder="0.00" {...field} /></FormControl><FormMessage /></FormItem>
+                    <ScrollArea className="flex-grow pr-2"> {/* ScrollArea principal del diálogo */}
+                      <div className="space-y-6"> {/* Contenedor para todo el contenido scrolleable */}
+                        <Form {...productForm}>
+                            <form onSubmit={productForm.handleSubmit(handleFormSubmit)} className="space-y-4">
+                                <FormField control={productForm.control} name="name" render={({ field }) => (
+                                    <FormItem><FormLabel>Nombre</FormLabel><FormControl><Input placeholder="e.g., Alitas 6pz, Salsa BBQ" {...field} /></FormControl><FormMessage /></FormItem>
                                 )}/>
-                                <FormField control={productForm.control} name="categoryId" render={({ field }) => (
-                                    <FormItem><FormLabel>Categoría</FormLabel>
-                                        <Select onValueChange={field.onChange} value={field.value || '__NONE__'}>
-                                            <FormControl><SelectTrigger><SelectValue placeholder="Selecciona categoría" /></SelectTrigger></FormControl>
-                                            <SelectContent>
-                                                 <SelectItem value="__NONE__" disabled>Selecciona una categoría</SelectItem>
-                                                {productAssignableCategories.length === 0 && <SelectItem value="__NO_CATS__" disabled>Crea una categoría primero</SelectItem>}
-                                                {productAssignableCategories.map(cat => (
-                                                    <SelectItem key={cat.id} value={cat.id}>{cat.name} ({cat.type})</SelectItem>
-                                                ))}
-                                            </SelectContent>
-                                        </Select><FormMessage /></FormItem>
-                                )}/>
-                            </div>
-                            <FormField control={productForm.control} name="imageUrl" render={({ field }) => (
-                                <FormItem><FormLabel>URL de Imagen (Opcional)</FormLabel><FormControl><Input type="url" placeholder="https://..." {...field} value={field.value ?? ''} /></FormControl><FormMessage /></FormItem>
-                            )}/>
-                             <div className="grid grid-cols-2 gap-4">
-                                <FormField
-                                   control={productForm.control}
-                                   name="inventory_item_id"
-                                   render={({ field }) => (
-                                       <FormItem>
-                                           <FormLabel>Item de Inventario (Opcional)</FormLabel>
-                                            <Select
-                                                onValueChange={(value) => field.onChange(value === "__NONE__" ? null : value)}
-                                                value={field.value ?? "__NONE__"}
-                                            >
-                                               <FormControl>
-                                                   <SelectTrigger>
-                                                       <SelectValue placeholder="Vincular inventario..." />
-                                                   </SelectTrigger>
-                                               </FormControl>
-                                               <SelectContent>
-                                                   <SelectItem value="__NONE__">-- Ninguno --</SelectItem>
-                                                   {inventoryItems.map(item => (
-                                                       <SelectItem key={item.id} value={item.id}>
-                                                           {item.name} ({item.unit})
-                                                       </SelectItem>
-                                                   ))}
-                                               </SelectContent>
-                                           </Select>
-                                           <FormMessage />
-                                       </FormItem>
-                                   )}
-                                />
-                                {productForm.watch('inventory_item_id') && (
-                                    <FormField control={productForm.control} name="inventory_consumed_per_unit" render={({ field }) => (
-                                        <FormItem><FormLabel>Consumo por Unidad</FormLabel>
-                                         <FormControl>
-                                             <Input type="number" step="0.01" placeholder="1" {...field} value={field.value ?? 1}/>
-                                         </FormControl>
-                                         <FormMessage />
-                                         </FormItem>
+                                <div className="grid grid-cols-2 gap-4">
+                                    <FormField control={productForm.control} name="price" render={({ field }) => (
+                                        <FormItem><FormLabel>Precio</FormLabel><FormControl><Input type="number" step="0.01" placeholder="0.00" {...field} /></FormControl><FormMessage /></FormItem>
                                     )}/>
-                                )}
-                             </div>
-                              <div className="flex justify-end">
-                                  <Button type="submit" size="sm" disabled={isSubmitting || productAssignableCategories.length === 0}>
-                                        {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4"/>}
-                                        {editingProduct ? 'Guardar Cambios Producto' : 'Crear Producto'}
-                                  </Button>
-                              </div>
-                        </form>
-                    </Form>
+                                    <FormField control={productForm.control} name="categoryId" render={({ field }) => (
+                                        <FormItem><FormLabel>Categoría</FormLabel>
+                                            <Select onValueChange={field.onChange} value={field.value || '__NONE__'}>
+                                                <FormControl><SelectTrigger><SelectValue placeholder="Selecciona categoría" /></SelectTrigger></FormControl>
+                                                <SelectContent>
+                                                    <SelectItem value="__NONE__" disabled>Selecciona una categoría</SelectItem>
+                                                    {productAssignableCategories.length === 0 && <SelectItem value="__NO_CATS__" disabled>Crea una categoría primero</SelectItem>}
+                                                    {productAssignableCategories.map(cat => (
+                                                        <SelectItem key={cat.id} value={cat.id}>{cat.name} ({cat.type})</SelectItem>
+                                                    ))}
+                                                </SelectContent>
+                                            </Select><FormMessage /></FormItem>
+                                    )}/>
+                                </div>
+                                <FormField control={productForm.control} name="imageUrl" render={({ field }) => (
+                                    <FormItem><FormLabel>URL de Imagen (Opcional)</FormLabel><FormControl><Input type="url" placeholder="https://..." {...field} value={field.value ?? ''} /></FormControl><FormMessage /></FormItem>
+                                )}/>
+                                <div className="grid grid-cols-2 gap-4">
+                                    <FormField
+                                    control={productForm.control}
+                                    name="inventory_item_id"
+                                    render={({ field }) => (
+                                        <FormItem>
+                                            <FormLabel>Item de Inventario (Opcional)</FormLabel>
+                                                <Select
+                                                    onValueChange={(value) => field.onChange(value === "__NONE__" ? null : value)}
+                                                    value={field.value ?? "__NONE__"}
+                                                >
+                                                <FormControl>
+                                                    <SelectTrigger>
+                                                        <SelectValue placeholder="Vincular inventario..." />
+                                                    </SelectTrigger>
+                                                </FormControl>
+                                                <SelectContent>
+                                                    <SelectItem value="__NONE__">-- Ninguno --</SelectItem>
+                                                    {inventoryItems.map(item => (
+                                                        <SelectItem key={item.id} value={item.id}>
+                                                            {item.name} ({item.unit})
+                                                        </SelectItem>
+                                                    ))}
+                                                </SelectContent>
+                                                </Select>
+                                                <FormMessage />
+                                        </FormItem>
+                                    )}
+                                    />
+                                    {productForm.watch('inventory_item_id') && (
+                                        <FormField control={productForm.control} name="inventory_consumed_per_unit" render={({ field }) => (
+                                            <FormItem><FormLabel>Consumo por Unidad</FormLabel>
+                                            <FormControl>
+                                                <Input type="number" step="0.01" placeholder="1" {...field} value={field.value ?? 1}/>
+                                            </FormControl>
+                                            <FormMessage />
+                                            </FormItem>
+                                        )}/>
+                                    )}
+                                </div>
+                                <div className="flex justify-end">
+                                    <Button type="submit" size="sm" disabled={isSubmitting || productAssignableCategories.length === 0}>
+                                            {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4"/>}
+                                            {editingProduct ? 'Guardar Cambios Producto' : 'Crear Producto'}
+                                    </Button>
+                                </div>
+                            </form>
+                        </Form>
 
-                    {/* Gestión de Slots Modificadores (solo si editando) */}
-                    {editingProduct && (
-                        <div className="space-y-4 pt-6 border-t mt-6">
-                            <h4 className="text-lg font-semibold">Grupos de Modificadores para "{editingProduct.name}"</h4>
-                             <AddModifierSlotForm
-                                modifierCategories={modifierCategories}
-                                onAddSlot={handleAddModifierSlot}
-                                isLoading={isModifierSlotsLoading}
-                             />
-                             <div className="border rounded-md">
-                                {isModifierSlotsLoading && currentModifierSlots.length === 0 ? (
-                                     <div className="p-4 text-center min-h-[100px] flex items-center justify-center"><Loader2 className="h-5 w-5 animate-spin inline-block" /></div>
-                                 ) : !isModifierSlotsLoading && currentModifierSlots.length === 0 ? (
-                                    <p className="p-4 text-center text-sm text-muted-foreground min-h-[100px] flex items-center justify-center">No hay grupos modificadores definidos.</p>
-                                ) : (
-                                   <ScrollArea className="h-[200px]">
-                                       <Table className="text-sm">
-                                           <TableHeader>
-                                               <TableRow>
-                                                   <TableHead>Etiqueta</TableHead>
-                                                   <TableHead>Categoría Vinculada</TableHead>
-                                                   <TableHead className="w-[60px] text-center">Min</TableHead>
-                                                   <TableHead className="w-[60px] text-center">Max</TableHead>
-                                                   <TableHead className="w-[120px] text-right">Opciones</TableHead>
-                                               </TableRow>
-                                           </TableHeader>
-                                           <TableBody>
-                                               {currentModifierSlots.map(slot => {
-                                                   const linkedCat = modifierCategories.find(c => c.id === slot.linked_category_id);
-                                                   const hasSpecificOptions = slot.allowedOptions && slot.allowedOptions.length > 0;
-                                                   return (
-                                                       <TableRow key={slot.id}>
+                        {/* Gestión de Slots Modificadores (solo si editando) */}
+                        {editingProduct && (
+                            <div className="space-y-4 pt-6 border-t mt-6">
+                                <h4 className="text-lg font-semibold">Grupos de Modificadores para "{editingProduct.name}"</h4>
+                                <AddModifierSlotForm
+                                    modifierCategories={modifierCategories}
+                                    onAddSlot={handleAddModifierSlot}
+                                    isLoading={isModifierSlotsLoading}
+                                />
+                                <div className="border rounded-md"> {/* No necesita ScrollArea aquí, el exterior lo maneja */}
+                                    {isModifierSlotsLoading && currentModifierSlots.length === 0 ? (
+                                        <div className="p-4 text-center min-h-[100px] flex items-center justify-center"><Loader2 className="h-5 w-5 animate-spin inline-block" /></div>
+                                    ) : !isModifierSlotsLoading && currentModifierSlots.length === 0 ? (
+                                        <p className="p-4 text-center text-sm text-muted-foreground min-h-[100px] flex items-center justify-center">No hay grupos modificadores definidos.</p>
+                                    ) : (
+                                    <Table className="text-sm"> {/* La tabla puede crecer verticalmente */}
+                                        <TableHeader>
+                                            <TableRow>
+                                                <TableHead>Etiqueta</TableHead>
+                                                <TableHead>Categoría Vinculada</TableHead>
+                                                <TableHead className="w-[60px] text-center">Min</TableHead>
+                                                <TableHead className="w-[60px] text-center">Max</TableHead>
+                                                <TableHead className="w-[120px] text-right">Opciones</TableHead>
+                                            </TableRow>
+                                        </TableHeader>
+                                        <TableBody>
+                                            {currentModifierSlots.map(slot => {
+                                                const linkedCat = modifierCategories.find(c => c.id === slot.linked_category_id);
+                                                const hasSpecificOptions = slot.allowedOptions && slot.allowedOptions.length > 0;
+                                                return (
+                                                    <TableRow key={slot.id}>
                                                             <TableCell>{slot.label}</TableCell>
                                                             <TableCell>{linkedCat?.name || 'N/A'}</TableCell>
                                                             <TableCell className="text-center">{slot.min_quantity}</TableCell>
                                                             <TableCell className="text-center">{slot.max_quantity}</TableCell>
                                                             <TableCell className="text-right space-x-1">
-                                                                 <Button variant="outline" size="icon" className="h-6 w-6 text-blue-600 hover:text-blue-800" onClick={() => handleOpenEditSlotOptions(slot)} title="Configurar Opciones Específicas">
+                                                                <Button variant="outline" size="icon" className="h-6 w-6 text-blue-600 hover:text-blue-800" onClick={() => handleOpenEditSlotOptions(slot)} title="Configurar Opciones Específicas">
                                                                     <List className="h-3.5 w-3.5" />
-                                                                 </Button>
-                                                                 {hasSpecificOptions && (
+                                                                </Button>
+                                                                {hasSpecificOptions && (
                                                                     <Badge variant="secondary" className="text-blue-700 border-blue-300 px-1 text-xs">
                                                                         {slot.allowedOptions?.length} esp.
                                                                     </Badge>
-                                                                 )}
+                                                                )}
                                                                 <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive hover:text-destructive" onClick={() => handleDeleteModifierSlot(slot.id)} title="Eliminar Grupo" disabled={isModifierSlotsLoading}>
                                                                     <MinusCircle className="h-3.5 w-3.5" />
                                                                 </Button>
                                                             </TableCell>
-                                                       </TableRow>
-                                                   );
+                                                    </TableRow>
+                                                );
                                                 })}
-                                           </TableBody>
-                                       </Table>
-                                   </ScrollArea>
-                                )}
-                             </div>
-                        </div>
-                    )}
+                                        </TableBody>
+                                    </Table>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+                       </div> {/* Fin del contenedor scrolleable */}
                     </ScrollArea>
                     <DialogFooter className="mt-6 pt-4 border-t shrink-0">
                             <Button type="button" variant="outline" onClick={handleCloseForm}>Cerrar</Button>
@@ -612,7 +588,7 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
 
              {/* Dialogo para Editar Opciones Específicas del Slot */}
             <Dialog open={!!editingSlotOptions} onOpenChange={(open) => { if (!open) handleCloseEditSlotOptions(); }}>
-                <DialogContent className="sm:max-w-2xl max-h-[80vh] flex flex-col">
+                <DialogContent className="sm:max-w-2xl max-h-[80vh] flex flex-col"> {/* Asegurar flex-col y max-h */}
                     <DialogHeader>
                         <DialogTitle>Configurar Opciones para "{editingSlotOptions?.label}"</DialogTitle>
                         <DialogDescription>
@@ -626,7 +602,7 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
                     ) : optionsForEditingSlot.length === 0 && editingSlotOptions ? (
                         <p className="text-muted-foreground text-center py-4">No hay productos modificadores en la categoría "{modifierCategories.find(c => c.id === editingSlotOptions?.linked_category_id)?.name}".</p>
                     ) : (
-                        <ScrollArea className="flex-grow pr-2 -mr-2 mt-4">
+                        <ScrollArea className="flex-grow pr-2 -mr-2 mt-4"> {/* flex-grow para que ocupe espacio */}
                             <div className="space-y-3">
                                 {optionsForEditingSlot.map(option => {
                                     const currentSlotOptionConfig = editingSlotOptions?.allowedOptions?.find(allowed => allowed.modifier_product_id === option.id);
@@ -659,7 +635,6 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
                                                             checked={currentSlotOptionConfig.is_default}
                                                             onCheckedChange={(checked) => {
                                                                 setCurrentOptionIsDefault(!!checked);
-                                                                // Optimistic update for UI, real save on button click
                                                                 setEditingSlotOptions(prev => prev ? ({
                                                                     ...prev,
                                                                     allowedOptions: prev.allowedOptions?.map(o => o.id === currentSlotOptionConfig.id ? {...o, is_default: !!checked} : o)
@@ -670,8 +645,8 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
                                                     </div>
                                                     <div className="grid grid-cols-3 items-end gap-2">
                                                         <FormField
-                                                            control={productForm.control} // Needs a form instance, this is a placeholder
-                                                            name={`priceAdjustment-${option.id}` as any} // Placeholder name
+                                                            control={productForm.control}
+                                                            name={`priceAdjustment-${option.id}` as any}
                                                             defaultValue={String(currentSlotOptionConfig.price_adjustment ?? 0)}
                                                             render={({ field }) => (
                                                                 <FormItem className="col-span-2">
@@ -708,7 +683,7 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
                         </ScrollArea>
                     )}
 
-                    <DialogFooter className="mt-4 pt-4 border-t">
+                    <DialogFooter className="mt-4 pt-4 border-t shrink-0"> {/* shrink-0 para que no se encoja */}
                         <DialogClose asChild>
                             <Button type="button" variant="outline">Cerrar</Button>
                         </DialogClose>
@@ -750,7 +725,7 @@ const AddModifierSlotForm: React.FC<AddModifierSlotFormProps> = ({ modifierCateg
                              <FormControl><SelectTrigger><SelectValue placeholder="Selecciona" /></SelectTrigger></FormControl>
                              <SelectContent>
                                  <SelectItem value="__NONE__" disabled>Selecciona categoría</SelectItem>
-                                 {modifierCategories.length === 0 && <SelectItem value="__NONE_AVAILABLE__" disabled>Crea una cat. 'modificador'</SelectItem>}
+                                 {modifierCategories.length === 0 && <SelectItem value="__NO_CATS_AVAILABLE__" disabled>Crea una cat. 'modificador'</SelectItem>}
                                  {modifierCategories.map(cat => ( <SelectItem key={cat.id} value={cat.id}>{cat.name}</SelectItem> ))}
                              </SelectContent>
                          </Select><FormMessage className="text-xs"/></FormItem>
