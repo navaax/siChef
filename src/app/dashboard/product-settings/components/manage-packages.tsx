@@ -14,7 +14,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from '@/components/ui/button';
 import { PlusCircle, Edit, Trash2, Loader2, Save, X, MinusCircle, Settings, ChevronsUpDown } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogClose } from "@/components/ui/dialog";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter as AlertDialogPrimitiveFooter, AlertDialogHeader as AlertDialogPrimitiveHeader, AlertDialogTitle as AlertDialogPrimitiveTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -121,10 +121,10 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
             }
         }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [searchParams, initialPackages, isFormOpen, pathname, replace]); // Dependencias actualizadas
+    }, [searchParams, initialPackages, isFormOpen, pathname]); // Dependencias actualizadas
 
     const packageUICategories = useMemo(() => allCategories.filter(c => c.type === 'paquete'), [allCategories]);
-    const productAndModifierCategories = useMemo(() => allCategories.filter(c => c.type === 'producto' || c.type === 'modificador'), [allCategories]);
+    const productCategories = useMemo(() => allCategories.filter(c => c.type === 'producto'), [allCategories]);
 
     const packageForm = useForm<PackageFormValues>({
         resolver: zodResolver(packageSchema),
@@ -152,6 +152,7 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
                     setIsItemDataLoading(false);
                     return;
                 }
+                // Asegurarse de que solo se listan productos (no modificadores) al añadir a un paquete
                 const prods = allProductsAndModifiers.filter(p => {
                     const categoryOfProduct = allCategories.find(c => c.id === p.categoryId);
                     return p.categoryId === selectedCategoryId && categoryOfProduct?.type === 'producto';
@@ -178,25 +179,24 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
         setOriginalDbItems([]);
         try {
             const dbItems = await getItemsForPackage(packageId);
-            console.log(`[loadPackageContents] DB Items for package ${packageId}:`, JSON.stringify(dbItems));
+            console.log(`[loadPackageContents] DB Items for package ${packageId}:`, JSON.stringify(dbItems.map(i => ({id: i.id, name: i.product_name, prod_id: i.product_id}))));
             setOriginalDbItems(dbItems);
 
             const pendingItemsPromises = dbItems.map(async (item) => {
                 if (!item.product_id) {
-                    console.warn(`[loadPackageContents] Package item ${item.id} has no product_id. Skipping.`);
+                    console.warn(`[loadPackageContents] Package item ${item.id} (${item.product_name}) no tiene product_id. Omitiendo.`);
                     return null;
                 }
                 const productDetails = allProductsAndModifiers.find(p => p.id === item.product_id);
                 const productName = productDetails?.name || item.product_name || 'Producto Desconocido (Error)';
 
-
                 const [slots, overrides] = await Promise.all([
                     getModifierSlotsForProduct(item.product_id),
-                    getOverridesForPackageItem(item.id)
+                    getOverridesForPackageItem(item.id) // item.id es el ID del package_item
                 ]);
-                console.log(`[loadPackageContents] Para ítem ${item.id} (${productName}): Slots base=${slots.length}, Overrides BD=${overrides.length}`);
+                console.log(`[loadPackageContents] Para ítem de paquete ${item.id} (${productName}), prod_id=${item.product_id}: Slots base=${slots.length}, Overrides BD=${overrides.length}`);
                 return {
-                    localId: item.id,
+                    localId: item.id, // Este es el ID de la tabla package_items
                     product_id: item.product_id,
                     product_name: productName,
                     quantity: item.quantity,
@@ -266,7 +266,7 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
              return;
         }
 
-        const packageData: Omit<Package, 'id'> = {
+        const packageDataToSave: Omit<Package, 'id'> = {
             name: packageFormValues.name,
             price: packageFormValues.price,
             imageUrl: packageFormValues.imageUrl || null,
@@ -278,31 +278,34 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
             let action: 'creado' | 'actualizado' = 'actualizado';
 
             if (currentPackageId) {
-                await updatePackageService(currentPackageId, packageData);
+                await updatePackageService(currentPackageId, packageDataToSave);
                 console.log(`[FinalSave] Paquete ${currentPackageId} actualizado.`);
             } else {
                 action = 'creado';
-                const newPackage = await addPackageService(packageData);
+                const newPackage = await addPackageService(packageDataToSave);
                 currentPackageId = newPackage.id;
-                setEditingPackage(newPackage);
+                setEditingPackage(newPackage); // Actualizar el estado del paquete en edición
                 console.log(`[FinalSave] Paquete ${currentPackageId} creado.`);
             }
 
             if (!currentPackageId) throw new Error("No se pudo obtener/crear el ID del paquete.");
 
-            // Eliminar ítems de la BD que ya no están en pendingItems
-            const pendingItemDbIds = new Set(pendingItems.filter(pi => !pi.localId.startsWith('temp-')).map(pi => pi.localId)); // Solo IDs de BD
+            // Sincronizar package_items
+            const currentDbItemIds = new Set(originalDbItems.map(item => item.id));
+            const pendingItemLocalIdsAsDbIds = new Set(pendingItems.filter(pi => !pi.localId.startsWith('temp-')).map(pi => pi.localId));
+
+            // 1. Eliminar items que ya no están en pendingItems
             for (const dbItem of originalDbItems) {
-                if (!pendingItemDbIds.has(dbItem.id)) {
-                    console.log(`[FinalSave] Eliminando ítem de paquete de BD que ya no está en la lista pendiente: ${dbItem.id} (${dbItem.product_name})`);
-                    await deletePackageItem(dbItem.id);
+                if (!pendingItems.some(pi => pi.localId === dbItem.id)) {
+                    console.log(`[FinalSave] Eliminando ítem de paquete de BD: ${dbItem.id} (${dbItem.product_name})`);
+                    await deletePackageItem(dbItem.id); // Esto debería eliminar overrides por CASCADE
                 }
             }
 
-            // Procesar items pendientes (añadir nuevos, actualizar existentes y sus overrides)
+            // 2. Añadir o actualizar items y sus overrides
             for (const [index, pendingItem] of pendingItems.entries()) {
                 let dbItemId = pendingItem.localId;
-                const isNewDbItem = pendingItem.localId.startsWith('temp-'); // Identificar ítems nuevos por prefijo
+                const isNewDbItem = pendingItem.localId.startsWith('temp-');
 
                 if (isNewDbItem) {
                     console.log(`[FinalSave] Añadiendo nuevo ítem al paquete ${currentPackageId}: ${pendingItem.product_name}`);
@@ -313,27 +316,31 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
                         display_order: index,
                     };
                     const createdItem = await addPackageItem(newItemData);
-                    dbItemId = createdItem.id; // Usar el ID de la BD para los overrides
+                    dbItemId = createdItem.id;
                     console.log(`[FinalSave] Nuevo ítem de paquete creado con ID de BD: ${dbItemId}`);
                 } else {
+                    // TODO: Actualizar item existente si es necesario (ej. quantity, display_order)
+                    // Por ahora, solo nos enfocamos en los overrides si el item ya existía.
                     console.log(`[FinalSave] Ítem de paquete existente ${dbItemId} (${pendingItem.product_name}). Procesando overrides.`);
                 }
 
-                const dbOverridesForItem = isNewDbItem ? [] : (await getOverridesForPackageItem(dbItemId));
+                // Sincronizar overrides para este dbItemId
+                const currentOverridesInDb = await getOverridesForPackageItem(dbItemId);
                 const localOverridesMap = new Map(pendingItem.modifierOverrides?.map(ov => [ov.product_modifier_slot_id, ov]));
 
-                for (const dbOverride of dbOverridesForItem) {
+                // Eliminar overrides de BD que ya no están en local
+                for (const dbOverride of currentOverridesInDb) {
                     if (!localOverridesMap.has(dbOverride.product_modifier_slot_id)) {
                         console.log(`[FinalSave] Eliminando override de BD ${dbOverride.id} para ítem ${dbItemId}, slot ${dbOverride.product_modifier_slot_id}`);
                         await deletePackageItemOverride(dbOverride.id);
                     }
                 }
-
+                // Añadir o actualizar overrides locales a la BD
                 if (pendingItem.modifierOverrides) {
                     for (const localOverride of pendingItem.modifierOverrides) {
                         console.log(`[FinalSave] Estableciendo override para ítem ${dbItemId}, slot ${localOverride.product_modifier_slot_id}: Min=${localOverride.min_quantity}, Max=${localOverride.max_quantity}`);
                         await setPackageItemOverride({
-                            package_item_id: dbItemId,
+                            package_item_id: dbItemId, // Usar el ID de BD (nuevo o existente)
                             product_modifier_slot_id: localOverride.product_modifier_slot_id,
                             min_quantity: localOverride.min_quantity,
                             max_quantity: localOverride.max_quantity,
@@ -343,13 +350,14 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
             }
 
             toast({ title: "Éxito", description: `Paquete ${action} con su contenido.` });
-            await onDataChange();
+            await onDataChange(); // Refrescar toda la data de la página principal
+            
+            // Si se estaba creando un nuevo paquete, es mejor cerrar.
+            // Si se estaba editando, recargar su contenido para reflejar los cambios.
             if (action === 'creado' && currentPackageId) {
-                 loadPackageContents(currentPackageId);
+                handleCloseDialog(); // Cerrar después de crear
             } else if (action === 'actualizado' && currentPackageId) {
-                loadPackageContents(currentPackageId); // Recargar para reflejar cambios
-            } else {
-                 handleCloseDialog();
+                loadPackageContents(currentPackageId); // Recargar contenido del paquete actual
             }
 
 
@@ -378,7 +386,7 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
              console.log(`[handleAddPendingItem] Slots obtenidos para ${productToAdd.name}: ${slots.length}`);
 
              const newPendingItem: PendingPackageItem = {
-                 localId: `temp-${uuidv4()}`, // ID temporal local con prefijo
+                 localId: uuidv4(), // ID temporal local con prefijo
                  product_id: productToAdd.id,
                  product_name: productToAdd.name,
                  quantity: values.quantity,
@@ -431,7 +439,7 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
                     };
                 } else {
                      const newOverride: Partial<PackageItemModifierSlotOverride> = {
-                         // package_item_id no se establece aquí, se asocia al guardar el paquete final
+                         // package_item_id se establece al guardar el paquete final
                          product_modifier_slot_id: slotId,
                          min_quantity: min,
                          max_quantity: max,
@@ -490,7 +498,7 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
 
              <Card>
                  <CardContent className="p-0">
-                     <ScrollArea className="h-[400px]"> {/* Altura ajustada */}
+                     <ScrollArea className="h-[400px]">
                          <Table>
                              <TableHeader className="sticky top-0 bg-background z-10 shadow-sm">
                                 <TableRow>
@@ -531,17 +539,17 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
                                                         </AlertDialogTrigger>
                                                         <AlertDialogContent>
                                                             <AlertDialogHeader>
-                                                            <AlertDialogTitle>¿Estás seguro?</AlertDialogTitle>
+                                                            <AlertDialogPrimitiveTitle>¿Estás seguro?</AlertDialogPrimitiveTitle>
                                                             <AlertDialogDescription>
                                                                 Esta acción eliminará el paquete "{pkg.name}" y todo su contenido. No se puede deshacer.
                                                             </AlertDialogDescription>
                                                             </AlertDialogHeader>
-                                                            <AlertDialogFooter>
+                                                            <AlertDialogPrimitiveFooter>
                                                             <AlertDialogCancel>Cancelar</AlertDialogCancel>
                                                             <AlertDialogAction onClick={() => handleDeletePackage(pkg.id, pkg.name)} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
                                                                 Eliminar
                                                             </AlertDialogAction>
-                                                            </AlertDialogFooter>
+                                                            </AlertDialogPrimitiveFooter>
                                                         </AlertDialogContent>
                                                      </AlertDialog>
                                                 </TableCell>
@@ -556,7 +564,7 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
              </Card>
 
               <Dialog open={isFormOpen} onOpenChange={(isOpen) => { if (!isOpen) handleCloseDialog(); }}>
-                 <DialogContent className="sm:max-w-3xl max-h-[90vh] flex flex-col">
+                 <DialogContent className="sm:max-w-3xl max-h-[90vh] flex flex-col overflow-hidden">
                      <DialogHeader>
                          <DialogTitle>{editingPackage ? 'Editar Paquete' : 'Añadir Nuevo Paquete'}</DialogTitle>
                          <DialogDescription>
@@ -565,121 +573,123 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
                      </DialogHeader>
 
                      <ScrollArea className="flex-grow pr-6 -mr-6">
-                        <Form {...packageForm}>
-                            <form onSubmit={(e) => e.preventDefault()} className="space-y-4 border-b pb-6 mb-6">
-                                <FormField control={packageForm.control} name="name" render={({ field }) => (
-                                    <FormItem><FormLabel>Nombre del Paquete</FormLabel><FormControl><Input placeholder="e.g., Combo Pareja" {...field} /></FormControl><FormMessage /></FormItem>
-                                )}/>
-                                <div className="grid grid-cols-2 gap-4">
-                                    <FormField control={packageForm.control} name="price" render={({ field }) => (
-                                        <FormItem><FormLabel>Precio del Paquete</FormLabel><FormControl><Input type="number" step="0.01" placeholder="0.00" {...field} /></FormControl><FormMessage /></FormItem>
+                        <div> {/* Div contenedor para el contenido principal del diálogo */}
+                            <Form {...packageForm}>
+                                <form onSubmit={(e) => e.preventDefault()} className="space-y-4 border-b pb-6 mb-6">
+                                    <FormField control={packageForm.control} name="name" render={({ field }) => (
+                                        <FormItem><FormLabel>Nombre del Paquete</FormLabel><FormControl><Input placeholder="e.g., Combo Pareja" {...field} /></FormControl><FormMessage /></FormItem>
                                     )}/>
-                                     <FormField control={packageForm.control} name="category_id" render={({ field }) => (
-                                        <FormItem><FormLabel>Categoría (UI)</FormLabel>
-                                            <Select onValueChange={(value) => field.onChange(value === "__NONE__" ? null : value)} value={field.value ?? "__NONE__"}>
-                                                <FormControl><SelectTrigger><SelectValue placeholder="Selecciona para agrupar" /></SelectTrigger></FormControl>
-                                                <SelectContent>
-                                                     <SelectItem value="__NONE__">-- Ninguna --</SelectItem>
-                                                    {packageUICategories.map(cat => (
-                                                        <SelectItem key={cat.id} value={cat.id}>{cat.name}</SelectItem>
-                                                    ))}
-                                                </SelectContent>
-                                            </Select><FormMessage /></FormItem>
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <FormField control={packageForm.control} name="price" render={({ field }) => (
+                                            <FormItem><FormLabel>Precio del Paquete</FormLabel><FormControl><Input type="number" step="0.01" placeholder="0.00" {...field} /></FormControl><FormMessage /></FormItem>
+                                        )}/>
+                                        <FormField control={packageForm.control} name="category_id" render={({ field }) => (
+                                            <FormItem><FormLabel>Categoría (UI)</FormLabel>
+                                                <Select onValueChange={(value) => field.onChange(value === "__NONE__" ? null : value)} value={field.value ?? "__NONE__"}>
+                                                    <FormControl><SelectTrigger><SelectValue placeholder="Selecciona para agrupar" /></SelectTrigger></FormControl>
+                                                    <SelectContent>
+                                                        <SelectItem value="__NONE__">-- Ninguna --</SelectItem>
+                                                        {packageUICategories.map(cat => (
+                                                            <SelectItem key={cat.id} value={cat.id}>{cat.name}</SelectItem>
+                                                        ))}
+                                                    </SelectContent>
+                                                </Select><FormMessage /></FormItem>
+                                        )}/>
+                                    </div>
+                                    <FormField control={packageForm.control} name="imageUrl" render={({ field }) => (
+                                        <FormItem><FormLabel>URL de Imagen (Opcional)</FormLabel><FormControl><Input type="url" placeholder="https://..." {...field} value={field.value ?? ''} /></FormControl><FormMessage /></FormItem>
                                     )}/>
-                                </div>
-                                <FormField control={packageForm.control} name="imageUrl" render={({ field }) => (
-                                    <FormItem><FormLabel>URL de Imagen (Opcional)</FormLabel><FormControl><Input type="url" placeholder="https://..." {...field} value={field.value ?? ''} /></FormControl><FormMessage /></FormItem>
-                                )}/>
-                            </form>
-                        </Form>
-
-                        <div className="space-y-4">
-                            <h4 className="text-lg font-semibold">Contenido del Paquete</h4>
-                            <Form {...addItemForm}>
-                                <form onSubmit={addItemForm.handleSubmit(handleAddPendingItem)} className="flex items-end gap-2 border p-3 rounded-md bg-muted/50">
-                                     <FormField control={addItemForm.control} name="selectedCategoryId" render={({ field }) => (
-                                        <FormItem className="flex-grow"> <FormLabel className="text-xs">Categoría Producto</FormLabel>
-                                            <Select onValueChange={field.onChange} value={field.value || '__NONE__'}>
-                                                <FormControl><SelectTrigger><SelectValue placeholder="Selecciona categoría" /></SelectTrigger></FormControl>
-                                                <SelectContent>
-                                                    <SelectItem value="__NONE__" disabled>Selecciona categoría</SelectItem>
-                                                    {productAndModifierCategories.filter(c => c.type === 'producto').map(cat => (
-                                                        <SelectItem key={cat.id} value={cat.id}>{cat.name}</SelectItem>
-                                                    ))}
-                                                </SelectContent>
-                                            </Select> <FormMessage />
-                                        </FormItem>
-                                    )}/>
-                                    <FormField control={addItemForm.control} name="product_id" render={({ field }) => (
-                                        <FormItem className="flex-grow"> <FormLabel className="text-xs">Producto</FormLabel>
-                                            <Select onValueChange={field.onChange} value={field.value || '__NONE__'} disabled={!selectedCategoryId || selectedCategoryId === '__NONE__' || isItemDataLoading || productsInCategory.length === 0}>
-                                                <FormControl><SelectTrigger>
-                                                    <SelectValue placeholder={isItemDataLoading ? "Cargando..." : (productsInCategory.length === 0 && selectedCategoryId && selectedCategoryId !== '__NONE__' ? "Sin productos" : "Selecciona producto")} />
-                                                </SelectTrigger></FormControl>
-                                                <SelectContent>
-                                                    <SelectItem value="__NONE__" disabled>Selecciona producto</SelectItem>
-                                                    {productsInCategory.map(prod => (
-                                                        <SelectItem key={prod.id} value={prod.id}>{prod.name}</SelectItem>
-                                                    ))}
-                                                </SelectContent>
-                                            </Select> <FormMessage />
-                                        </FormItem>
-                                    )}/>
-                                    <FormField control={addItemForm.control} name="quantity" render={({ field }) => (
-                                        <FormItem className="w-20"> <FormLabel className="text-xs">Cantidad</FormLabel>
-                                            <FormControl><Input type="number" min="1" {...field} /></FormControl> <FormMessage />
-                                        </FormItem>
-                                    )}/>
-                                    <Button type="submit" size="sm" disabled={isItemDataLoading} title="Añadir Ítem al Paquete">
-                                        {isItemDataLoading ? <Loader2 className="h-4 w-4 animate-spin"/> : <PlusCircle className="h-4 w-4" />}
-                                    </Button>
                                 </form>
                             </Form>
 
-                            <div className="h-[400px] border rounded-md"> {/* Altura ajustada */}
-                                <ScrollArea className="h-full">
-                                   {console.log("[Render PendingItems] isItemDataLoading:", isItemDataLoading, "pendingItems.length:", pendingItems.length)}
-                                   {isItemDataLoading && !editingPackage && pendingItems.length === 0 ? (
-                                         <div className="flex justify-center items-center h-full text-muted-foreground">
-                                            <Loader2 className="h-6 w-6 animate-spin mr-2" /> Cargando...
-                                        </div>
-                                    ) : pendingItems.length === 0 ? (
-                                        <p className="p-4 text-center text-sm text-muted-foreground">Añade productos al paquete usando el formulario de arriba.</p>
-                                    ) : (
-                                        <Table className="text-sm">
-                                            <TableHeader>
-                                                <TableRow>
-                                                    <TableHead>Producto</TableHead>
-                                                    <TableHead className="w-[80px] text-right">Cantidad</TableHead>
-                                                    <TableHead className="w-[120px] text-right">Acciones</TableHead>
-                                                </TableRow>
-                                            </TableHeader>
-                                            <TableBody>
-                                                {pendingItems.map(item => (
-                                                    <TableRow key={item.localId}>
-                                                        <TableCell>
-                                                            {item.product_name}
-                                                             {(item.modifierOverrides && item.modifierOverrides.length > 0) && (
-                                                                <Badge variant="outline" className="ml-2 text-blue-600 border-blue-500 text-xs px-1 py-0">
-                                                                    {item.modifierOverrides.length} Regla(s)
-                                                                </Badge>
-                                                             )}
-                                                        </TableCell>
-                                                        <TableCell className="text-right">{item.quantity}</TableCell>
-                                                        <TableCell className="text-right">
-                                                             <Button variant="ghost" size="icon" className="h-6 w-6 mr-1 text-blue-600 hover:text-blue-800" onClick={() => openOverridesDialog(item.localId)} title="Configurar Modificadores">
-                                                                <Settings className="h-3.5 w-3.5" />
-                                                            </Button>
-                                                            <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive hover:text-destructive" onClick={() => handleDeletePendingItem(item.localId)} title="Eliminar del Paquete">
-                                                                <MinusCircle className="h-3.5 w-3.5" />
-                                                            </Button>
-                                                        </TableCell>
+                            <div className="space-y-4 mt-6 border-t pt-6">
+                                <h4 className="text-lg font-semibold">Contenido del Paquete</h4>
+                                <Form {...addItemForm}>
+                                    <form onSubmit={addItemForm.handleSubmit(handleAddPendingItem)} className="flex items-end gap-2 border p-3 rounded-md bg-muted/50">
+                                        <FormField control={addItemForm.control} name="selectedCategoryId" render={({ field }) => (
+                                            <FormItem className="flex-grow"> <FormLabel className="text-xs">Categoría Producto</FormLabel>
+                                                <Select onValueChange={field.onChange} value={field.value || '__NONE__'}>
+                                                    <FormControl><SelectTrigger><SelectValue placeholder="Selecciona categoría" /></SelectTrigger></FormControl>
+                                                    <SelectContent>
+                                                        <SelectItem value="__NONE__" disabled>Selecciona categoría</SelectItem>
+                                                        {productCategories.map(cat => (
+                                                            <SelectItem key={cat.id} value={cat.id}>{cat.name}</SelectItem>
+                                                        ))}
+                                                    </SelectContent>
+                                                </Select> <FormMessage />
+                                            </FormItem>
+                                        )}/>
+                                        <FormField control={addItemForm.control} name="product_id" render={({ field }) => (
+                                            <FormItem className="flex-grow"> <FormLabel className="text-xs">Producto</FormLabel>
+                                                <Select onValueChange={field.onChange} value={field.value || '__NONE__'} disabled={!selectedCategoryId || selectedCategoryId === '__NONE__' || isItemDataLoading || productsInCategory.length === 0}>
+                                                    <FormControl><SelectTrigger>
+                                                        <SelectValue placeholder={isItemDataLoading ? "Cargando..." : (productsInCategory.length === 0 && selectedCategoryId && selectedCategoryId !== '__NONE__' ? "Sin productos" : "Selecciona producto")} />
+                                                    </SelectTrigger></FormControl>
+                                                    <SelectContent>
+                                                        <SelectItem value="__NONE__" disabled>Selecciona producto</SelectItem>
+                                                        {productsInCategory.map(prod => (
+                                                            <SelectItem key={prod.id} value={prod.id}>{prod.name}</SelectItem>
+                                                        ))}
+                                                    </SelectContent>
+                                                </Select> <FormMessage />
+                                            </FormItem>
+                                        )}/>
+                                        <FormField control={addItemForm.control} name="quantity" render={({ field }) => (
+                                            <FormItem className="w-20"> <FormLabel className="text-xs">Cantidad</FormLabel>
+                                                <FormControl><Input type="number" min="1" {...field} /></FormControl> <FormMessage />
+                                            </FormItem>
+                                        )}/>
+                                        <Button type="submit" size="sm" disabled={isItemDataLoading} title="Añadir Ítem al Paquete">
+                                            {isItemDataLoading ? <Loader2 className="h-4 w-4 animate-spin"/> : <PlusCircle className="h-4 w-4" />}
+                                        </Button>
+                                    </form>
+                                </Form>
+
+                                <div className="h-[250px] border rounded-md">
+                                    <ScrollArea className="h-full">
+                                    {console.log("[Render PendingItems] isItemDataLoading:", isItemDataLoading, "pendingItems.length:", pendingItems.length)}
+                                    {isItemDataLoading && !editingPackage && pendingItems.length === 0 ? (
+                                            <div className="flex justify-center items-center h-full text-muted-foreground">
+                                                <Loader2 className="h-6 w-6 animate-spin mr-2" /> Cargando...
+                                            </div>
+                                        ) : pendingItems.length === 0 ? (
+                                            <p className="p-4 text-center text-sm text-muted-foreground">Añade productos al paquete usando el formulario de arriba.</p>
+                                        ) : (
+                                            <Table className="text-sm">
+                                                <TableHeader>
+                                                    <TableRow>
+                                                        <TableHead>Producto</TableHead>
+                                                        <TableHead className="w-[80px] text-right">Cantidad</TableHead>
+                                                        <TableHead className="w-[120px] text-right">Acciones</TableHead>
                                                     </TableRow>
-                                                ))}
-                                            </TableBody>
-                                        </Table>
-                                    )}
-                                </ScrollArea>
+                                                </TableHeader>
+                                                <TableBody>
+                                                    {pendingItems.map(item => (
+                                                        <TableRow key={item.localId}>
+                                                            <TableCell>
+                                                                {item.product_name}
+                                                                {(item.modifierOverrides && item.modifierOverrides.length > 0) && (
+                                                                    <Badge variant="outline" className="ml-2 text-blue-600 border-blue-500 text-xs px-1 py-0">
+                                                                        {item.modifierOverrides.length} Regla(s)
+                                                                    </Badge>
+                                                                )}
+                                                            </TableCell>
+                                                            <TableCell className="text-right">{item.quantity}</TableCell>
+                                                            <TableCell className="text-right">
+                                                                <Button variant="ghost" size="icon" className="h-6 w-6 mr-1 text-blue-600 hover:text-blue-800" onClick={() => openOverridesDialog(item.localId)} title="Configurar Modificadores">
+                                                                    <Settings className="h-3.5 w-3.5" />
+                                                                </Button>
+                                                                <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive hover:text-destructive" onClick={() => handleDeletePendingItem(item.localId)} title="Eliminar del Paquete">
+                                                                    <MinusCircle className="h-3.5 w-3.5" />
+                                                                </Button>
+                                                            </TableCell>
+                                                        </TableRow>
+                                                    ))}
+                                                </TableBody>
+                                            </Table>
+                                        )}
+                                    </ScrollArea>
+                                </div>
                             </div>
                         </div>
                      </ScrollArea>
@@ -795,3 +805,5 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
 };
 
 export default ManagePackages;
+
+    
