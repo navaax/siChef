@@ -14,7 +14,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
@@ -37,6 +37,7 @@ import {
     addModifierSlotOption, // Para añadir opciones específicas
     deleteModifierSlotOption, // Para eliminar opciones específicas
     getModifierSlotOptions, // Para obtener las opciones actuales
+    updateModifierSlotOptionConfig, // Para actualizar config de opciones
 } from '@/services/product-service';
 
 // Importar tipos
@@ -93,6 +94,11 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
     const [optionsForEditingSlot, setOptionsForEditingSlot] = useState<Product[]>([]); // Productos modificadores de la categoría vinculada
     const [isLoadingOptions, setIsLoadingOptions] = useState(false); // Carga para opciones de slot
 
+    // Estado para los inputs de edición de slot option config
+    const [currentOptionIsDefault, setCurrentOptionIsDefault] = useState(false);
+    const [currentOptionPriceAdjustment, setCurrentOptionPriceAdjustment] = useState('0');
+
+
     const { toast } = useToast();
 
     // Actualizar estado local si los datos iniciales cambian
@@ -134,7 +140,7 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
         } else {
             setCurrentModifierSlots([]);
         }
-    }, [editingProduct, isFormOpen, toast]);
+    }, [editingProduct, isFormOpen, toast]); // No es necesario toast como dependencia directa aqui
 
     const handleOpenForm = (product: Product | null = null) => {
         setEditingProduct(product);
@@ -185,7 +191,7 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
                 const newProduct = await addProductService(dataToSave as Omit<Product, 'id'>);
                 toast({ title: "Éxito", description: "Producto añadido. Ahora puedes añadir modificadores." });
                 setEditingProduct(newProduct); // Establecer como producto en edición para añadir slots
-                await onDataChange();
+                await onDataChange(); // Esto refrescará initialProducts, y useEffect actualizará 'products'
              }
              // No cerrar el form automáticamente al guardar para permitir añadir/editar slots
              // handleCloseForm();
@@ -290,8 +296,13 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
                     toast({ title: "Advertencia", description: "No se encontró la opción para eliminar.", variant: "default" });
                 }
             } else {
-                 // Añadir la opción
-                 updatedOption = await addModifierSlotOption({ product_modifier_slot_id: slotId, modifier_product_id: modifierProductId });
+                 // Añadir la opción (con valores por defecto para is_default y price_adjustment)
+                 updatedOption = await addModifierSlotOption({
+                    product_modifier_slot_id: slotId,
+                    modifier_product_id: modifierProductId,
+                    is_default: false, // Valor por defecto al añadir
+                    price_adjustment: 0 // Valor por defecto al añadir
+                });
                  toast({ title: "Opción Habilitada" });
             }
 
@@ -301,8 +312,7 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
                  let newAllowedOptions = [...(prevSlot.allowedOptions || [])];
                  if (isCurrentlyAllowed) {
                      newAllowedOptions = newAllowedOptions.filter(opt => opt.modifier_product_id !== modifierProductId);
-                 } else if (updatedOption) { // Añadir solo si la operación de añadir fue exitosa
-                     // Necesitamos añadir el nombre y precio si es posible (aunque no estrictamente necesario aquí)
+                 } else if (updatedOption) { 
                      const prodInfo = optionsForEditingSlot.find(p => p.id === modifierProductId);
                      newAllowedOptions.push({
                          ...updatedOption,
@@ -325,6 +335,39 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
              setIsLoadingOptions(false);
          }
      };
+
+    const handleOpenOptionConfigDialog = (option: ProductModifierSlotOption) => {
+        setCurrentOptionIsDefault(option.is_default ?? false);
+        setCurrentOptionPriceAdjustment(String(option.price_adjustment ?? 0));
+        // Guardar la opción que se está configurando, quizá en un nuevo estado si es necesario
+        // Para este ejemplo, asumimos que `option.id` es suficiente para llamar a `handleSaveOptionConfig`
+    };
+
+    const handleSaveOptionConfig = async (optionId: string) => {
+        const priceAdjustmentNum = parseFloat(currentOptionPriceAdjustment);
+        if (isNaN(priceAdjustmentNum)) {
+            toast({ variant: "destructive", title: "Error", description: "El ajuste de precio debe ser un número." });
+            return;
+        }
+        setIsLoadingOptions(true);
+        try {
+            await updateModifierSlotOptionConfig(optionId, {
+                is_default: currentOptionIsDefault,
+                price_adjustment: priceAdjustmentNum
+            });
+            toast({ title: "Configuración Guardada", description: "Se actualizó la opción del modificador." });
+
+            // Refrescar datos en el diálogo de opciones y en la lista de slots
+            if (editingSlotOptions) await handleOpenEditSlotOptions(editingSlotOptions); // Recarga las opciones para el slot actual
+            if (editingProduct) await fetchSlotsForProduct(editingProduct.id); // Recarga la lista de slots para el producto
+
+        } catch (error) {
+            console.error(`[ManageProducts] Error guardando config para opción ${optionId}:`, error);
+            toast({ variant: "destructive", title: "Error", description: `No se pudo guardar la configuración. ${error instanceof Error ? error.message : ''}`});
+        } finally {
+            setIsLoadingOptions(false);
+        }
+    };
 
     const handleCloseEditSlotOptions = () => {
         setEditingSlotOptions(null);
@@ -418,13 +461,14 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
 
             {/* Dialogo Añadir/Editar Producto */}
              <Dialog open={isFormOpen} onOpenChange={(open) => { if (!open) handleCloseForm() }}>
-                 <DialogContent className="sm:max-w-[700px]">
+                 <DialogContent className="sm:max-w-3xl max-h-[90vh] flex flex-col">
                     <DialogHeader>
                         <DialogTitle>{editingProduct ? 'Editar Producto/Modificador' : 'Añadir Nuevo Producto/Modificador'}</DialogTitle>
                         <DialogDescription>
                              Define un producto vendible o una opción modificadora.
                         </DialogDescription>
                     </DialogHeader>
+                    <ScrollArea className="flex-grow pr-2">
                     <Form {...productForm}>
                         <form onSubmit={productForm.handleSubmit(handleFormSubmit)} className="space-y-4">
                             <FormField control={productForm.control} name="name" render={({ field }) => (
@@ -494,7 +538,7 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
                               <div className="flex justify-end">
                                   <Button type="submit" size="sm" disabled={isSubmitting || productAssignableCategories.length === 0}>
                                         {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4"/>}
-                                        {editingProduct ? 'Guardar Cambios' : 'Crear Producto'}
+                                        {editingProduct ? 'Guardar Cambios Producto' : 'Crear Producto'}
                                   </Button>
                               </div>
                         </form>
@@ -509,114 +553,168 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
                                 onAddSlot={handleAddModifierSlot}
                                 isLoading={isModifierSlotsLoading}
                              />
-                             <ScrollArea className="h-[200px] border rounded-md">
-                                {isModifierSlotsLoading && !currentModifierSlots.length && <div className="p-4 text-center"><Loader2 className="h-5 w-5 animate-spin inline-block" /></div>}
-                                {!isModifierSlotsLoading && currentModifierSlots.length === 0 && (
-                                    <p className="p-4 text-center text-sm text-muted-foreground">No hay grupos modificadores definidos.</p>
+                             <div className="border rounded-md">
+                                {isModifierSlotsLoading && currentModifierSlots.length === 0 ? (
+                                     <div className="p-4 text-center min-h-[100px] flex items-center justify-center"><Loader2 className="h-5 w-5 animate-spin inline-block" /></div>
+                                 ) : !isModifierSlotsLoading && currentModifierSlots.length === 0 ? (
+                                    <p className="p-4 text-center text-sm text-muted-foreground min-h-[100px] flex items-center justify-center">No hay grupos modificadores definidos.</p>
+                                ) : (
+                                   <ScrollArea className="h-[200px]">
+                                       <Table className="text-sm">
+                                           <TableHeader>
+                                               <TableRow>
+                                                   <TableHead>Etiqueta</TableHead>
+                                                   <TableHead>Categoría Vinculada</TableHead>
+                                                   <TableHead className="w-[60px] text-center">Min</TableHead>
+                                                   <TableHead className="w-[60px] text-center">Max</TableHead>
+                                                   <TableHead className="w-[120px] text-right">Opciones</TableHead>
+                                               </TableRow>
+                                           </TableHeader>
+                                           <TableBody>
+                                               {currentModifierSlots.map(slot => {
+                                                   const linkedCat = modifierCategories.find(c => c.id === slot.linked_category_id);
+                                                   const hasSpecificOptions = slot.allowedOptions && slot.allowedOptions.length > 0;
+                                                   return (
+                                                       <TableRow key={slot.id}>
+                                                            <TableCell>{slot.label}</TableCell>
+                                                            <TableCell>{linkedCat?.name || 'N/A'}</TableCell>
+                                                            <TableCell className="text-center">{slot.min_quantity}</TableCell>
+                                                            <TableCell className="text-center">{slot.max_quantity}</TableCell>
+                                                            <TableCell className="text-right space-x-1">
+                                                                 <Button variant="outline" size="icon" className="h-6 w-6 text-blue-600 hover:text-blue-800" onClick={() => handleOpenEditSlotOptions(slot)} title="Configurar Opciones Específicas">
+                                                                    <List className="h-3.5 w-3.5" />
+                                                                 </Button>
+                                                                 {hasSpecificOptions && (
+                                                                    <Badge variant="secondary" className="text-blue-700 border-blue-300 px-1 text-xs">
+                                                                        {slot.allowedOptions?.length} esp.
+                                                                    </Badge>
+                                                                 )}
+                                                                <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive hover:text-destructive" onClick={() => handleDeleteModifierSlot(slot.id)} title="Eliminar Grupo" disabled={isModifierSlotsLoading}>
+                                                                    <MinusCircle className="h-3.5 w-3.5" />
+                                                                </Button>
+                                                            </TableCell>
+                                                       </TableRow>
+                                                   );
+                                                })}
+                                           </TableBody>
+                                       </Table>
+                                   </ScrollArea>
                                 )}
-                                {currentModifierSlots.length > 0 && (
-                                   <Table className="text-sm">
-                                       <TableHeader>
-                                           <TableRow>
-                                               <TableHead>Etiqueta</TableHead>
-                                               <TableHead>Categoría Vinculada</TableHead>
-                                               <TableHead className="w-[60px] text-center">Min</TableHead>
-                                               <TableHead className="w-[60px] text-center">Max</TableHead>
-                                               <TableHead className="w-[120px] text-right">Opciones</TableHead> {/* Cambiado a Opciones */}
-                                           </TableRow>
-                                       </TableHeader>
-                                       <TableBody>
-                                           {currentModifierSlots.map(slot => {
-                                               const linkedCat = modifierCategories.find(c => c.id === slot.linked_category_id);
-                                               const hasSpecificOptions = slot.allowedOptions && slot.allowedOptions.length > 0;
-                                               return (
-                                                   <TableRow key={slot.id}>
-                                                        <TableCell>{slot.label}</TableCell>
-                                                        <TableCell>{linkedCat?.name || 'N/A'}</TableCell>
-                                                        <TableCell className="text-center">{slot.min_quantity}</TableCell>
-                                                        <TableCell className="text-center">{slot.max_quantity}</TableCell>
-                                                        <TableCell className="text-right space-x-1">
-                                                            {/* Botón para editar opciones */}
-                                                             <Button variant="outline" size="icon" className="h-6 w-6 text-blue-600 hover:text-blue-800" onClick={() => handleOpenEditSlotOptions(slot)} title="Configurar Opciones Específicas">
-                                                                <List className="h-3.5 w-3.5" />
-                                                             </Button>
-                                                             {hasSpecificOptions && (
-                                                                <Badge variant="secondary" className="text-blue-700 border-blue-300 px-1 text-xs">
-                                                                    {slot.allowedOptions?.length} esp.
-                                                                </Badge>
-                                                             )}
-                                                            <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive hover:text-destructive" onClick={() => handleDeleteModifierSlot(slot.id)} title="Eliminar Grupo" disabled={isModifierSlotsLoading}>
-                                                                <MinusCircle className="h-3.5 w-3.5" />
-                                                            </Button>
-                                                        </TableCell>
-                                                   </TableRow>
-                                               );
-                                            })}
-                                       </TableBody>
-                                   </Table>
-                                )}
-                            </ScrollArea>
+                             </div>
                         </div>
                     )}
-
-                    <DialogFooter className="mt-6 pt-4 border-t">
-                        {/* <DialogClose asChild> */}
+                    </ScrollArea>
+                    <DialogFooter className="mt-6 pt-4 border-t shrink-0">
                             <Button type="button" variant="outline" onClick={handleCloseForm}>Cerrar</Button>
-                        {/* </DialogClose> */}
                     </DialogFooter>
                 </DialogContent>
              </Dialog>
 
              {/* Dialogo para Editar Opciones Específicas del Slot */}
-             <Dialog open={!!editingSlotOptions} onOpenChange={(open) => { if (!open) handleCloseEditSlotOptions() }}>
-                <DialogContent className="sm:max-w-[600px]">
-                   <DialogHeader>
-                     <DialogTitle>Configurar Opciones Específicas para "{editingSlotOptions?.label}"</DialogTitle>
-                     <DialogDescription>
-                        Selecciona qué modificadores de la categoría "{modifierCategories.find(c => c.id === editingSlotOptions?.linked_category_id)?.name}" están permitidos en este grupo. Si no seleccionas ninguno, se permitirán todos.
-                    </DialogDescription>
-                   </DialogHeader>
+            <Dialog open={!!editingSlotOptions} onOpenChange={(open) => { if (!open) handleCloseEditSlotOptions(); }}>
+                <DialogContent className="sm:max-w-2xl max-h-[80vh] flex flex-col">
+                    <DialogHeader>
+                        <DialogTitle>Configurar Opciones para "{editingSlotOptions?.label}"</DialogTitle>
+                        <DialogDescription>
+                            Selecciona qué modificadores de la categoría "{modifierCategories.find(c => c.id === editingSlotOptions?.linked_category_id)?.name}" están permitidos en este grupo.
+                            <br/>Puedes definir si una opción es por defecto y ajustar su precio para este grupo específico.
+                        </DialogDescription>
+                    </DialogHeader>
 
-                   {isLoadingOptions ? (
-                      <div className="flex justify-center items-center h-40"><Loader2 className="h-8 w-8 animate-spin text-primary"/></div>
-                   ) : optionsForEditingSlot.length === 0 && editingSlotOptions ? (
-                      <p className="text-muted-foreground text-center py-4">No hay productos modificadores en la categoría "{modifierCategories.find(c => c.id === editingSlotOptions?.linked_category_id)?.name}".</p>
-                   ) : (
-                      <ScrollArea className="max-h-[50vh] pr-3 -mr-3">
-                         <div className="space-y-2">
-                            {optionsForEditingSlot.map(option => {
-                               const isAllowed = !!editingSlotOptions?.allowedOptions?.some(allowed => allowed.modifier_product_id === option.id);
-                               return (
-                                  <div key={option.id} className="flex items-center justify-between p-2 border rounded-md hover:bg-muted/50">
-                                      <div className="flex items-center gap-2">
-                                         {option.imageUrl ? (
-                                            <Image src={option.imageUrl} alt={option.name} width={24} height={24} className="rounded object-cover" unoptimized />
-                                         ) : <div className='w-6 h-6 bg-muted rounded'></div>}
-                                         <Label htmlFor={`opt-${option.id}`} className="text-sm cursor-pointer">
-                                            {option.name} ({formatCurrency(option.price)})
-                                         </Label>
-                                      </div>
-                                      <Checkbox
-                                         id={`opt-${option.id}`}
-                                         checked={isAllowed}
-                                         onCheckedChange={() => editingSlotOptions && handleToggleSlotOption(editingSlotOptions.id, option.id, isAllowed)}
-                                         disabled={isLoadingOptions}
-                                         aria-label={`Permitir ${option.name}`}
-                                      />
-                                  </div>
-                               );
-                            })}
-                         </div>
-                      </ScrollArea>
-                   )}
+                    {isLoadingOptions ? (
+                        <div className="flex justify-center items-center h-40"><Loader2 className="h-8 w-8 animate-spin text-primary"/></div>
+                    ) : optionsForEditingSlot.length === 0 && editingSlotOptions ? (
+                        <p className="text-muted-foreground text-center py-4">No hay productos modificadores en la categoría "{modifierCategories.find(c => c.id === editingSlotOptions?.linked_category_id)?.name}".</p>
+                    ) : (
+                        <ScrollArea className="flex-grow pr-2 -mr-2 mt-4">
+                            <div className="space-y-3">
+                                {optionsForEditingSlot.map(option => {
+                                    const currentSlotOptionConfig = editingSlotOptions?.allowedOptions?.find(allowed => allowed.modifier_product_id === option.id);
+                                    const isAllowed = !!currentSlotOptionConfig;
 
-                   <DialogFooter>
-                      <DialogClose asChild>
-                         <Button type="button" variant="outline">Cerrar</Button>
-                      </DialogClose>
-                   </DialogFooter>
+                                    return (
+                                        <Card key={option.id} className={cn("p-3", isAllowed && "border-blue-500")}>
+                                            <div className="flex items-center justify-between">
+                                                <div className="flex items-center gap-2">
+                                                    {option.imageUrl ? (
+                                                        <Image src={option.imageUrl} alt={option.name} width={24} height={24} className="rounded object-cover" unoptimized />
+                                                    ) : <div className='w-6 h-6 bg-muted rounded'></div>}
+                                                    <Label htmlFor={`opt-allow-${option.id}`} className="text-sm cursor-pointer font-medium">
+                                                        {option.name} <span className="text-xs text-muted-foreground">({formatCurrency(option.price)})</span>
+                                                    </Label>
+                                                </div>
+                                                <Checkbox
+                                                    id={`opt-allow-${option.id}`}
+                                                    checked={isAllowed}
+                                                    onCheckedChange={() => editingSlotOptions && handleToggleSlotOption(editingSlotOptions.id, option.id, isAllowed)}
+                                                    disabled={isLoadingOptions}
+                                                    aria-label={`Permitir ${option.name}`}
+                                                />
+                                            </div>
+                                            {isAllowed && currentSlotOptionConfig && (
+                                                <div className="mt-3 pt-3 border-t space-y-3">
+                                                    <div className="flex items-center space-x-2">
+                                                        <Checkbox
+                                                            id={`opt-default-${option.id}`}
+                                                            checked={currentSlotOptionConfig.is_default}
+                                                            onCheckedChange={(checked) => {
+                                                                setCurrentOptionIsDefault(!!checked);
+                                                                // Optimistic update for UI, real save on button click
+                                                                setEditingSlotOptions(prev => prev ? ({
+                                                                    ...prev,
+                                                                    allowedOptions: prev.allowedOptions?.map(o => o.id === currentSlotOptionConfig.id ? {...o, is_default: !!checked} : o)
+                                                                }) : null);
+                                                            }}
+                                                        />
+                                                        <Label htmlFor={`opt-default-${option.id}`} className="text-xs font-normal">Marcar como opción por defecto</Label>
+                                                    </div>
+                                                    <div className="grid grid-cols-3 items-end gap-2">
+                                                        <FormField
+                                                            control={productForm.control} // Needs a form instance, this is a placeholder
+                                                            name={`priceAdjustment-${option.id}` as any} // Placeholder name
+                                                            defaultValue={String(currentSlotOptionConfig.price_adjustment ?? 0)}
+                                                            render={({ field }) => (
+                                                                <FormItem className="col-span-2">
+                                                                    <FormLabel className="text-xs">Ajuste de Precio (+/-)</FormLabel>
+                                                                    <FormControl>
+                                                                        <Input
+                                                                            type="number"
+                                                                            step="0.01"
+                                                                            className="h-8 text-xs"
+                                                                            placeholder="0.00"
+                                                                            defaultValue={String(currentSlotOptionConfig.price_adjustment ?? 0)}
+                                                                            onChange={(e) => setCurrentOptionPriceAdjustment(e.target.value)}
+                                                                        />
+                                                                    </FormControl>
+                                                                </FormItem>
+                                                            )}
+                                                        />
+                                                        <Button
+                                                            size="sm"
+                                                            variant="outline"
+                                                            className="h-8 text-xs"
+                                                            onClick={() => handleSaveOptionConfig(currentSlotOptionConfig.id)}
+                                                            disabled={isLoadingOptions}
+                                                        >
+                                                            <Save className="mr-1 h-3 w-3"/> Guardar
+                                                        </Button>
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </Card>
+                                    );
+                                })}
+                            </div>
+                        </ScrollArea>
+                    )}
+
+                    <DialogFooter className="mt-4 pt-4 border-t">
+                        <DialogClose asChild>
+                            <Button type="button" variant="outline">Cerrar</Button>
+                        </DialogClose>
+                    </DialogFooter>
                 </DialogContent>
-             </Dialog>
+            </Dialog>
 
         </div>
     );

@@ -21,7 +21,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '
 import { useToast } from '@/hooks/use-toast';
 import Image from 'next/image';
 import { cn } from '@/lib/utils';
-import { Separator } from '@/components/ui/separator'; // Importación añadida
+import { Separator } from '@/components/ui/separator'; 
 
 // Importar servicios y tipos
 import {
@@ -277,7 +277,7 @@ const ManageCategories: React.FC<ManageCategoriesProps> = ({ initialData, onData
 
             {/* Dialogo Añadir/Editar Categoría */}
             <Dialog open={isFormOpen} onOpenChange={setIsFormOpen}>
-                <DialogContent>
+                <DialogContent className="sm:max-w-xl">
                     <DialogHeader>
                         <DialogTitle>{editingCategory ? 'Editar Categoría' : 'Añadir Nueva Categoría'}</DialogTitle>
                         <DialogDescription>
@@ -317,7 +317,7 @@ const ManageCategories: React.FC<ManageCategoriesProps> = ({ initialData, onData
 
             {/* Dialogo para Estilos de Servicio */}
             <Dialog open={isServingStyleDialogOpen} onOpenChange={setIsServingStyleDialogOpen}>
-                <DialogContent className="sm:max-w-md">
+                <DialogContent className="sm:max-w-lg">
                     <DialogHeader>
                         <DialogTitle>Estilos de Servicio para "{currentCategoryForServingStyles?.name}"</DialogTitle>
                         <DialogDescription>Define cómo se pueden servir los modificadores de esta categoría.</DialogDescription>
