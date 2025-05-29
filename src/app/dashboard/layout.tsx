@@ -2,7 +2,7 @@
 'use client';
 
 import * as React from 'react';
-import { Home, ShoppingCart, BarChart2, Settings, LogOut, User, Archive, PackagePlus, PiggyBank, Users, Contact, Gift, MoreHorizontal } from 'lucide-react'; // Added Users, Contact, Gift, MoreHorizontal
+import { Home, ShoppingCart, BarChart2, Settings, LogOut, User, Archive, PackagePlus, PiggyBank, Users, Contact, Gift, MoreHorizontal, Loader2 } from 'lucide-react'; // Added Users, Contact, Gift, MoreHorizontal, Loader2
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
@@ -21,6 +21,7 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
+  AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Skeleton } from '@/components/ui/skeleton';
 import { useIsMobile } from '@/hooks/use-mobile'; // Importar hook useIsMobile
