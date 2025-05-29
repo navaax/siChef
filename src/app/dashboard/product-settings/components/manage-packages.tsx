@@ -153,13 +153,14 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
             }
             try {
                 const prods = allProductsAndModifiers.filter(p => {
+                    // Asegurar que el producto pertenezca a la categoría seleccionada Y que la categoría del producto sea de tipo 'producto'
                     const categoryOfProduct = allCategories.find(c => c.id === p.categoryId);
                     return p.categoryId === selectedCategoryId && categoryOfProduct?.type === 'producto';
                 });
                 console.log(`[ManagePackages] Productos (tipo 'producto') filtrados para categoría ${selectedCategoryId}: ${prods.length}`, prods.map(p => ({id: p.id, name: p.name})));
                 setProductsInCategory(prods);
                 if (prods.length === 0) {
-                    console.warn(`[ManagePackages] No se encontraron productos (tipo 'producto') para la categoría ${selectedCategoryId}.`);
+                    console.warn(`[ManagePackages] No se encontraron productos (tipo 'producto') para la categoría ${selectedCategoryId}. Asegúrate de que los productos están correctamente categorizados y que la categoría ${selectedCategoryId} es de tipo 'producto'.`);
                 }
             } catch (error) {
                 console.error("[ManagePackages] Error filtrando productos:", error);
@@ -195,7 +196,7 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
                 ]);
                 console.log(`[loadPackageContents] Para ítem de paquete ${item.id} (${productName}), prod_id=${item.product_id}: Slots base=${slots.length}, Overrides BD=${overrides.length}`);
                 return {
-                    localId: item.id,
+                    localId: item.id, // Usar el ID de BD como localId si el ítem viene de la BD
                     product_id: item.product_id,
                     product_name: productName,
                     quantity: item.quantity,
@@ -214,7 +215,7 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
             setIsItemDataLoading(false);
             console.log(`[loadPackageContents] Finalizada carga para paquete ID: ${packageId}. isItemDataLoading: false`);
         }
-    }, [toast, allProductsAndModifiers]);
+    }, [toast, allProductsAndModifiers]); // Dependencias
 
     const handleAddClick = () => {
         setEditingPackage(null);
@@ -283,25 +284,27 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
                 action = 'creado';
                 const newPackage = await addPackageService(packageDataToSave);
                 currentPackageId = newPackage.id;
-                setEditingPackage(newPackage);
+                setEditingPackage(newPackage); // Importante: establecer el paquete editado con el nuevo ID
                 console.log(`[FinalSave] Paquete ${currentPackageId} creado.`);
             }
 
             if (!currentPackageId) throw new Error("No se pudo obtener/crear el ID del paquete.");
 
-            const dbItemsBeforeSave = [...originalDbItems];
-            const itemsToDeleteFromDb = dbItemsBeforeSave.filter(
+            // Sincronizar items del paquete
+            const itemsToDeleteFromDb = originalDbItems.filter(
                 dbItem => !pendingItems.some(pendingItem => pendingItem.localId === dbItem.id)
             );
 
             for (const itemToDelete of itemsToDeleteFromDb) {
                 console.log(`[FinalSave] Eliminando ítem de paquete de BD: ${itemToDelete.id} (${itemToDelete.product_name})`);
-                await deletePackageItem(itemToDelete.id);
+                await deletePackageItem(itemToDelete.id); // Esto también eliminará sus overrides por CASCADE
             }
 
             for (const [index, pendingItem] of pendingItems.entries()) {
                 let dbItemId = pendingItem.localId;
-                const isNewDbItem = !dbItemsBeforeSave.some(dbItem => dbItem.id === pendingItem.localId);
+                 // Es un ítem nuevo si su localId es un UUID (generado por uuidv4) y no un ID de la BD (que podría ser numérico o un UUID diferente)
+                const isNewDbItem = !originalDbItems.some(dbItem => dbItem.id === pendingItem.localId);
+
 
                 if (isNewDbItem) {
                     console.log(`[FinalSave] Añadiendo nuevo ítem al paquete ${currentPackageId}: ${pendingItem.product_name}`);
@@ -312,22 +315,26 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
                         display_order: index,
                     };
                     const createdItem = await addPackageItem(newItemData);
-                    dbItemId = createdItem.id;
-                    pendingItem.localId = dbItemId;
+                    dbItemId = createdItem.id; // Usar el ID real de la BD para los overrides
+                    pendingItem.localId = dbItemId; // Actualizar localId para futuras referencias (aunque ya no se usará mucho aquí)
                     console.log(`[FinalSave] Nuevo ítem de paquete creado con ID de BD: ${dbItemId}`);
                 } else {
                     console.log(`[FinalSave] Ítem de paquete existente ${dbItemId} (${pendingItem.product_name}). Procesando overrides.`);
+                    // Aquí se podría añadir lógica para actualizar cantidad o display_order si se permitiera
                 }
 
+                // Sincronizar overrides para este dbItemId
                 const currentOverridesInDbForItem = await getOverridesForPackageItem(dbItemId);
                 const localOverridesMap = new Map(pendingItem.modifierOverrides?.map(ov => [ov.product_modifier_slot_id, ov]));
 
+                // Eliminar overrides de la BD que ya no están en el estado local
                 for (const dbOverride of currentOverridesInDbForItem) {
                     if (!localOverridesMap.has(dbOverride.product_modifier_slot_id)) {
                         console.log(`[FinalSave] Eliminando override de BD ${dbOverride.id} para ítem ${dbItemId}, slot ${dbOverride.product_modifier_slot_id}`);
                         await deletePackageItemOverride(dbOverride.id);
                     }
                 }
+                // Añadir o actualizar overrides del estado local a la BD
                 if (pendingItem.modifierOverrides) {
                     for (const localOverride of pendingItem.modifierOverrides) {
                         console.log(`[FinalSave] Estableciendo override para ítem ${dbItemId}, slot ${localOverride.product_modifier_slot_id}: Min=${localOverride.min_quantity}, Max=${localOverride.max_quantity}`);
@@ -340,21 +347,24 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
                     }
                 }
             }
+            
+            // Recargar los items del paquete desde la BD para tener el estado más actualizado
             setOriginalDbItems(await getItemsForPackage(currentPackageId));
 
 
             toast({ title: "Éxito", description: `Paquete ${action} con su contenido.` });
-            await onDataChange();
+            await onDataChange(); // Refrescar lista de paquetes en la página principal
 
+            // Si se acaba de crear, actualizar URL y recargar contenido del diálogo
             if (action === 'creado' && currentPackageId) {
                 const currentParams = new URLSearchParams(searchParams.toString());
                 if (currentParams.get('editPackage') !== currentPackageId) {
                     currentParams.set('editPackage', currentPackageId);
                     replace(`${pathname}?${currentParams.toString()}`, { scroll: false });
                 }
-                loadPackageContents(currentPackageId);
+                loadPackageContents(currentPackageId); // Recargar contenido con los nuevos IDs de BD
             } else if (action === 'actualizado' && currentPackageId) {
-                 loadPackageContents(currentPackageId);
+                 loadPackageContents(currentPackageId); // Recargar contenido para reflejar cambios
             }
 
         } catch (error) {
@@ -382,7 +392,7 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
              console.log(`[handleAddPendingItem] Slots obtenidos para ${productToAdd.name}: ${slots.length}`);
 
              const newPendingItem: PendingPackageItem = {
-                 localId: uuidv4(),
+                 localId: uuidv4(), // ID temporal local
                  product_id: productToAdd.id,
                  product_name: productToAdd.name,
                  quantity: values.quantity,
@@ -567,8 +577,8 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
                         </DialogDescription>
                      </DialogHeader>
 
-                     <ScrollArea className="flex-grow pr-6 -mr-6">
-                       <div className="min-w-max overflow-x-auto py-1">
+                     <ScrollArea className="flex-grow pr-6 -mr-6"> {/* Maneja scroll VERTICAL */}
+                       <div className="min-w-max overflow-x-auto py-1"> {/* NUEVO: Maneja scroll HORIZONTAL si el contenido es más ancho */}
                             <Form {...packageForm}>
                                 <form onSubmit={(e) => e.preventDefault()} className="space-y-4 border-b pb-6 mb-6">
                                     <FormField control={packageForm.control} name="name" render={({ field }) => (
@@ -642,7 +652,7 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
 
                                 <div className="h-[250px] border rounded-md">
                                     <ScrollArea className="h-full">
-                                    {isItemDataLoading && !editingPackage && pendingItems.length === 0 ? (
+                                    {isItemDataLoading && !editingPackage ? (
                                             <div className="flex justify-center items-center h-full text-muted-foreground">
                                                 <Loader2 className="h-6 w-6 animate-spin mr-2" /> Cargando...
                                             </div>
@@ -827,3 +837,4 @@ const ModifierSlotOverrideEditor: React.FC<ModifierSlotOverrideEditorProps> = ({
 
 
 export default ManagePackages;
+
