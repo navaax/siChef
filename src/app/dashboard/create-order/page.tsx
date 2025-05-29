@@ -486,11 +486,12 @@ export default function CreateOrderPage() {
     if (slots.length > 0) {
         setSelectedProduct(product);
         setCurrentModifierSlots(slots);
-        setCurrentProductConfigQuantity(1);
-        setModifierConfigurations([[]]);
+        setCurrentProductConfigQuantity(1); // Iniciar con cantidad 1
+        setModifierConfigurations([[]]); // Una configuración vacía para la primera instancia
         setCurrentInstanceIndexForConfiguration(0);
         setView('modifiers');
     } else {
+        // Si no tiene modificadores, abrir directamente el diálogo de cantidad
         setItemPendingQuantity({ data: product, type: 'product' });
         setPendingQuantityInput("1");
         setIsQuantityDialogOpen(true);
@@ -525,14 +526,16 @@ export default function CreateOrderPage() {
                 return;
             }
         }
+        // Como este producto no tiene modificadores (porque no entramos a la vista de modificadores),
+        // se añade directamente la cantidad total.
         addProductToOrder(product, [], product.price, confirmedQuantity);
         toast({ title: `${product.name} (x${confirmedQuantity}) añadido` });
         resetAndGoToCategories();
     } else if (itemType === 'package') {
         const pkg = itemData as Package; // Asegurar que es de tipo Package
-        setCurrentProductConfigQuantity(confirmedQuantity);
+        setCurrentProductConfigQuantity(confirmedQuantity); // Establecer cantidad para configuración del paquete
         setSelectedPackage(pkg); // Guardar el paquete completo
-        await fetchPackageDetails(pkg.id);
+        await fetchPackageDetails(pkg.id); // Cargar detalles y mostrar vista de configuración del paquete
     }
 
     setIsQuantityDialogOpen(false);
@@ -590,7 +593,8 @@ export default function CreateOrderPage() {
                         extraCost: 0,
                     });
                 } else {
-                    toast({ title: "Límite Alcanzado", description: `Solo puedes seleccionar hasta ${targetSlotDefinition.max_quantity} en "${targetSlotDefinition.label}".`, variant: "default" });
+                    // No mostrar toast aquí para evitar interferir con doble clic
+                    // toast({ title: "Límite Alcanzado", description: `Solo puedes seleccionar hasta ${targetSlotDefinition.max_quantity} en "${targetSlotDefinition.label}".`, variant: "default" });
                     return prevConfigs;
                 }
             }
@@ -639,7 +643,8 @@ export default function CreateOrderPage() {
                                     extraCost: 0,
                                 });
                             } else {
-                                toast({ title: "Límite Alcanzado", description: `Solo puedes seleccionar hasta ${maxQty} en "${slot.label}".`, variant: "default" });
+                                // No mostrar toast aquí
+                                // toast({ title: "Límite Alcanzado", description: `Solo puedes seleccionar hasta ${maxQty} en "${slot.label}".`, variant: "default" });
                                 return slot;
                             }
                         }
@@ -1436,27 +1441,35 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
     toast({title: "Configuración Aplicada", description: "Modificadores de esta instancia aplicados a todas."});
   };
 
-  const isViewLoading = isLoading.page ||
+  const isViewLoading =
+    isLoading.page ||
     (view === 'categories' && isLoading.categories) ||
     (view === 'products' && (isLoading.products || isLoading.packages)) ||
-    (view === 'modifiers' && isLoading.modifiers && !isLoading.servingStyles) || // servingStyles tiene su propio loader
-    (view === 'package-details' && isLoading.packageDetails && !isLoading.servingStyles);
+    (view === 'modifiers' && isLoading.modifiers) || // Ya no depende de isLoading.servingStyles aquí
+    (view === 'package-details' && isLoading.packageDetails); // Ya no depende de isLoading.servingStyles aquí
 
 
   const renderBackButton = () => {
     let buttonText = '';
-    if (view === 'products') buttonText = 'Volver a Categorías';
-    else if (view === 'modifiers' && selectedCategory) buttonText = `Volver a ${selectedCategory.name}`;
-    else if (view === 'package-details' && selectedCategory) buttonText = `Volver a ${selectedCategory.name}`;
+    let onClickAction = handleBack; // Acción por defecto
+
+    if (view === 'products' && selectedCategory) {
+        buttonText = `Volver a Categorías`;
+    } else if (view === 'modifiers' && selectedCategory) {
+        buttonText = `Volver a ${selectedCategory.name}`;
+    } else if (view === 'package-details' && selectedCategory) {
+        buttonText = `Volver a ${selectedCategory.name}`;
+    }
+
 
     if (buttonText) {
         return (
-            <Button variant="ghost" size="sm" onClick={handleBack} className="mb-2 md:mb-4 text-sm">
+            <Button variant="ghost" size="sm" onClick={onClickAction} className="mb-2 md:mb-4 text-sm">
                 <ChevronLeft className="mr-2 h-4 w-4" /> {buttonText}
             </Button>
         );
     }
-    return editingOrderId && originalOrderForEdit ?
+     return editingOrderId && originalOrderForEdit ?
       <CardDescription className="text-xs md:text-sm">Editando Pedido #{originalOrderForEdit.orderNumber}. Modifica y luego actualiza.</CardDescription> :
       <CardDescription className="text-xs md:text-sm">Selecciona categorías, productos, paquetes y modificadores.</CardDescription>;
   };
