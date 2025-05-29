@@ -11,7 +11,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from '@/components/ui/button';
 import { PlusCircle, Edit, Trash2, Loader2, Save, X, MinusCircle, Settings, List } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogClose } from "@/components/ui/dialog";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger, AlertDialogFooter } from "@/components/ui/alert-dialog";
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -98,7 +98,7 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
 
 
     const { toast } = useToast();
-    console.log("[ManageProducts] Component Render. Editing Product State:", editingProduct, "Is Form Open:", isFormOpen);
+    // console.log("[ManageProducts] Component Render. Editing Product State:", editingProduct, "Is Form Open:", isFormOpen);
 
 
     useEffect(() => {
@@ -117,11 +117,11 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
     });
 
     const fetchSlotsForProduct = useCallback(async (productId: string) => {
-        console.log(`[ManageProducts] fetchSlotsForProduct llamado para productId: ${productId}`);
+        // console.log(`[ManageProducts] fetchSlotsForProduct llamado para productId: ${productId}`);
         setIsModifierSlotsLoading(true);
         try {
             const slots = await getModifierSlotsForProduct(productId);
-            console.log(`[ManageProducts] Slots obtenidos para ${productId}:`, slots);
+            // console.log(`[ManageProducts] Slots obtenidos para ${productId}:`, slots);
             setCurrentModifierSlots(slots);
         } catch (error) {
             console.error(`[ManageProducts] Error cargando slots para ${productId}:`, error);
@@ -130,28 +130,28 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
         } finally {
             setIsModifierSlotsLoading(false);
         }
-    }, [toast]);
+    }, [toast]); // fetchSlotsForProduct es ahora una dependencia de useEffect, debe ser estable.
 
     useEffect(() => {
-        console.log("[ManageProducts] useEffect para slots. editingProduct:", editingProduct ? {id: editingProduct.id, name: editingProduct.name, categoryId: editingProduct.categoryId} : null, "isFormOpen:", isFormOpen);
+        // console.log("[ManageProducts] useEffect para slots. editingProduct:", editingProduct ? {id: editingProduct.id, name: editingProduct.name, categoryId: editingProduct.categoryId} : null, "isFormOpen:", isFormOpen);
         if (editingProduct && editingProduct.id && isFormOpen) {
             const categoryOfEditingProduct = productAssignableCategories.find(c => c.id === editingProduct.categoryId);
             if (categoryOfEditingProduct && categoryOfEditingProduct.type === 'producto') {
-                console.log(`[ManageProducts] useEffect: Llamando a fetchSlotsForProduct para producto tipo 'producto': ${editingProduct.id}`);
+                // console.log(`[ManageProducts] useEffect: Llamando a fetchSlotsForProduct para producto tipo 'producto': ${editingProduct.id}`);
                 fetchSlotsForProduct(editingProduct.id);
             } else {
-                console.log("[ManageProducts] useEffect: No se cargan slots, el producto en edición no es de tipo 'producto' o no tiene categoría asignada.");
+                // console.log("[ManageProducts] useEffect: No se cargan slots, el producto en edición no es de tipo 'producto' o no tiene categoría asignada.");
                 setCurrentModifierSlots([]);
             }
         } else {
-            console.log("[ManageProducts] useEffect: No hay producto en edición o el formulario está cerrado. Limpiando slots.");
+            // console.log("[ManageProducts] useEffect: No hay producto en edición o el formulario está cerrado. Limpiando slots.");
             setCurrentModifierSlots([]);
         }
     }, [editingProduct, isFormOpen, fetchSlotsForProduct, productAssignableCategories]);
 
 
     const handleOpenForm = (product: Product | null = null) => {
-        console.log("[ManageProducts] handleOpenForm llamado. Producto:", product);
+        // console.log("[ManageProducts] handleOpenForm llamado. Producto:", product);
         setEditingProduct(product);
         if (product) {
             productForm.reset({
@@ -169,7 +169,7 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
     };
 
     const handleCloseForm = () => {
-         console.log("[ManageProducts] handleCloseForm llamado.");
+         // console.log("[ManageProducts] handleCloseForm llamado.");
          setIsFormOpen(false);
          setEditingProduct(null); // Asegurar que se limpia al cerrar
          setCurrentModifierSlots([]);
@@ -184,19 +184,18 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
             inventory_item_id: values.inventory_item_id || null,
              inventory_consumed_per_unit: values.inventory_item_id ? (values.inventory_consumed_per_unit ?? 1) : null,
         };
-        console.log("[ManageProducts] Guardando producto:", JSON.stringify(dataToSave, null, 2));
+        // console.log("[ManageProducts] Guardando producto:", JSON.stringify(dataToSave, null, 2));
         try {
              if (editingProduct && editingProduct.id) {
                 await updateProductService(editingProduct.id, dataToSave as Partial<Omit<Product, 'id'>>);
                 toast({ title: "Éxito", description: "Producto actualizado." });
-                // Actualizar el estado de editingProduct para que el useEffect de slots se dispare si es necesario
                 setEditingProduct(prev => prev ? { ...prev, ...dataToSave, id: prev.id, categoryId: dataToSave.categoryId } : null);
              } else {
                 const newProduct = await addProductService(dataToSave as Omit<Product, 'id'>);
                 toast({ title: "Éxito", description: "Producto añadido. Ahora puedes añadir modificadores." });
-                setEditingProduct(newProduct); // Esto disparará el useEffect para cargar slots si el tipo es 'producto'
+                setEditingProduct(newProduct); 
              }
-            await onDataChange(); // Refrescar lista principal
+            await onDataChange(); 
         } catch (error) {
              const action = editingProduct ? 'actualizar' : 'añadir';
             console.error(`[ManageProducts] Error al ${action} producto:`, error);
@@ -225,7 +224,6 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
 
     const handleAddModifierSlot = async (data: AddModifierSlotFormValues) => {
         if (!editingProduct || !editingProduct.id) return;
-        // Asegurarse de que el producto es de tipo 'producto' antes de añadir un slot
         const categoryOfEditingProduct = productAssignableCategories.find(c => c.id === editingProduct.categoryId);
         if (!categoryOfEditingProduct || categoryOfEditingProduct.type !== 'producto') {
             toast({ title: "Acción no permitida", description: "Solo los productos de tipo 'producto' pueden tener grupos de modificadores.", variant: "default" });
@@ -238,7 +236,7 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
                 product_id: editingProduct.id,
                 ...data,
             });
-            await fetchSlotsForProduct(editingProduct.id); // Refrescar
+            await fetchSlotsForProduct(editingProduct.id); 
             toast({ title: "Éxito", description: "Grupo modificador añadido." });
         } catch (error) {
             console.error(`[ManageProducts] Error al añadir slot:`, error);
@@ -253,7 +251,7 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
          setIsModifierSlotsLoading(true);
          try {
              await deleteModifierSlot(slotId);
-             await fetchSlotsForProduct(editingProduct.id); // Refrescar
+             await fetchSlotsForProduct(editingProduct.id); 
              toast({ title: "Éxito", description: "Grupo modificador eliminado.", variant: 'destructive' });
          } catch (error) {
              console.error(`[ManageProducts] Error al eliminar slot ${slotId}:`, error);
@@ -268,14 +266,14 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
          setEditingSlotOptions(slot);
          try {
              const currentlyAllowedOptions = await getModifierSlotOptions(slot.id);
-             setEditingSlotOptions(prev => prev ? { ...prev, allowedOptions: currentlyAllowedOptions } : null); // Actualizar slot con sus opciones cargadas
+             setEditingSlotOptions(prev => prev ? { ...prev, allowedOptions: currentlyAllowedOptions } : null); 
              const allOptionsInCategory = await getModifiersByCategory(slot.linked_category_id);
              setOptionsForEditingSlot(allOptionsInCategory);
          } catch (error) {
              console.error(`[ManageProducts] Error al preparar opciones para slot ${slot.id}:`, error);
              toast({ variant: "destructive", title: "Error Opciones", description: `No se pudieron cargar las opciones. ${error instanceof Error ? error.message : ''}` });
              setOptionsForEditingSlot([]);
-             setEditingSlotOptions(null); // Limpiar si hay error
+             setEditingSlotOptions(null); 
          } finally {
              setIsLoadingOptions(false);
          }
@@ -288,7 +286,7 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
             let updatedOptionData: ProductModifierSlotOption | null = null;
             if (isCurrentlyAllowed) {
                 const optionToDelete = editingSlotOptions.allowedOptions?.find(opt => opt.modifier_product_id === modifierProductId);
-                if (optionToDelete && optionToDelete.id) { // Asegurar que optionToDelete.id exista
+                if (optionToDelete && optionToDelete.id) { 
                     await deleteModifierSlotOption(optionToDelete.id);
                     toast({ title: "Opción Deshabilitada", variant: "destructive" });
                 } else {
@@ -299,21 +297,20 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
                  updatedOptionData = await addModifierSlotOption({
                     product_modifier_slot_id: slotId,
                     modifier_product_id: modifierProductId,
-                    is_default: false, // Valor por defecto al habilitar
-                    price_adjustment: 0 // Valor por defecto
+                    is_default: false, 
+                    price_adjustment: 0 
                 });
                  toast({ title: "Opción Habilitada" });
             }
-            // Actualizar el estado local `editingSlotOptions.allowedOptions`
              setEditingSlotOptions(prevSlot => {
                  if (!prevSlot) return null;
                  let newAllowedOptions = [...(prevSlot.allowedOptions || [])];
                  if (isCurrentlyAllowed) {
                      newAllowedOptions = newAllowedOptions.filter(opt => opt.modifier_product_id !== modifierProductId);
-                 } else if (updatedOptionData) { // Solo añadir si la operación fue exitosa y tenemos datos
+                 } else if (updatedOptionData) { 
                      const prodInfo = optionsForEditingSlot.find(p => p.id === modifierProductId);
                      newAllowedOptions.push({
-                         id: updatedOptionData.id, // Usar el ID de la BD
+                         id: updatedOptionData.id, 
                          product_modifier_slot_id: slotId,
                          modifier_product_id: modifierProductId,
                          modifier_product_name: prodInfo?.name,
@@ -325,7 +322,7 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
                  return { ...prevSlot, allowedOptions: newAllowedOptions };
              });
 
-            await fetchSlotsForProduct(editingProduct.id); // Refrescar slots principales para mostrar el contador de opciones
+            await fetchSlotsForProduct(editingProduct.id); 
          } catch (error) {
              console.error(`[ManageProducts] Error al ${isCurrentlyAllowed ? 'eliminar' : 'añadir'} opción ${modifierProductId} del slot ${slotId}:`, error);
              toast({ variant: "destructive", title: "Error Opción", description: `No se pudo actualizar la opción. ${error instanceof Error ? error.message : ''}` });
@@ -334,7 +331,6 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
          }
      };
      
-    // Cargar datos de la opción seleccionada para configurar
     const loadOptionConfigForEdit = (option: ProductModifierSlotOption) => {
         setCurrentOptionSlotOptionId(option.id);
         setCurrentOptionIsDefault(option.is_default ?? false);
@@ -342,7 +338,7 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
     };
 
 
-    const handleSaveOptionConfig = async () => { // No necesita optionId como argumento, usará currentOptionSlotOptionId
+    const handleSaveOptionConfig = async () => { 
         if (!editingProduct || !editingProduct.id || !currentOptionSlotOptionId) {
             toast({ variant: "destructive", title: "Error", description: "No hay opción seleccionada para guardar." });
             return;
@@ -359,9 +355,8 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
                 price_adjustment: priceAdjustmentNum
             });
             toast({ title: "Configuración Guardada", description: "Se actualizó la opción del modificador." });
-            if (editingSlotOptions) await handleOpenEditSlotOptions(editingSlotOptions); // Recargar opciones del slot actual
-            await fetchSlotsForProduct(editingProduct.id); // Refrescar slots principales
-            // Limpiar estados de edición de opción
+            if (editingSlotOptions) await handleOpenEditSlotOptions(editingSlotOptions); 
+            await fetchSlotsForProduct(editingProduct.id); 
             setCurrentOptionSlotOptionId(null);
         } catch (error) {
             console.error(`[ManageProducts] Error guardando config para opción ${currentOptionSlotOptionId}:`, error);
@@ -374,7 +369,7 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
     const handleCloseEditSlotOptions = () => {
         setEditingSlotOptions(null);
         setOptionsForEditingSlot([]);
-        setCurrentOptionSlotOptionId(null); // Limpiar al cerrar
+        setCurrentOptionSlotOptionId(null); 
     };
 
     const formatCurrency = (amount: number | null | undefined): string => {
@@ -471,7 +466,7 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
                              Define un producto vendible o una opción modificadora.
                         </DialogDescription>
                     </DialogHeader>
-                    <ScrollArea className="flex-grow"> {/* Scroll principal del diálogo */}
+                    <ScrollArea className="flex-grow">
                       <div className="space-y-6 p-1 pr-4">
                         <Form {...productForm}>
                             <form onSubmit={productForm.handleSubmit(handleFormSubmit)} className="space-y-4">
@@ -548,7 +543,6 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
                             </form>
                         </Form>
 
-                        {/* Gestión de Slots Modificadores */}
                         {editingProduct && editingProduct.id && isEditingProductOfTypeProduct && (
                             <div className="space-y-4 pt-6 border-t mt-6">
                                 <h4 className="text-lg font-semibold">Grupos de Modificadores para "{editingProduct.name}"</h4>
@@ -628,8 +622,8 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
                     ) : optionsForEditingSlot.length === 0 && editingSlotOptions ? (
                         <p className="text-muted-foreground text-center py-4">No hay productos modificadores en la categoría "{modifierCategories.find(c => c.id === editingSlotOptions?.linked_category_id)?.name}".</p>
                     ) : (
-                        <ScrollArea className="flex-grow mt-4"> {/* Scroll para la lista de opciones */}
-                            <div className="space-y-3 pr-4">
+                        <ScrollArea className="flex-grow mt-4 pr-2">
+                            <div className="space-y-3">
                                 {optionsForEditingSlot.map(option => {
                                     const currentSlotOptionConfig = editingSlotOptions?.allowedOptions?.find(allowed => allowed.modifier_product_id === option.id);
                                     const isAllowed = !!currentSlotOptionConfig;
@@ -689,7 +683,7 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
                                                             size="sm"
                                                             variant="outline"
                                                             className="h-8 text-xs"
-                                                            onClick={handleSaveOptionConfig} // No necesita pasar ID, usa el estado
+                                                            onClick={handleSaveOptionConfig} 
                                                             disabled={isLoadingOptions || currentOptionSlotOptionId !== currentSlotOptionConfig.id}
                                                         >
                                                             <Save className="mr-1 h-3 w-3"/> Guardar
