@@ -503,7 +503,7 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
 
              <Card>
                  <CardContent className="p-0">
-                     <ScrollArea className="h-[400px]">
+                     <ScrollArea className="h-[400px]"> {/* Altura de la lista de paquetes guardados */}
                          <Table>
                              <TableHeader className="sticky top-0 bg-background z-10 shadow-sm">
                                 <TableRow>
@@ -543,12 +543,12 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
                                                             </Button>
                                                         </AlertDialogTrigger>
                                                         <AlertDialogContent>
-                                                            <AlertDialogHeader>
+                                                            <AlertDialogPrimitiveHeader>
                                                             <AlertDialogPrimitiveTitle>¿Estás seguro?</AlertDialogPrimitiveTitle>
                                                             <AlertDialogDescription>
                                                                 Esta acción eliminará el paquete "{pkg.name}" y todo su contenido. No se puede deshacer.
                                                             </AlertDialogDescription>
-                                                            </AlertDialogHeader>
+                                                            </AlertDialogPrimitiveHeader>
                                                             <AlertDialogPrimitiveFooter>
                                                             <AlertDialogCancel>Cancelar</AlertDialogCancel>
                                                             <AlertDialogAction onClick={() => handleDeletePackage(pkg.id, pkg.name)} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
@@ -569,7 +569,7 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
              </Card>
 
               <Dialog open={isFormOpen} onOpenChange={(isOpen) => { if (!isOpen) handleCloseDialog(); }}>
-                 <DialogContent className="sm:max-w-3xl max-h-[90vh] flex flex-col overflow-hidden">
+                 <DialogContent className="sm:max-w-3xl max-h-[90vh] flex flex-col overflow-hidden"> {/* overflow-hidden añadido */}
                      <DialogHeader>
                          <DialogTitle>{editingPackage ? 'Editar Paquete' : 'Añadir Nuevo Paquete'}</DialogTitle>
                          <DialogDescription>
@@ -650,7 +650,7 @@ const ManagePackages: React.FC<ManagePackagesProps> = ({
                                     </form>
                                 </Form>
 
-                                <div className="h-[250px] border rounded-md">
+                                 <div className="h-[250px] border rounded-md"> {/* Altura del contenido del paquete */}
                                     <ScrollArea className="h-full">
                                     {isItemDataLoading && !editingPackage ? (
                                             <div className="flex justify-center items-center h-full text-muted-foreground">
