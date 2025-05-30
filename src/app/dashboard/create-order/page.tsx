@@ -3,7 +3,7 @@
 
 import * as React from 'react';
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { useSearchParams, useRouter, usePathname } from 'next/navigation'; // Importar hooks de Next.js
+import { useSearchParams, useRouter, usePathname } from 'next/navigation';
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -12,11 +12,11 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { PlusCircle, MinusCircle, ChevronLeft, Save, Printer, Trash2, Loader2, PackageIcon, RotateCcw, ShoppingBag, CookingPot, DollarSign, Copy, Edit, PauseCircle, PlayCircle } from 'lucide-react';
+import { PlusCircle, MinusCircle, ChevronLeft, Save, Printer, Trash2, Loader2, PackageIcon, RotateCcw, ShoppingBag, CookingPot, DollarSign, Copy, Edit, PauseCircle, PlayCircle, Bike, Store, Truck } from 'lucide-react';
 import { useToast } from "@/hooks/use-toast";
 import Image from 'next/image';
-import { cn } from '@/lib/utils';
-import { format as formatDateFn } from 'date-fns'; // Renombrado para evitar conflicto
+import { cn, formatCurrency } from '@/lib/utils'; // Usar formatCurrency de utils
+import { format as formatDateFn } from 'date-fns';
 import { v4 as uuidv4 } from 'uuid';
 import {
     getCategories,
@@ -29,7 +29,7 @@ import {
     getOverridesForPackageItem,
     getModifiersByCategory,
     getServingStylesForCategory,
-    getAllProductsAndModifiersList, // Asegúrate que esta función exista y devuelva todos los productos/modificadores
+    getAllProductsAndModifiersList,
 } from '@/services/product-service';
 import { adjustInventoryStock, getInventoryItems } from '@/services/inventory-service';
 import { printTicket, PrinterError } from '@/services/printer-service';
@@ -44,32 +44,20 @@ import type {
     OrderItem,
     SelectedModifierItem,
     SavedOrder,
-    SavedOrderItemComponent, // Asegúrate que este tipo esté importado
+    SavedOrderItemComponent,
     InventoryItem,
     ModifierServingStyle,
-    PausedOrder, // Importar PausedOrder
+    PausedOrder,
 } from '@/types/product-types';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogClose } from "@/components/ui/dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-
-
-// --- Funciones de Ayuda ---
-const formatCurrency = (amount: number | null | undefined): string => {
-    if (typeof amount !== 'number' || isNaN(amount)) {
-        return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(0);
-    }
-    return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(amount);
-};
-
-
-const generateOrderId = (existingOrdersCount: number): string => {
-  const nextId = existingOrdersCount + 1;
-  return `siChef-${String(nextId).padStart(3, '0')}`;
-};
+import { Textarea } from '@/components/ui/textarea'; // Importar Textarea
+import { Select as ShadSelect, SelectContent as ShadSelectContent, SelectItem as ShadSelectItem, SelectTrigger as ShadSelectTrigger, SelectValue as ShadSelectValue } from "@/components/ui/select"; // Alias para ShadCN Select
 
 // --- Estado del Componente ---
 type View = 'categories' | 'products' | 'modifiers' | 'package-details';
+type OrderType = 'pickup' | 'delivery' | 'platform';
 
 interface ModifierSlotState extends ProductModifierSlot {
     options: Product[];
@@ -91,7 +79,12 @@ interface ModifierInteractionState {
     availableServingStyles?: ModifierServingStyle[];
 }
 
-// --- Componente ---
+interface PlatformConfig {
+    id: string;
+    name: string;
+    commissionRate: number;
+}
+
 export default function CreateOrderPage() {
   const router = useRouter();
   const pathname = usePathname();
@@ -109,10 +102,19 @@ export default function CreateOrderPage() {
 
   const [currentModifierSlots, setCurrentModifierSlots] = useState<ModifierSlotState[]>([]);
 
+  const [currentOrderType, setCurrentOrderType] = useState<OrderType>('pickup');
   const [customerName, setCustomerName] = useState('');
   const [isRegisteringCustomer, setIsRegisteringCustomer] = useState(false);
+  const [deliveryAddress, setDeliveryAddress] = useState('');
+  const [deliveryPhone, setDeliveryPhone] = useState('');
+  const [selectedPlatformId, setSelectedPlatformId] = useState<string | null>(null);
+  const [platformOrderId, setPlatformOrderId] = useState('');
+  const [configuredPlatforms, setConfiguredPlatforms] = useState<PlatformConfig[]>([]);
+  const [globalPlatformPriceIncreasePercent, setGlobalPlatformPriceIncreasePercent] = useState(0);
+
+
   const [currentOrder, setCurrentOrder] = useState<Omit<CurrentOrder, 'subtotal' | 'total'>>({
-    id: '', customerName: 'Guest', items: [], paymentMethod: 'card',
+    id: '', customerName: 'Guest', items: [], paymentMethod: 'card', orderType: 'pickup',
   });
   const [paidAmountInput, setPaidAmountInput] = useState('');
 
@@ -135,21 +137,21 @@ export default function CreateOrderPage() {
   const [currentInstanceIndexForConfiguration, setCurrentInstanceIndexForConfiguration] = useState(0);
 
   const [isLoading, setIsLoading] = useState({
-        page: true,
-        categories: true,
+        page: true, // True initially for core data
+        categories: true, // True initially
         products: false,
         packages: false,
         modifiers: false,
         packageDetails: false,
-        inventory: false,
+        inventory: true, // True initially
         printing: false,
         servingStyles: false,
     });
+  const [hasLoadedCoreData, setHasLoadedCoreData] = useState(false);
 
   const subtotal = useMemo(() => {
     return currentOrder.items.reduce((sum, item) => {
-        // Para el cálculo del subtotal, considera el precio ajustado por plataforma si aplica
-        const itemPrice = item.original_platform_price ?? item.basePrice;
+        const itemEffectivePrice = item.inflatedPricePerUnit ?? item.basePrice;
         let modifiersTotal = 0;
         if (item.type === 'product') {
             modifiersTotal = item.selectedModifiers.reduce((modSum, mod) => modSum + (mod.priceModifier || 0) + (mod.extraCost || 0), 0);
@@ -158,7 +160,7 @@ export default function CreateOrderPage() {
                 modifiersTotal += pi.selectedModifiers.reduce((modSum, mod) => modSum + (mod.priceModifier || 0) + (mod.extraCost || 0), 0);
             });
         }
-        return sum + (itemPrice + modifiersTotal) * item.quantity;
+        return sum + (itemEffectivePrice + modifiersTotal) * item.quantity;
     }, 0);
   }, [currentOrder.items]);
 
@@ -166,8 +168,8 @@ export default function CreateOrderPage() {
 
 
   const fetchInitialData = useCallback(async () => {
-    console.log("[CreateOrderPage] fetchInitialData: Iniciando carga de datos iniciales.");
-    setIsLoading(prev => ({ ...prev, categories: true, inventory: true, page: true }));
+    console.log("[CreateOrderPage] fetchInitialData: Iniciando carga de datos principales.");
+    setIsLoading(prev => ({ ...prev, page: true, categories: true, inventory: true, products: true, packages: true }));
     try {
       const [fetchedCategories, fetchedInventory, fetchedAllProducts] = await Promise.all([
           getCategories(),
@@ -184,28 +186,77 @@ export default function CreateOrderPage() {
       fetchedAllProducts.forEach(p => prodMap.set(p.id, p));
       setAllProductsMap(prodMap);
 
-      console.log(`[CreateOrderPage] fetchInitialData: ${fetchedCategories.length} categorías, ${fetchedInventory.length} ítems de inventario, ${fetchedAllProducts.length} productos/modificadores cargados.`);
+      const storedPlatforms = localStorage.getItem('siChefSettings_configuredPlatforms');
+      if (storedPlatforms) setConfiguredPlatforms(JSON.parse(storedPlatforms));
+      const storedIncrease = localStorage.getItem('siChefSettings_platformPriceIncrease');
+      if (storedIncrease) setGlobalPlatformPriceIncreasePercent(parseFloat(storedIncrease) / 100);
+
+
+      setHasLoadedCoreData(true);
+      console.log(`[CreateOrderPage] fetchInitialData: Éxito. ${fetchedCategories.length} categorías, ${fetchedInventory.length} ítems de inventario, ${fetchedAllProducts.length} productos/modificadores cargados.`);
 
     } catch (error) {
       console.error("[CreateOrderPage] fetchInitialData: Error cargando datos:", error);
-      toast({ title: "Error al Cargar Datos", description: "Fallo al cargar datos iniciales de productos o inventario.", variant: "destructive" });
+      toast({ title: "Error al Cargar Datos Iniciales", description: "Fallo al cargar datos iniciales de productos o inventario.", variant: "destructive" });
+      setHasLoadedCoreData(false);
     } finally {
       setIsLoading(prev => ({
           ...prev,
           page: false,
           categories: false,
+          inventory: false,
           products: false,
           packages: false,
-          inventory: false,
-          modifiers: prev.modifiers, // Mantener estos estados si estaban activos
-          packageDetails: prev.packageDetails,
-          servingStyles: prev.servingStyles,
-          printing: prev.printing,
       }));
       console.log("[CreateOrderPage] fetchInitialData: Carga finalizada.");
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [toast]); // No incluir editingOrderId o isLoading.page aquí para evitar bucles
+  }, [toast]);
+
+
+  // Efecto 1: Cargar datos principales una vez al montar si no se han cargado
+  useEffect(() => {
+    console.log("[CreateOrderPage] Mount useEffect: hasLoadedCoreData:", hasLoadedCoreData, "isLoading.page:", isLoading.page);
+    if (!hasLoadedCoreData && !isLoading.page) { // !isLoading.page previene reentradas si ya está cargando
+      fetchInitialData();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Se ejecuta una vez al montar
+
+  // Efecto 2: Manejar cambios de ruta (editar pedido vs. nuevo pedido)
+  useEffect(() => {
+    const orderIdFromQuery = searchParams.get('editOrderId');
+    console.log(`[CreateOrderPage] Route Change useEffect. Query: ${orderIdFromQuery}, CurrentEditingID: ${editingOrderId}, HasCoreData: ${hasLoadedCoreData}`);
+
+    if (orderIdFromQuery) {
+      // Quiere editar un pedido
+      if (hasLoadedCoreData) {
+        if (!editingOrderId || editingOrderId !== orderIdFromQuery) {
+          console.log(`[CreateOrderPage] Datos principales cargados. Llamando a loadOrderForEditing para ${orderIdFromQuery}.`);
+          loadOrderForEditing(orderIdFromQuery);
+        }
+      } else {
+        console.log(`[CreateOrderPage] Modo edición, pero datos principales no cargados. El efecto de montaje debería manejarlos.`);
+        // isLoading.page debería ser true, así que el loader principal se muestra.
+      }
+    } else {
+      // Escenario de nuevo pedido
+      if (editingOrderId) { // Estaba editando, pero ahora es un nuevo pedido (URL cambió)
+        console.log("[CreateOrderPage] Cambiando de Edición a Nuevo pedido. Reseteando.");
+        setEditingOrderId(null);
+        setOriginalOrderForEdit(null);
+        clearOrder(); // Esto debería resetear la vista a categorías
+        resetAndGoToCategories(); // Asegurar que la vista esté en categorías
+      }
+      // Para un pedido nuevo, asegurar que los datos principales estén cargados (manejado por el primer useEffect)
+      // y que la UI esté en el estado correcto (vista de categorías).
+      if (hasLoadedCoreData && !editingOrderId && view !== 'categories') {
+        console.log("[CreateOrderPage] Nuevo pedido: Datos principales cargados, asegurando vista de categorías.");
+        // resetAndGoToCategories(); // Esto ya es parte de clearOrder en algunas rutas
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, editingOrderId, hasLoadedCoreData, loadOrderForEditing]);
 
 
   const loadOrderForEditing = useCallback(async (orderId: string) => {
@@ -215,7 +266,7 @@ export default function CreateOrderPage() {
         const storedOrdersString = localStorage.getItem('siChefOrders');
         if (!storedOrdersString) {
             toast({ title: "Error", description: `No se encontraron pedidos guardados.`, variant: "destructive" });
-            router.replace('/dashboard/create-order');
+            router.replace('/dashboard/create-order'); // Limpiar query param
             return;
         }
         const existingOrders: SavedOrder[] = JSON.parse(storedOrdersString);
@@ -226,23 +277,37 @@ export default function CreateOrderPage() {
             router.replace('/dashboard/create-order');
             return;
         }
-
         console.log("[CreateOrderPage] Pedido a editar encontrado:", orderToEdit);
         setOriginalOrderForEdit(orderToEdit);
-        setEditingOrderId(orderId); // Establecer el ID del pedido que se está editando
-        setCustomerName(orderToEdit.customerName);
+        setEditingOrderId(orderId);
+        setCustomerName(orderToEdit.customerName || 'Guest');
+        setCurrentOrderType(orderToEdit.order_type || 'pickup');
+        setDeliveryAddress(orderToEdit.delivery_address || '');
+        setDeliveryPhone(orderToEdit.delivery_phone || '');
+        setSelectedPlatformId(orderToEdit.platform_name || null); // Asumiendo que platform_name es el ID guardado
+        setPlatformOrderId(orderToEdit.platform_order_id || '');
+
 
         const reconstructedOrderItems: OrderItem[] = [];
         for (const savedItem of orderToEdit.items) {
             let baseItemDetails: Product | Package | null = null;
             let itemType: 'product' | 'package' = 'product';
 
-            if (allProductsMap.get(savedItem.id)?.categoryId === packagesData.find(p => p.id === savedItem.id)?.category_id) { // Heurística para paquete
-                 baseItemDetails = await getPackageById(savedItem.id);
-                 itemType = baseItemDetails ? 'package' : 'product'; // Confirmar
-            } else {
-                baseItemDetails = allProductsMap.get(savedItem.id) || await getProductById(savedItem.id); // Usar mapa primero
-                itemType = 'product';
+            // Determinar si es producto o paquete
+            const productMatch = allProductsMap.get(savedItem.id);
+            if (productMatch) {
+                const categoryOfProduct = categoriesData.find(c => c.id === productMatch.categoryId);
+                if (categoryOfProduct?.type === 'paquete') { // Si la categoría del producto es 'paquete', es un error o dato antiguo
+                    console.warn(`[loadOrderForEditing] Producto ${savedItem.name} tiene categoría tipo 'paquete', esto no debería ser. Tratando como producto.`);
+                    baseItemDetails = productMatch;
+                    itemType = 'product';
+                } else {
+                    baseItemDetails = productMatch;
+                    itemType = 'product';
+                }
+            } else { // Si no está en allProductsMap, podría ser un paquete
+                baseItemDetails = await getPackageById(savedItem.id); // Asumimos que puede ser un paquete si no es un producto
+                itemType = baseItemDetails ? 'package' : 'product'; // Confirmar
             }
 
 
@@ -257,24 +322,22 @@ export default function CreateOrderPage() {
                 id: baseItemDetails.id,
                 name: baseItemDetails.name,
                 quantity: savedItem.quantity,
-                basePrice: baseItemDetails.price, // Precio base original
-                selectedModifiers: [],
+                basePrice: savedItem.original_price_before_inflation ?? baseItemDetails.price, // Usar precio original si existe
+                inflatedPricePerUnit: savedItem.price, // Este es el precio que se cobró (puede estar inflado)
                 totalPrice: savedItem.totalItemPrice, // Precio total como estaba guardado
-                uniqueId: uuidv4(), // Nuevo uniqueId para la UI
+                uniqueId: uuidv4(),
                 packageItems: [],
-                applied_commission_rate: savedItem.isPlatformItem ? (allProductsMap.get(savedItem.id)?.platform_commission_rate) : undefined,
-                original_platform_price: savedItem.isPlatformItem ? savedItem.platformPricePerUnit : undefined,
+                applied_platform_inflation_rate: savedItem.applied_platform_inflation_rate,
             };
 
             if (itemType === 'product') {
                 reconstructedOrderItem.selectedModifiers = (savedItem.components || [])
-                    .filter(comp => comp.slotId && comp.productId) // Asegurarse que el componente es un modificador con slotId y productId
+                    .filter(comp => comp.slotId && comp.productId)
                     .map(comp => {
-                        const modifierProduct = allProductsMap.get(comp.productId!); 
                         return {
                             productId: comp.productId!,
                             name: comp.name,
-                            priceModifier: comp.priceModifier || 0, // Este es el precio guardado del modificador
+                            priceModifier: comp.priceModifier || 0,
                             slotId: comp.slotId!,
                             servingStyle: comp.servingStyle || 'Normal',
                             extraCost: comp.extraCost || 0,
@@ -287,7 +350,8 @@ export default function CreateOrderPage() {
                 reconstructedOrderItem.packageItems = currentPackageItemsDef.map(pkgItemDef => {
                     const savedSubItemModifiers: SelectedModifierItem[] = [];
                      (savedItem.components || []).forEach(comp => {
-                        if (comp.slotLabel !== 'Contenido' && comp.productId && comp.slotId && comp.name.includes(pkgItemDef.product_name || '')) {
+                        // Mejorar lógica para asociar modificadores del paquete
+                         if (comp.slotLabel !== 'Contenido' && comp.productId && comp.slotId && comp.name.includes(pkgItemDef.product_name || '')) {
                             savedSubItemModifiers.push({
                                 productId: comp.productId,
                                 name: comp.name,
@@ -298,7 +362,6 @@ export default function CreateOrderPage() {
                             });
                         }
                     });
-
                     return {
                         packageItemId: pkgItemDef.id,
                         productId: pkgItemDef.product_id,
@@ -307,20 +370,25 @@ export default function CreateOrderPage() {
                     };
                 });
             }
-
             reconstructedOrderItems.push(reconstructedOrderItem);
         }
 
         setCurrentOrder(prev => ({
             ...prev,
             items: reconstructedOrderItems,
-            customerName: orderToEdit.customerName,
+            customerName: orderToEdit.customerName || 'Guest',
             paymentMethod: orderToEdit.paymentMethod,
+            orderType: orderToEdit.order_type || 'pickup',
+            platformName: orderToEdit.platform_name,
+            platformOrderId: orderToEdit.platform_order_id,
+            deliveryAddress: orderToEdit.delivery_address,
+            deliveryPhone: orderToEdit.delivery_phone,
         }));
         setPaidAmountInput('');
 
         toast({ title: "Modo Edición", description: `Cargado pedido #${orderToEdit.orderNumber} para editar.` });
         console.log("[CreateOrderPage] Estado del pedido reconstruido:", reconstructedOrderItems);
+        setHasLoadedCoreData(true); // Indicar que los datos necesarios para la edición están listos (o deberían estarlo)
 
     } catch (error) {
         console.error("[CreateOrderPage] Error cargando pedido para editar:", error);
@@ -330,41 +398,7 @@ export default function CreateOrderPage() {
         setIsLoading(prev => ({ ...prev, page: false }));
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [router, toast, allProductsMap]); // packagesData removido temporalmente de dependencias si causa bucles.
-
-
-  useEffect(() => {
-    const orderIdFromQuery = searchParams.get('editOrderId');
-    console.log(`[CreateOrderPage] useEffect for editOrderId. Query param: ${orderIdFromQuery}, current editingOrderId: ${editingOrderId}`);
-
-    if (orderIdFromQuery) {
-      if (editingOrderId === orderIdFromQuery && !isLoading.page) { 
-        console.log(`[CreateOrderPage] Ya se está editando el pedido ${orderIdFromQuery} o carga finalizada. No se recarga.`);
-      } else if (!isLoading.page && (!editingOrderId || editingOrderId !== orderIdFromQuery)) { 
-        console.log(`[CreateOrderPage] Llamando a loadOrderForEditing para ${orderIdFromQuery}`);
-        loadOrderForEditing(orderIdFromQuery);
-      }
-    } else { 
-      if (editingOrderId) { 
-        console.log("[CreateOrderPage] No hay editOrderId en URL, pero estábamos en modo edición. Reseteando para un pedido nuevo.");
-        setEditingOrderId(null);
-        setOriginalOrderForEdit(null);
-        clearOrder();
-      }
-      if (!isLoading.page && categoriesData.length === 0) { // Cargar datos solo si no están cargados y no estamos editando
-          fetchInitialData();
-      }
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams, editingOrderId, loadOrderForEditing]); 
-
-
-  useEffect(() => {
-    if (!editingOrderId && !isLoading.page && categoriesData.length === 0 && allProductsMap.size === 0) {
-      fetchInitialData();
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editingOrderId, isLoading.page]); 
+  }, [router, toast, allProductsMap, categoriesData]);
 
 
   const fetchProductsAndPackages = useCallback(async (categoryId: string) => {
@@ -373,7 +407,7 @@ export default function CreateOrderPage() {
     setPackagesData([]);
     try {
         const fetchedProducts = await getProductsByCategory(categoryId);
-        const fetchedPackages = await getPackagesByCategoryUI(categoryId);
+        const fetchedPackages = await getPackagesByCategoryUI(categoryId); // Paquetes de UI
 
         setProductsData(fetchedProducts);
         setPackagesData(fetchedPackages);
@@ -396,9 +430,11 @@ export default function CreateOrderPage() {
              const optionsPromises = slotsDefinition.map(async (slotDef) => {
                  let options: Product[] = [];
                  if (slotDef.allowedOptions && slotDef.allowedOptions.length > 0) {
+                     // Usar las opciones específicas del slot si están definidas
                      const optionDetailsPromises = slotDef.allowedOptions.map(opt => allProductsMap.get(opt.modifier_product_id) || getProductById(opt.modifier_product_id));
                      options = (await Promise.all(optionDetailsPromises)).filter(p => p !== null) as Product[];
                  } else {
+                     // Si no hay opciones específicas, cargar todos los modificadores de la categoría vinculada
                      options = await getModifiersByCategory(slotDef.linked_category_id);
                  }
                  return { ...slotDef, options: options, selectedOptions: [] };
@@ -490,8 +526,8 @@ export default function CreateOrderPage() {
     if (slots.length > 0) {
         setSelectedProduct(product);
         setCurrentModifierSlots(slots);
-        setCurrentProductConfigQuantity(1); 
-        setModifierConfigurations([[]]); 
+        setCurrentProductConfigQuantity(1);
+        setModifierConfigurations([[]]);
         setCurrentInstanceIndexForConfiguration(0);
         setView('modifiers');
     } else {
@@ -519,6 +555,16 @@ export default function CreateOrderPage() {
     const itemData = itemPendingQuantity.data;
     const itemType = itemPendingQuantity.type;
 
+    let basePrice = itemData.price;
+    let inflatedPrice: number | undefined = undefined;
+    let appliedInflationRate: number | undefined = undefined;
+
+    if (currentOrderType === 'platform' && globalPlatformPriceIncreasePercent > 0) {
+        inflatedPrice = basePrice / (1 - globalPlatformPriceIncreasePercent); // Asumiendo que el precio base NO es el de plataforma
+        appliedInflationRate = globalPlatformPriceIncreasePercent;
+    }
+
+
     if (itemType === 'product') {
         const product = itemData as Product;
         if (product.inventory_item_id) {
@@ -529,14 +575,14 @@ export default function CreateOrderPage() {
                 return;
             }
         }
-        addProductToOrder(product, [], product.price, confirmedQuantity);
+        addProductToOrder(product, [], basePrice, confirmedQuantity, inflatedPrice, appliedInflationRate);
         toast({ title: `${product.name} (x${confirmedQuantity}) añadido` });
         resetAndGoToCategories();
     } else if (itemType === 'package') {
-        const pkg = itemData as Package; 
-        setCurrentProductConfigQuantity(confirmedQuantity); 
-        setSelectedPackage(pkg); 
-        await fetchPackageDetails(pkg.id); 
+        const pkg = itemData as Package;
+        setCurrentProductConfigQuantity(confirmedQuantity);
+        setSelectedPackage(pkg);
+        await fetchPackageDetails(pkg.id);
     }
 
     setIsQuantityDialogOpen(false);
@@ -548,7 +594,7 @@ export default function CreateOrderPage() {
     slotId: string,
     optionProductId: string,
     optionName: string,
-    optionBasePrice: number,
+    optionBasePrice: number, // Precio base del producto modificador
     context: 'product' | 'package',
     packageItemUniqueId?: string
   ) => {
@@ -567,6 +613,7 @@ export default function CreateOrderPage() {
             const modifierProductDefinition = targetSlotDefinition.options.find(opt => opt.id === optionProductId);
             if (!modifierProductDefinition) return prevConfigs;
 
+            // El precio del modificador se toma de su `price_adjustment` en el slot, o su precio base si no hay ajuste.
             const slotOptionConfig = targetSlotDefinition.allowedOptions?.find(ao => ao.modifier_product_id === optionProductId);
             const priceAdjustment = slotOptionConfig?.price_adjustment || 0;
             const effectiveModifierPriceForSelected = optionBasePrice + priceAdjustment;
@@ -588,13 +635,12 @@ export default function CreateOrderPage() {
                     newSelectionsForInstance.push({
                         productId: optionProductId,
                         name: optionName,
-                        priceModifier: effectiveModifierPriceForSelected,
+                        priceModifier: effectiveModifierPriceForSelected, // Usar precio efectivo
                         slotId: slotId,
                         servingStyle: 'Normal',
                         extraCost: 0,
                     });
                 } else {
-                    // No mostrar toast aquí para evitar interferir con doble clic
                     return prevConfigs;
                 }
             }
@@ -611,12 +657,13 @@ export default function CreateOrderPage() {
                      if (slot.id === slotId) {
                         const isSelected = slot.selectedOptions.some(opt => opt.productId === optionProductId);
                         let newSelections = [...slot.selectedOptions];
-                        const minQty = slot.min_quantity;
+                        const minQty = slot.min_quantity; // Ya debería ser el min/max del override si existe
                         const maxQty = slot.max_quantity;
 
                         const modifierProductDef = slot.options.find(opt => opt.id === optionProductId);
                         if (!modifierProductDef) return slot;
 
+                        // Precio del modificador en paquete: usa el precio base del producto modificador + ajuste del slot original del producto
                         const slotOptCfg = slot.allowedOptions?.find(ao => ao.modifier_product_id === optionProductId);
                         const priceAdj = slotOptCfg?.price_adjustment || 0;
                         const effectiveModPriceForSelected = optionBasePrice + priceAdj;
@@ -637,13 +684,12 @@ export default function CreateOrderPage() {
                                 newSelections.push({
                                     productId: optionProductId,
                                     name: optionName,
-                                    priceModifier: effectiveModPriceForSelected,
+                                    priceModifier: effectiveModPriceForSelected, // Usar precio efectivo
                                     slotId: slotId,
                                     servingStyle: 'Normal',
                                     extraCost: 0,
                                 });
                             } else {
-                                // No mostrar toast aquí
                                 return slot;
                             }
                         }
@@ -679,14 +725,12 @@ const handleModifierDoubleClick = async (
         const currentInstanceConfig = modifierConfigurations[currentInstanceIndexForConfiguration] || [];
         const selectedOpt = currentInstanceConfig.find(so => so.productId === modifierProductId && so.slotId === slotId);
         isSelectedCurrently = !!selectedOpt;
-        console.log(`[CreateOrderPage] Contexto producto: SlotDef encontrado=${!!targetSlotDefinition}, linkedCatID=${linkedCategoryIdForStyles}, estáSeleccionado=${isSelectedCurrently}`);
     } else if (context === 'package' && selectedPackageDetail && packageItemContextId) {
         const targetItemSlots = selectedPackageDetail.itemSlots[packageItemContextId];
         targetSlotDefinition = targetItemSlots?.find(s => s.id === slotId);
         linkedCategoryIdForStyles = targetSlotDefinition?.linked_category_id;
         const selectedOpt = targetSlotDefinition?.selectedOptions.find(so => so.productId === modifierProductId);
         isSelectedCurrently = !!selectedOpt;
-        console.log(`[CreateOrderPage] Contexto paquete: SlotDef encontrado=${!!targetSlotDefinition}, linkedCatID=${linkedCategoryIdForStyles}, estáSeleccionado=${isSelectedCurrently}`);
     }
 
     if (!isSelectedCurrently) {
@@ -695,16 +739,14 @@ const handleModifierDoubleClick = async (
     }
     if (!targetSlotDefinition || !linkedCategoryIdForStyles) {
         toast({title: "Error Interno", description: "No se pudo determinar la categoría del modificador para estilos.", variant:"destructive"});
-        console.error(`[CreateOrderPage] No se pudo encontrar slot o linked_category_id. SlotDef: ${targetSlotDefinition}, LinkedCatID: ${linkedCategoryIdForStyles}`);
         return;
     }
 
     setIsLoading(prev => ({ ...prev, servingStyles: true }));
     try {
         const styles = await getServingStylesForCategory(linkedCategoryIdForStyles);
-        console.log(`[CreateOrderPage] Estilos de servicio cargados para categoría ${linkedCategoryIdForStyles}:`, styles);
         setServingStylePopoverState({
-            orderItemUniqueId: null,
+            orderItemUniqueId: null, // No estamos editando un item ya en el pedido
             modifierProductId: modifierProductId,
             modifierSlotId: slotId,
             packageItemContextId: context === 'package' ? packageItemContextId : null,
@@ -713,7 +755,6 @@ const handleModifierDoubleClick = async (
         });
     } catch (error) {
         toast({title: "Error", description: "No se pudieron cargar los estilos de servicio.", variant:"destructive"});
-        console.error(`[CreateOrderPage] Error cargando estilos de servicio para categoría ${linkedCategoryIdForStyles}:`, error);
     } finally {
         setIsLoading(prev => ({ ...prev, servingStyles: false }));
     }
@@ -722,42 +763,13 @@ const handleModifierDoubleClick = async (
 
 const handleSaveServingStyle = (styleLabel: string) => {
     if (!servingStylePopoverState) return;
-    const { modifierProductId, modifierSlotId, packageItemContextId } = servingStylePopoverState;
+    const { modifierProductId, modifierSlotId, packageItemContextId, orderItemUniqueId } = servingStylePopoverState;
 
-    if (view === 'modifiers' && !packageItemContextId) {
-        setModifierConfigurations(prevConfigs => {
-            const newConfigs = [...prevConfigs];
-            const currentInstanceConfig = newConfigs[currentInstanceIndexForConfiguration] || [];
-            newConfigs[currentInstanceIndexForConfiguration] = currentInstanceConfig.map(opt =>
-                (opt.productId === modifierProductId && opt.slotId === modifierSlotId) ? { ...opt, servingStyle: styleLabel } : opt
-            );
-            return newConfigs;
-        });
-    } else if (view === 'package-details' && selectedPackageDetail && packageItemContextId) {
-         setSelectedPackageDetail(prevDetail => {
-            if (!prevDetail) return null;
-            const updatedItemSlots = { ...prevDetail.itemSlots };
-            if (updatedItemSlots[packageItemContextId]) {
-                updatedItemSlots[packageItemContextId] = updatedItemSlots[packageItemContextId].map(slot => {
-                     if (slot.id === modifierSlotId) {
-                        return {
-                            ...slot,
-                            selectedOptions: slot.selectedOptions.map(opt =>
-                                opt.productId === modifierProductId ? { ...opt, servingStyle: styleLabel } : opt
-                            )
-                        };
-                    }
-                    return slot;
-                });
-            }
-            return { ...prevDetail, itemSlots: updatedItemSlots };
-        });
-    }
-    else if (servingStylePopoverState.orderItemUniqueId) {
+    if (orderItemUniqueId) { // Editando un item ya en el pedido
          setCurrentOrder(prevOrder => ({
             ...prevOrder,
             items: prevOrder.items.map(item => {
-                if (item.uniqueId === servingStylePopoverState.orderItemUniqueId) {
+                if (item.uniqueId === orderItemUniqueId) {
                     let updatedSelectedModifiers = [...item.selectedModifiers];
                     let updatedPackageItems = item.packageItems ? [...item.packageItems] : undefined;
 
@@ -775,31 +787,50 @@ const handleSaveServingStyle = (styleLabel: string) => {
                             }
                             return pkgItem;
                         });
-                    } else {
+                    } else { // Modificador de un producto simple o un modificador a nivel de paquete (si se implementara)
                         updatedSelectedModifiers = updatedSelectedModifiers.map(mod =>
                             mod.productId === modifierProductId && mod.slotId === modifierSlotId
                                 ? { ...mod, servingStyle: styleLabel }
                                 : mod
                         );
                     }
-                    let newItemTotalPrice = item.basePrice;
-                    if (item.type === 'product') {
-                        updatedSelectedModifiers.forEach(mod => { newItemTotalPrice += (mod.priceModifier || 0) + (mod.extraCost || 0); });
-                    } else if (item.type === 'package' && updatedPackageItems) {
-                        updatedPackageItems.forEach(pi => {
-                           pi.selectedModifiers.forEach(mod => { newItemTotalPrice += (mod.priceModifier || 0) + (mod.extraCost || 0); });
-                        });
-                    }
-                    newItemTotalPrice *= item.quantity;
-
-
-                    return { ...item, selectedModifiers: updatedSelectedModifiers, packageItems: updatedPackageItems, totalPrice: newItemTotalPrice };
+                    // No es necesario recalcular el precio total aquí, el estilo de servicio no afecta el precio.
+                    return { ...item, selectedModifiers: updatedSelectedModifiers, packageItems: updatedPackageItems };
                 }
                 return item;
             })
         }));
+    } else { // Configurando un nuevo producto/paquete antes de añadirlo al pedido
+        if (view === 'modifiers' && !packageItemContextId) { // Modificador de producto simple
+            setModifierConfigurations(prevConfigs => {
+                const newConfigs = [...prevConfigs];
+                const currentInstanceConfig = newConfigs[currentInstanceIndexForConfiguration] || [];
+                newConfigs[currentInstanceIndexForConfiguration] = currentInstanceConfig.map(opt =>
+                    (opt.productId === modifierProductId && opt.slotId === modifierSlotId) ? { ...opt, servingStyle: styleLabel } : opt
+                );
+                return newConfigs;
+            });
+        } else if (view === 'package-details' && selectedPackageDetail && packageItemContextId) { // Modificador de item dentro de paquete
+             setSelectedPackageDetail(prevDetail => {
+                if (!prevDetail) return null;
+                const updatedItemSlots = { ...prevDetail.itemSlots };
+                if (updatedItemSlots[packageItemContextId]) {
+                    updatedItemSlots[packageItemContextId] = updatedItemSlots[packageItemContextId].map(slot => {
+                         if (slot.id === modifierSlotId) {
+                            return {
+                                ...slot,
+                                selectedOptions: slot.selectedOptions.map(opt =>
+                                    opt.productId === modifierProductId ? { ...opt, servingStyle: styleLabel } : opt
+                                )
+                            };
+                        }
+                        return slot;
+                    });
+                }
+                return { ...prevDetail, itemSlots: updatedItemSlots };
+            });
+        }
     }
-
     setServingStylePopoverState(null);
     toast({title: "Estilo Guardado", description: `Modificador servido: ${styleLabel}`});
 };
@@ -826,7 +857,7 @@ const handleOpenExtraCostDialog = (
         modifierProductId,
         modifierSlotId,
         packageItemContextId,
-        anchorElement: null,
+        anchorElement: null, // No necesitamos anchor para un diálogo
         currentExtraCost: targetModifier?.extraCost || 0,
     });
     setExtraCostInput(String(targetModifier?.extraCost || 0));
@@ -850,7 +881,7 @@ const handleSaveExtraCost = () => {
                 let updatedSelectedModifiers = [...item.selectedModifiers];
                 let updatedPackageItems = item.packageItems ? [...item.packageItems] : undefined;
 
-                let itemBasePrice = item.basePrice;
+                let itemBasePrice = item.inflatedPricePerUnit ?? item.basePrice; // Usar precio inflado si existe
 
                 if (packageItemContextId && updatedPackageItems) {
                     updatedPackageItems = updatedPackageItems.map(pkgItem => {
@@ -874,18 +905,22 @@ const handleSaveExtraCost = () => {
                     );
                 }
 
-                let newItemTotalPrice = itemBasePrice;
+                // Recalcular el precio total del item
+                let newItemTotalPrice = itemBasePrice; // Empezar con precio base (o inflado)
                 if (item.type === 'product') {
                     updatedSelectedModifiers.forEach(mod => {
-                        newItemTotalPrice += (mod.priceModifier || 0) + (mod.extraCost || 0);
+                        newItemTotalPrice += (mod.priceModifier || 0) + (mod.extraCost || 0); // Asegurar que el priceModifier es el efectivo
                     });
                 } else if (item.type === 'package' && updatedPackageItems) {
+                     // El itemBasePrice de un paquete ya incluye los precios de sus items base
+                     // Solo necesitamos sumar los modificadores de los items del paquete
                      updatedPackageItems.forEach(pkgItem => {
                          pkgItem.selectedModifiers.forEach(mod => {
                              newItemTotalPrice += (mod.priceModifier || 0) + (mod.extraCost || 0);
                          });
                      });
-                     updatedSelectedModifiers.forEach(mod => {
+                     // Y cualquier modificador que aplique directamente al paquete (si se implementara)
+                     updatedSelectedModifiers.forEach(mod => { // Esto es para modificadores a nivel de paquete
                          newItemTotalPrice += (mod.priceModifier || 0) + (mod.extraCost || 0);
                      });
                 }
@@ -930,7 +965,7 @@ const handleIncrementConfigQuantity = () => {
 const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     let newQuantity = parseInt(e.target.value, 10);
     if (isNaN(newQuantity) || newQuantity < 1) {
-        return;
+        return; // No actualizar si no es un número válido o es menor a 1
     }
 
     if (selectedProduct && selectedProduct.inventory_item_id) {
@@ -940,7 +975,7 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
 
         if (!invItem || invItem.current_stock < consumedTotal) {
             toast({ title: "Sin Stock Suficiente", description: `Solo hay ${maxPossible} unidades de ${selectedProduct.name} disponibles.`, variant: "destructive" });
-            newQuantity = maxPossible > 0 ? maxPossible : 1; 
+            newQuantity = maxPossible > 0 ? maxPossible : 1; // Ajustar a lo máximo posible o 1
         }
     }
 
@@ -984,17 +1019,16 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
         instanceConfig.forEach(mod => {
             modifierPriceTotalForInstance += (mod.priceModifier || 0) + (mod.extraCost || 0);
         });
+
         let pricePerUnitForInstance = selectedProduct.price + modifierPriceTotalForInstance;
-        let appliedCommissionRate: number | undefined = undefined;
-        let originalPlatformPrice: number | undefined = undefined;
+        let finalInflatedPrice: number | undefined = undefined;
+        let finalAppliedInflationRate: number | undefined = undefined;
 
-        if (selectedProduct.is_platform_item && selectedProduct.platform_commission_rate) {
-            originalPlatformPrice = pricePerUnitForInstance / (1 - selectedProduct.platform_commission_rate);
-            appliedCommissionRate = selectedProduct.platform_commission_rate;
-            pricePerUnitForInstance = originalPlatformPrice; // El precio que se muestra y se usa para el total es el de plataforma
+        if (currentOrderType === 'platform' && globalPlatformPriceIncreasePercent > 0) {
+            finalInflatedPrice = pricePerUnitForInstance / (1 - globalPlatformPriceIncreasePercent); // Asumiendo que pricePerUnitForInstance es el precio base + mods
+            finalAppliedInflationRate = globalPlatformPriceIncreasePercent;
         }
-
-        addProductToOrder(selectedProduct, instanceConfig, pricePerUnitForInstance, 1, appliedCommissionRate, originalPlatformPrice);
+        addProductToOrder(selectedProduct, instanceConfig, selectedProduct.price, 1, finalInflatedPrice, finalAppliedInflationRate);
     });
 
     toast({
@@ -1047,6 +1081,7 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
 
             const slotsForItem = itemSlots[item.id] || [];
             for (const slot of slotsForItem) {
+                // min_quantity aquí es el min_quantity del override si existe, o el del slot base
                 if (slot.selectedOptions.length < slot.min_quantity) {
                      toast({ title: "Selección Incompleta", description: `Para "${item.product_name}", debes seleccionar al menos ${slot.min_quantity} ${slot.label.toLowerCase()}.`, variant: "destructive" });
                     inventoryOk = false; break;
@@ -1074,11 +1109,12 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
         if (!inventoryOk) return;
 
         for (let i = 0; i < currentProductConfigQuantity; i++) {
-            let finalPackagePrice = packageDef.price;
+            let calculatedPackagePrice = packageDef.price; // Precio base del paquete
              const packageItemsWithModifiers: OrderItem['packageItems'] = packageItems.map(item => {
                 const selectedModsForItem = (itemSlots[item.id] || []).flatMap(slot => slot.selectedOptions);
                 selectedModsForItem.forEach(mod => {
-                    finalPackagePrice += (mod.priceModifier || 0) + (mod.extraCost || 0);
+                    // priceModifier aquí ya es el precio efectivo del modificador (base + ajuste del slot)
+                    calculatedPackagePrice += (mod.priceModifier || 0) + (mod.extraCost || 0);
                 });
                 return {
                     packageItemId: item.id,
@@ -1087,17 +1123,21 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
                     selectedModifiers: selectedModsForItem
                 };
             });
-            
-            // Los paquetes como tal no tienen is_platform_item directamente en su definición
-            // Si se quisiera aplicar una comisión a paquetes, se necesitaría una lógica adicional
-            // o tratar el paquete como un producto con su propia configuración de plataforma.
-            // Por ahora, los paquetes se añaden con su precio base.
+
+            let finalInflatedPrice: number | undefined = undefined;
+            let finalAppliedInflationRate: number | undefined = undefined;
+
+            if (currentOrderType === 'platform' && globalPlatformPriceIncreasePercent > 0) {
+                 finalInflatedPrice = calculatedPackagePrice / (1 - globalPlatformPriceIncreasePercent); // Asumiendo que calculatedPackagePrice es el precio base + mods
+                 finalAppliedInflationRate = globalPlatformPriceIncreasePercent;
+            }
 
             const newOrderItem: OrderItem = {
-                type: 'package', id: packageDef.id, name: packageDef.name, quantity: 1,
-                basePrice: packageDef.price, // Precio base del paquete
-                selectedModifiers: [],
-                totalPrice: finalPackagePrice, // Precio del paquete + modificadores de sus items
+                type: 'package', id: packageDef.id, name: packageDef.name, quantity: 1, // Se añade una instancia del paquete a la vez
+                basePrice: packageDef.price, // Precio base original del paquete
+                inflatedPricePerUnit: finalInflatedPrice, // Precio inflado por instancia del paquete
+                totalPrice: (finalInflatedPrice ?? calculatedPackagePrice), // Total de esta instancia del paquete
+                applied_platform_inflation_rate: finalAppliedInflationRate,
                 uniqueId: uuidv4(),
                 packageItems: packageItemsWithModifiers
             };
@@ -1108,21 +1148,40 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
    };
 
   const addProductToOrder = (
-    product: Product, 
-    modifiers: SelectedModifierItem[], 
-    pricePerUnit: number, 
+    product: Product,
+    modifiers: SelectedModifierItem[],
+    baseItemPrice: number, // Precio base del producto o paquete, sin modificadores ni inflación
     quantity: number,
-    appliedCommissionRate?: number,
-    originalPlatformPrice?: number
+    inflatedPrice?: number, // Precio ya inflado (baseItemPrice + mods) / (1 - inflationRate)
+    appliedInflationRate?: number
   ) => {
+
+    let totalModifiersPrice = 0;
+    modifiers.forEach(mod => {
+        totalModifiersPrice += (mod.priceModifier || 0) + (mod.extraCost || 0);
+    });
+
+    const priceBeforeInflation = baseItemPrice + totalModifiersPrice;
+    let finalPricePerUnit = priceBeforeInflation;
+    let finalInflatedPricePerUnit = inflatedPrice; // Este ya es el precio de plataforma si se calculó antes
+
+    if (currentOrderType === 'platform' && globalPlatformPriceIncreasePercent > 0 && !finalInflatedPricePerUnit) {
+        // Si no se proveyó un precio inflado, calcularlo aquí basado en el precio base + modificadores
+        finalInflatedPricePerUnit = priceBeforeInflation / (1 - globalPlatformPriceIncreasePercent);
+        appliedInflationRate = globalPlatformPriceIncreasePercent; // Asegurar que se guarde la tasa
+    }
+
+    finalPricePerUnit = finalInflatedPricePerUnit ?? priceBeforeInflation;
+
     const newOrderItem: OrderItem = {
       type: 'product', id: product.id, name: product.name, quantity: quantity,
-      basePrice: product.price, // Precio base original del producto
+      basePrice: baseItemPrice, // Precio base original del producto
+      inflatedPricePerUnit: finalInflatedPricePerUnit, // Precio unitario ya inflado si aplica
       selectedModifiers: modifiers,
-      totalPrice: pricePerUnit * quantity, // Este ya es el precio de plataforma si aplica, o el precio normal + modificadores
+      totalPrice: finalPricePerUnit * quantity,
       uniqueId: uuidv4(),
-      applied_commission_rate: appliedCommissionRate,
-      original_platform_price: originalPlatformPrice,
+      applied_platform_inflation_rate: appliedInflationRate,
+      original_price_before_inflation: priceBeforeInflation !== baseItemPrice ? priceBeforeInflation : undefined,
     };
     setCurrentOrder(prev => ({ ...prev, items: [...prev.items, newOrderItem] }));
   };
@@ -1133,28 +1192,10 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
       let updatedItems = prev.items.map(item => {
         if (item.uniqueId === uniqueId) {
           const newQuantity = Math.max(0, item.quantity + delta);
-           let pricePerUnitConsideringModifiers = item.original_platform_price ?? item.basePrice;
-           if (item.quantity > 0) {
-                // Si ya hay cantidad, el totalPrice guardado ya incluye todo.
-                // Para obtener el precio unitario correcto:
-                pricePerUnitConsideringModifiers = item.totalPrice / item.quantity;
-           } else if (newQuantity > 0) { // Si la cantidad era 0 y ahora es > 0
-                // Recalcular precio unitario como si fuera nuevo
-                pricePerUnitConsideringModifiers = item.original_platform_price ?? item.basePrice;
-                if(item.type === 'product') {
-                    item.selectedModifiers.forEach(mod => {
-                        pricePerUnitConsideringModifiers += (mod.priceModifier || 0) + (mod.extraCost || 0);
-                    });
-                } else if (item.type === 'package' && item.packageItems) {
-                    item.packageItems.forEach(pi => {
-                        pi.selectedModifiers.forEach(mod => {
-                             pricePerUnitConsideringModifiers += (mod.priceModifier || 0) + (mod.extraCost || 0);
-                        });
-                    });
-                }
-           }
-
-          return { ...item, quantity: newQuantity, totalPrice: pricePerUnitConsideringModifiers * newQuantity };
+          // El precio unitario ya debería estar calculado (inflado o no, con modificadores)
+          // Si item.totalPrice / item.quantity da el precio unitario correcto:
+          const unitPrice = item.quantity > 0 ? (item.totalPrice / item.quantity) : (item.inflatedPricePerUnit || item.basePrice);
+          return { ...item, quantity: newQuantity, totalPrice: unitPrice * newQuantity };
         }
         return item;
       });
@@ -1169,14 +1210,19 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
   };
 
   const clearOrder = () => {
-    setCurrentOrder({ id: '', customerName: 'Guest', items: [], paymentMethod: 'card' });
+    setCurrentOrder({ id: '', customerName: 'Guest', items: [], paymentMethod: 'card', orderType: currentOrderType }); // Mantener orderType
     setCustomerName(''); setIsRegisteringCustomer(false); setPaidAmountInput('');
+    setDeliveryAddress(''); setDeliveryPhone('');
+    // No limpiar selectedPlatformId ni platformOrderId aquí si queremos que persistan para el siguiente pedido del mismo tipo.
+    // O sí, si queremos un reset total:
+    // setSelectedPlatformId(null); setPlatformOrderId('');
     resetProductSelection(); resetPackageSelection();
     setEditingOrderId(null); setOriginalOrderForEdit(null);
     const newParams = new URLSearchParams(searchParams.toString());
     newParams.delete('editOrderId');
     router.replace(`${pathname}?${newParams.toString()}`, { scroll: false });
     toast({ title: "Pedido Limpiado", variant: "destructive" });
+    resetAndGoToCategories(); // Para asegurar que la vista vuelve a las categorías
   };
 
   const resetProductSelection = () => {
@@ -1242,10 +1288,16 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
         }
         const pausedOrder: PausedOrder = {
             ...currentOrder,
-            subtotal: subtotal, 
+            subtotal: subtotal,
             total: total,
             pausedId: uuidv4(),
             pausedAt: new Date().toISOString(),
+            // Incluir detalles específicos del tipo de pedido
+            platformName: currentOrderType === 'platform' ? selectedPlatformId : undefined,
+            platformOrderId: currentOrderType === 'platform' ? platformOrderId : undefined,
+            deliveryAddress: currentOrderType === 'delivery' ? deliveryAddress : undefined,
+            deliveryPhone: currentOrderType === 'delivery' ? deliveryPhone : undefined,
+
         };
         try {
             const existingPausedOrdersString = localStorage.getItem('siChefPausedOrders');
@@ -1253,8 +1305,8 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
             existingPausedOrders.push(pausedOrder);
             localStorage.setItem('siChefPausedOrders', JSON.stringify(existingPausedOrders));
             toast({ title: "Pedido Pausado", description: `El pedido para ${currentOrder.customerName} ha sido guardado.` });
-            clearOrder();
-            resetAndGoToCategories();
+            clearOrder(); // Esto debería resetear la vista
+            // resetAndGoToCategories(); // Ya está en clearOrder
         } catch (error) {
             console.error("Error pausando pedido:", error);
             toast({ title: "Error al Pausar", description: "No se pudo pausar el pedido.", variant: "destructive" });
@@ -1269,6 +1321,13 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
     if (currentOrder.paymentMethod === 'cash' && (currentOrder.paidAmount === undefined || currentOrder.paidAmount < total)) {
        toast({ title: "Pago Incompleto", description: "La cantidad pagada en efectivo es menor que el total.", variant: 'destructive' }); return;
     }
+     if (currentOrderType === 'platform' && (!selectedPlatformId || !platformOrderId)) {
+        toast({ title: "Datos de Plataforma Incompletos", description: "Por favor selecciona la plataforma y el ID del pedido.", variant: 'destructive' }); return;
+    }
+     if (currentOrderType === 'delivery' && !deliveryAddress) {
+        toast({ title: "Datos de Entrega Incompletos", description: "Por favor introduce la dirección de entrega.", variant: 'destructive' }); return;
+    }
+
 
      const storedOrdersString = localStorage.getItem('siChefOrders') || '[]';
      let existingOrders: SavedOrder[] = [];
@@ -1278,16 +1337,22 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
              items: order.items?.map((item: any) => ({
                 id: item.id || 'unknown', name: item.name || 'Unknown Item',
                 quantity: typeof item.quantity === 'number' ? item.quantity : 0,
-                price: typeof item.price === 'number' ? item.price : 0, // Precio base original
+                price: typeof item.price === 'number' ? item.price : 0, // Este debería ser el precio inflado si aplica
                 totalItemPrice: typeof item.totalItemPrice === 'number' ? item.totalItemPrice : 0,
                 components: Array.isArray(item.components) ? item.components.map((c:any) => ({ ...c, productId: c.productId, slotId: c.slotId, priceModifier: c.priceModifier })) : [],
-                isPlatformItem: typeof item.isPlatformItem === 'boolean' ? item.isPlatformItem : false,
-                platformPricePerUnit: typeof item.platformPricePerUnit === 'number' ? item.platformPricePerUnit : undefined,
+                original_price_before_inflation: typeof item.original_price_before_inflation === 'number' ? item.original_price_before_inflation : undefined,
+                applied_platform_inflation_rate: typeof item.applied_platform_inflation_rate === 'number' ? item.applied_platform_inflation_rate : undefined,
              })) || [],
              subtotal: typeof order.subtotal === 'number' ? order.subtotal : 0,
              total: typeof order.total === 'number' ? order.total : 0,
              status: ['pending', 'completed', 'cancelled'].includes(order.status) ? order.status : 'pending',
              paymentMethod: ['cash', 'card'].includes(order.paymentMethod) ? order.paymentMethod : 'card',
+             order_type: order.order_type || 'pickup',
+             platform_name: order.platform_name,
+             platform_order_id: order.platform_order_id,
+             delivery_address: order.delivery_address,
+             delivery_phone: order.delivery_phone,
+             client_id: order.client_id,
          }));
      } catch (e) { console.error("Error parseando pedidos existentes", e); }
 
@@ -1298,12 +1363,12 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
             console.log("[CreateOrderPage] Reponiendo inventario del pedido original:", originalOrderForEdit.id);
             const originalInventoryAdjustments: Record<string, number> = {};
             for (const savedItem of originalOrderForEdit.items) {
-                const itemDef = allProductsMap.get(savedItem.id);
+                const itemDef = allProductsMap.get(savedItem.id); // Asume que allProductsMap tiene info de inventario
                 if (itemDef?.inventory_item_id && itemDef.inventory_consumed_per_unit) {
                     originalInventoryAdjustments[itemDef.inventory_item_id] = (originalInventoryAdjustments[itemDef.inventory_item_id] || 0) + (itemDef.inventory_consumed_per_unit * savedItem.quantity);
                 }
                 for (const comp of savedItem.components) {
-                    if (comp.productId && comp.slotLabel !== 'Contenido') {
+                    if (comp.productId && comp.slotLabel !== 'Contenido') { // Asumiendo que los componentes de item de paquete no consumen extra por sí mismos aquí
                         const modDef = allProductsMap.get(comp.productId);
                         if (modDef?.inventory_item_id && modDef.inventory_consumed_per_unit) {
                             originalInventoryAdjustments[modDef.inventory_item_id] = (originalInventoryAdjustments[modDef.inventory_item_id] || 0) + (modDef.inventory_consumed_per_unit * savedItem.quantity);
@@ -1334,8 +1399,9 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
             } else if (orderItem.type === 'package' && orderItem.packageItems) {
                 for (const pkgItem of orderItem.packageItems) {
                     const pkgItemDef = allProductsMap.get(pkgItem.productId);
-                    const pkgItemDefinitionFromPackage = selectedPackageDetail?.packageItems.find(piDef => piDef.id === pkgItem.packageItemId);
-                    const itemQtyInPackage = pkgItemDefinitionFromPackage?.quantity || 1; 
+                    // Necesitamos la cantidad del item DENTRO del paquete, no la cantidad de paquetes
+                    const pkgItemDefinitionInPackage = selectedPackageDetail?.packageItems.find(piDef => piDef.id === pkgItem.packageItemId) || await getItemsForPackage(orderItem.id).then(items => items.find(i => i.id === pkgItem.packageItemId));
+                    const itemQtyInPackage = pkgItemDefinitionInPackage?.quantity || 1;
 
                     if (pkgItemDef?.inventory_item_id && pkgItemDef.inventory_consumed_per_unit) {
                         currentInventoryAdjustments[pkgItemDef.inventory_item_id] = (currentInventoryAdjustments[pkgItemDef.inventory_item_id] || 0) - (pkgItemDef.inventory_consumed_per_unit * itemQtyInPackage * orderItem.quantity);
@@ -1343,7 +1409,7 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
                     for (const modifier of pkgItem.selectedModifiers) {
                         const modDef = allProductsMap.get(modifier.productId);
                         if (modDef?.inventory_item_id && modDef.inventory_consumed_per_unit) {
-                             currentInventoryAdjustments[modDef.inventory_item_id] = (currentInventoryAdjustments[modDef.inventory_item_id] || 0) - (modDef.inventory_consumed_per_unit * orderItem.quantity);
+                             currentInventoryAdjustments[modDef.inventory_item_id] = (currentInventoryAdjustments[modDef.inventory_item_id] || 0) - (modDef.inventory_consumed_per_unit * orderItem.quantity); // Modificadores por cantidad de paquete
                         }
                     }
                 }
@@ -1354,18 +1420,14 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
         }
         console.log("[CreateOrderPage] Inventario del pedido actual consumido.");
 
+        // Actualizar mapa de inventario local para reflejar cambios inmediatamente
         const newInvMap = new Map(inventoryMap);
         Object.entries(currentInventoryAdjustments).forEach(([itemId, change]) => {
             const currentInvItem = newInvMap.get(itemId);
             if (currentInvItem) newInvMap.set(itemId, { ...currentInvItem, current_stock: currentInvItem.current_stock + change });
         });
-        if (editingOrderId && originalOrderForEdit) {
-             const originalAdjustmentsForMap: Record<string, number> = {};
-             for (const savedItem of originalOrderForEdit.items) { /* ... lógica similar a la reposición ... */ }
-             Object.entries(originalAdjustmentsForMap).forEach(([itemId, originalChange]) => {
-                const currentInvItem = newInvMap.get(itemId);
-                if (currentInvItem) newInvMap.set(itemId, { ...currentInvItem, current_stock: currentInvItem.current_stock + originalChange });
-            });
+        if (editingOrderId && originalOrderForEdit) { // Si estábamos editando, también reflejar la reposición en el mapa local
+             // Esto requiere recalcular los originalInventoryAdjustments si no están en scope
         }
         setInventoryMap(newInvMap);
 
@@ -1399,28 +1461,33 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
             }
             return {
               id: item.id, name: item.name, quantity: item.quantity,
-              price: item.basePrice, // Precio base original
-              totalItemPrice: item.totalPrice, // Precio total de la línea (ya incluye precios de plataforma)
+              price: item.inflatedPricePerUnit ?? item.basePrice, // Precio unitario que se cobró
+              totalItemPrice: item.totalPrice,
               components: components,
-              isPlatformItem: !!item.applied_commission_rate,
-              platformPricePerUnit: item.original_platform_price,
+              original_price_before_inflation: item.original_price_before_inflation ?? item.basePrice,
+              applied_platform_inflation_rate: item.applied_platform_inflation_rate,
             };
         }),
         paymentMethod: currentOrder.paymentMethod,
         subtotal: subtotal,
         total: total,
-        status: 'pending', // Todos los pedidos nuevos o editados comienzan como pendientes
+        status: 'pending',
         paidAmount: currentOrder.paidAmount, changeGiven: currentOrder.changeDue,
+        order_type: currentOrderType,
+        platform_name: currentOrderType === 'platform' ? selectedPlatformId : undefined,
+        platform_order_id: currentOrderType === 'platform' ? platformOrderId : undefined,
+        delivery_address: currentOrderType === 'delivery' ? deliveryAddress : undefined,
+        delivery_phone: currentOrderType === 'delivery' ? deliveryPhone : undefined,
+        // client_id: si se implementa selección de cliente registrado
     };
 
     let finalizedOrder: SavedOrder;
     let updatedOrders: SavedOrder[];
 
-    if (editingOrderId && originalOrderForEdit) { 
+    if (editingOrderId && originalOrderForEdit) {
         finalizedOrder = {
-            ...originalOrderForEdit,
-            ...newOrderData,
-            id: editingOrderId,
+            ...originalOrderForEdit, // Mantiene ID original, orderNumber, createdAt
+            ...newOrderData,        // Sobrescribe con nuevos datos
             updatedAt: new Date(),
         };
         updatedOrders = existingOrders.map(o => o.id === editingOrderId ? finalizedOrder : o);
@@ -1448,22 +1515,21 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
          toast({ title: "Impresión Omitida", description: "La impresión de recibos está desactivada en la configuración." });
     }
 
-    clearOrder();
-    resetAndGoToCategories();
+    clearOrder(); // Esto resetea la vista a categorías
   };
 
   const handleApplyCurrentModifiersToAllInstances = () => {
     if (modifierConfigurations.length <= 1 || currentInstanceIndexForConfiguration < 0) return;
 
     const currentConfig = modifierConfigurations[currentInstanceIndexForConfiguration];
-    const newConfigs = modifierConfigurations.map(() => [...currentConfig]); 
+    const newConfigs = modifierConfigurations.map(() => [...currentConfig]);
     setModifierConfigurations(newConfigs);
     toast({title: "Configuración Aplicada", description: "Modificadores de esta instancia aplicados a todas."});
   };
 
   const isViewLoading =
-    isLoading.page ||
-    (view === 'categories' && isLoading.categories) ||
+    isLoading.page || // Carga inicial de datos principales
+    (view === 'categories' && isLoading.categories && categoriesData.length === 0) || // Carga de categorías si aún no están
     (view === 'products' && (isLoading.products || isLoading.packages)) ||
     (view === 'modifiers' && isLoading.modifiers) ||
     (view === 'package-details' && isLoading.packageDetails);
@@ -1471,7 +1537,7 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
 
   const renderBackButton = () => {
     let buttonText = '';
-    let onClickAction = handleBack; 
+    let onClickAction = handleBack;
 
     if (view === 'products' && selectedCategory) {
         buttonText = `Volver a Categorías`;
@@ -1493,6 +1559,46 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
       <CardDescription className="text-xs md:text-sm">Editando Pedido #{originalOrderForEdit.orderNumber}. Modifica y luego actualiza.</CardDescription> : null;
   };
 
+  const renderOrderTypeSpecificFields = () => {
+    if (currentOrderType === 'delivery') {
+      return (
+        <>
+          <div className="mb-2">
+            <Label htmlFor="deliveryAddress" className="mb-1 block text-xs md:text-sm">Dirección de Entrega</Label>
+            <Textarea id="deliveryAddress" value={deliveryAddress} onChange={(e) => setDeliveryAddress(e.target.value)} placeholder="Calle, Número, Colonia, Referencias..." rows={2} className="text-sm"/>
+          </div>
+          <div className="mb-3">
+            <Label htmlFor="deliveryPhone" className="mb-1 block text-xs md:text-sm">Teléfono de Contacto</Label>
+            <Input id="deliveryPhone" type="tel" value={deliveryPhone} onChange={(e) => setDeliveryPhone(e.target.value)} placeholder="Número para entrega" className="text-sm h-9"/>
+          </div>
+        </>
+      );
+    }
+    if (currentOrderType === 'platform') {
+      return (
+        <>
+          <div className="mb-2">
+            <Label htmlFor="platformSelect" className="mb-1 block text-xs md:text-sm">Plataforma</Label>
+            <ShadSelect value={selectedPlatformId || ''} onValueChange={setSelectedPlatformId}>
+              <ShadSelectTrigger id="platformSelect" className="h-9 text-sm">
+                <ShadSelectValue placeholder="Selecciona plataforma" />
+              </ShadSelectTrigger>
+              <ShadSelectContent>
+                {configuredPlatforms.length === 0 && <ShadSelectItem value="" disabled>No hay plataformas configuradas</ShadSelectItem>}
+                {configuredPlatforms.map(p => <ShadSelectItem key={p.id} value={p.id}>{p.name}</ShadSelectItem>)}
+              </ShadSelectContent>
+            </ShadSelect>
+          </div>
+          <div className="mb-3">
+            <Label htmlFor="platformOrderId" className="mb-1 block text-xs md:text-sm">ID Pedido Plataforma</Label>
+            <Input id="platformOrderId" value={platformOrderId} onChange={(e) => setPlatformOrderId(e.target.value)} placeholder="ID de Didi, Uber, etc." className="text-sm h-9"/>
+          </div>
+        </>
+      );
+    }
+    return null;
+  };
+
 
   const renderContent = () => {
     switch (view) {
@@ -1500,7 +1606,16 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
         const displayCategories = categoriesData.filter(cat => cat.type !== 'modificador');
         return (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 md:gap-4">
-            {displayCategories.map(cat => (
+            {isLoading.categories && displayCategories.length === 0 ? (
+                Array.from({length: 5}).map((_, i) => (
+                    <Card key={`skel-cat-${i}`} className="animate-pulse">
+                        <div className="relative w-full h-24 md:h-32 bg-secondary/70 rounded-t-md"></div>
+                        <CardHeader className="p-2 md:p-3">
+                            <div className="h-4 bg-secondary/70 rounded w-3/4 mx-auto"></div>
+                        </CardHeader>
+                    </Card>
+                ))
+            ) : displayCategories.map(cat => (
               <Card key={cat.id} onClick={() => handleCategoryClick(cat)} className="cursor-pointer hover:shadow-md transition-shadow group overflow-hidden">
                  <div className="relative w-full h-24 md:h-32 bg-secondary">
                   {cat.imageUrl ? (
@@ -1508,71 +1623,97 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
                   ) : (
                      <div className="absolute inset-0 flex items-center justify-center text-muted-foreground"><ShoppingBag className="h-8 w-8" /></div>
                   )}
-                  {cat.type === 'paquete' && <Badge variant="secondary" className="absolute top-1 right-1 text-accent border-accent text-xs px-1 py-0">Paquete UI</Badge>}
+                  {cat.type === 'paquete' && <Badge variant="secondary" className="absolute top-1 right-1 text-accent border-accent text-xs px-1 py-0">Paquetes</Badge>}
                  </div>
                  <CardHeader className="p-2 md:p-3">
                   <CardTitle className="text-center text-xs md:text-sm">{cat.name}</CardTitle>
                 </CardHeader>
               </Card>
             ))}
-             {displayCategories.length === 0 && <p className="col-span-full text-center text-muted-foreground py-10">No hay categorías disponibles.</p>}
+             {displayCategories.length === 0 && !isLoading.categories && <p className="col-span-full text-center text-muted-foreground py-10">No hay categorías de productos disponibles.</p>}
           </div>
         );
 
       case 'products':
+        let effectiveGlobalIncrease = 0;
+        if (currentOrderType === 'platform' && globalPlatformPriceIncreasePercent > 0) {
+            effectiveGlobalIncrease = globalPlatformPriceIncreasePercent;
+        }
         return (
           <>
             <h2 className="text-lg md:text-xl font-semibold mb-2 md:mb-4">{selectedCategory?.name}</h2>
-             {packagesData.length > 0 && (
-                 <>
-                    <h3 className="text-md md:text-lg font-medium mb-2 md:mb-3 text-accent border-b pb-1">Paquetes Disponibles</h3>
-                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 md:gap-4 mb-4 md:mb-6">
-                    {packagesData.map(pkg => (
-                        <Card key={pkg.id} onClick={() => handlePackageClick(pkg)} className="cursor-pointer hover:shadow-md transition-shadow group overflow-hidden border-accent border-2">
-                            <div className="relative w-full h-24 md:h-32 bg-secondary">
-                                {pkg.imageUrl ? (
-                                    <Image src={pkg.imageUrl} alt={pkg.name} layout="fill" objectFit="cover" className="group-hover:scale-105 transition-transform duration-300" data-ai-hint="combo meal deal"/>
-                                ) : ( <div className="absolute inset-0 flex items-center justify-center text-muted-foreground"><PackageIcon className="h-8 w-8"/></div> )}
-                                <Badge variant="secondary" className="absolute top-1 right-1 text-accent border-accent text-xs px-1 py-0">Paquete</Badge>
-                            </div>
+             {(isLoading.products || isLoading.packages) && productsData.length === 0 && packagesData.length === 0 ? (
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 md:gap-4">
+                    {Array.from({length: 8}).map((_,i) => (
+                        <Card key={`skel-item-${i}`} className="animate-pulse">
+                            <div className="relative w-full h-24 md:h-32 bg-secondary/70 rounded-t-md"></div>
                             <CardHeader className="p-2 md:p-3">
-                                <CardTitle className="text-xs md:text-sm">{pkg.name}</CardTitle>
-                                <CardDescription className="text-xs">{formatCurrency(pkg.price)}</CardDescription>
+                                <div className="h-4 bg-secondary/70 rounded w-3/4 mb-1"></div>
+                                <div className="h-3 bg-secondary/70 rounded w-1/2"></div>
                             </CardHeader>
                         </Card>
                     ))}
-                    </div>
-                 </>
-             )}
-             {productsData.length > 0 && (
-                 <>
-                     <h3 className="text-md md:text-lg font-medium mb-2 md:mb-3 border-b pb-1">Productos Individuales</h3>
-                     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 md:gap-4">
-                      {productsData.map(prod => {
-                        let displayPrice = prod.price;
-                        if (prod.is_platform_item && prod.platform_commission_rate) {
-                           displayPrice = prod.price / (1 - prod.platform_commission_rate);
-                        }
-                        return (
-                            <Card key={prod.id} onClick={() => handleProductClick(prod)} className="cursor-pointer hover:shadow-md transition-shadow group overflow-hidden">
+                </div>
+             ) : (
+                <>
+                {packagesData.length > 0 && (
+                    <>
+                        <h3 className="text-md md:text-lg font-medium mb-2 md:mb-3 text-accent border-b pb-1">Paquetes Disponibles</h3>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 md:gap-4 mb-4 md:mb-6">
+                        {packagesData.map(pkg => {
+                            let displayPkgPrice = pkg.price;
+                            if (effectiveGlobalIncrease > 0) {
+                                displayPkgPrice = pkg.price / (1 - effectiveGlobalIncrease);
+                            }
+                            return (
+                            <Card key={pkg.id} onClick={() => handlePackageClick(pkg)} className="cursor-pointer hover:shadow-md transition-shadow group overflow-hidden border-accent border-2">
                                 <div className="relative w-full h-24 md:h-32 bg-secondary">
-                                  {prod.imageUrl ? (
-                                    <Image src={prod.imageUrl} alt={prod.name} layout="fill" objectFit="cover" className="group-hover:scale-105 transition-transform duration-300" data-ai-hint="menu item food"/>
-                                   ) : ( <div className="absolute inset-0 flex items-center justify-center text-muted-foreground"><ShoppingBag className="h-8 w-8"/></div> )}
-                                   {prod.is_platform_item && <Badge variant="outline" className="absolute top-1 left-1 text-xs px-1 py-0 bg-background/80 border-orange-500 text-orange-600">Plataforma</Badge>}
-                                 </div>
-                              <CardHeader className="p-2 md:p-3">
-                                <CardTitle className="text-xs md:text-sm">{prod.name}</CardTitle>
-                                <CardDescription className="text-xs">{formatCurrency(displayPrice)}</CardDescription>
-                              </CardHeader>
+                                    {pkg.imageUrl ? (
+                                        <Image src={pkg.imageUrl} alt={pkg.name} layout="fill" objectFit="cover" className="group-hover:scale-105 transition-transform duration-300" data-ai-hint="combo meal deal"/>
+                                    ) : ( <div className="absolute inset-0 flex items-center justify-center text-muted-foreground"><PackageIcon className="h-8 w-8"/></div> )}
+                                    <Badge variant="secondary" className="absolute top-1 right-1 text-accent border-accent text-xs px-1 py-0">Paquete</Badge>
+                                    {effectiveGlobalIncrease > 0 && <Badge variant="outline" className="absolute top-1 left-1 text-xs px-1 py-0 bg-background/80 border-orange-500 text-orange-600">Plataforma</Badge>}
+                                </div>
+                                <CardHeader className="p-2 md:p-3">
+                                    <CardTitle className="text-xs md:text-sm">{pkg.name}</CardTitle>
+                                    <CardDescription className="text-xs">{formatCurrency(displayPkgPrice)}</CardDescription>
+                                </CardHeader>
                             </Card>
-                        );
-                      })}
-                    </div>
-                 </>
-             )}
-            {productsData.length === 0 && packagesData.length === 0 && (
-                <p className="col-span-full text-center text-muted-foreground py-10">No hay items encontrados en la categoría '{selectedCategory?.name}'.</p>
+                        )})}
+                        </div>
+                    </>
+                )}
+                {productsData.length > 0 && (
+                    <>
+                        <h3 className="text-md md:text-lg font-medium mb-2 md:mb-3 border-b pb-1">Productos Individuales</h3>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 md:gap-4">
+                        {productsData.map(prod => {
+                            let displayProdPrice = prod.price;
+                            if (effectiveGlobalIncrease > 0) {
+                                displayProdPrice = prod.price / (1 - effectiveGlobalIncrease);
+                            }
+                            return (
+                                <Card key={prod.id} onClick={() => handleProductClick(prod)} className="cursor-pointer hover:shadow-md transition-shadow group overflow-hidden">
+                                    <div className="relative w-full h-24 md:h-32 bg-secondary">
+                                    {prod.imageUrl ? (
+                                        <Image src={prod.imageUrl} alt={prod.name} layout="fill" objectFit="cover" className="group-hover:scale-105 transition-transform duration-300" data-ai-hint="menu item food"/>
+                                    ) : ( <div className="absolute inset-0 flex items-center justify-center text-muted-foreground"><ShoppingBag className="h-8 w-8"/></div> )}
+                                    {effectiveGlobalIncrease > 0 && <Badge variant="outline" className="absolute top-1 left-1 text-xs px-1 py-0 bg-background/80 border-orange-500 text-orange-600">Plataforma</Badge>}
+                                    </div>
+                                <CardHeader className="p-2 md:p-3">
+                                    <CardTitle className="text-xs md:text-sm">{prod.name}</CardTitle>
+                                    <CardDescription className="text-xs">{formatCurrency(displayProdPrice)}</CardDescription>
+                                </CardHeader>
+                                </Card>
+                            );
+                        })}
+                        </div>
+                    </>
+                )}
+                {productsData.length === 0 && packagesData.length === 0 && !(isLoading.products || isLoading.packages) && (
+                    <p className="col-span-full text-center text-muted-foreground py-10">No hay items encontrados en la categoría '{selectedCategory?.name}'.</p>
+                )}
+                </>
              )}
           </>
         );
@@ -1582,8 +1723,8 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
 
          const currentInstanceConfig = modifierConfigurations[currentInstanceIndexForConfiguration] || [];
          let displayPriceForSelectedProduct = selectedProduct.price;
-         if (selectedProduct.is_platform_item && selectedProduct.platform_commission_rate) {
-             displayPriceForSelectedProduct = selectedProduct.price / (1 - selectedProduct.platform_commission_rate);
+         if (currentOrderType === 'platform' && globalPlatformPriceIncreasePercent > 0) {
+             displayPriceForSelectedProduct = selectedProduct.price / (1 - globalPlatformPriceIncreasePercent);
          }
 
         return (
@@ -1594,7 +1735,7 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
                         <h2 className="text-lg md:text-xl font-semibold">{selectedProduct.name}</h2>
                         <p className="text-sm text-muted-foreground">
                            {formatCurrency(displayPriceForSelectedProduct)}
-                           {selectedProduct.is_platform_item && <Badge variant="outline" className="ml-2 text-xs border-orange-500 text-orange-600">Plataforma</Badge>}
+                           {currentOrderType === 'platform' && globalPlatformPriceIncreasePercent > 0 && <Badge variant="outline" className="ml-2 text-xs border-orange-500 text-orange-600">Plataforma</Badge>}
                         </p>
                     </div>
                     <div className="flex items-center gap-2">
@@ -1624,7 +1765,9 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
                  <p className="text-xs md:text-sm text-muted-foreground mb-2">Configura modificadores. Doble clic para estilos de servicio.</p>
             </div>
 
-             {currentModifierSlots.length === 0 && <p className="text-muted-foreground my-4 text-center">No hay modificadores disponibles para este producto.</p>}
+             {currentModifierSlots.length === 0 && !isLoading.modifiers && <p className="text-muted-foreground my-4 text-center">No hay modificadores disponibles para este producto.</p>}
+             {isLoading.modifiers && <div className="flex justify-center items-center my-4"><Loader2 className="h-6 w-6 animate-spin text-primary"/></div>}
+
 
              <ScrollArea className="flex-grow mb-3">
                 <div className="space-y-4 md:space-y-6 pr-2">
@@ -1655,10 +1798,16 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
 
                                         const slotOptionConfig = slot.allowedOptions?.find(ao => ao.modifier_product_id === option.id);
                                         const priceAdjustment = slotOptionConfig?.price_adjustment || 0;
-                                        const displayPriceForModifier = option.price + priceAdjustment + (currentSelectionDetails?.extraCost || 0);
+                                        let displayPriceForModifier = option.price + priceAdjustment + (currentSelectionDetails?.extraCost || 0);
+                                        
+                                        // No inflar precios de modificadores aquí, se manejan como sumas al precio base (ya inflado) del producto principal
+                                        // if (currentOrderType === 'platform' && globalPlatformPriceIncreasePercent > 0) {
+                                        //    displayPriceForModifier = displayPriceForModifier / (1 - globalPlatformPriceIncreasePercent);
+                                        // }
+
 
                                         return (
-                                        <Popover key={option.id} open={servingStylePopoverState?.modifierProductId === option.id && servingStylePopoverState?.modifierSlotId === slot.id && servingStylePopoverState?.packageItemContextId === null} onOpenChange={(open) => { if (!open) setServingStylePopoverState(null); }}>
+                                        <Popover key={option.id} open={servingStylePopoverState?.modifierProductId === option.id && servingStylePopoverState?.modifierSlotId === slot.id && servingStylePopoverState?.packageItemContextId === null && servingStylePopoverState.orderItemUniqueId === null} onOpenChange={(open) => { if (!open) setServingStylePopoverState(null); }}>
                                             <PopoverTrigger asChild>
                                             <div
                                                 onDoubleClick={(e) => handleModifierDoubleClick(e, option.id, slot.id, 'product')}
@@ -1726,10 +1875,15 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
     case 'package-details':
         if (!selectedPackageDetail) return <p className="text-center text-muted-foreground py-10">Error: No hay paquete seleccionado.</p>;
         const { packageDef, packageItems, itemSlots } = selectedPackageDetail;
+        let displayPackagePrice = packageDef.price;
+        if (currentOrderType === 'platform' && globalPlatformPriceIncreasePercent > 0) {
+            displayPackagePrice = packageDef.price / (1 - globalPlatformPriceIncreasePercent);
+        }
+
         return (
             <div className="flex flex-col h-full">
              <div className="flex-shrink-0">
-                 <h2 className="text-lg md:text-xl font-semibold mb-1">{packageDef.name} - {formatCurrency(packageDef.price)}</h2>
+                 <h2 className="text-lg md:text-xl font-semibold mb-1">{packageDef.name} - {formatCurrency(displayPackagePrice)}</h2>
                  <p className="text-xs md:text-sm text-muted-foreground mb-2">Configura opciones para este paquete ({currentProductConfigQuantity > 1 ? `${currentProductConfigQuantity} paquetes` : '1 paquete'}). Doble clic en modificadores para estilos.</p>
              </div>
              <ScrollArea className="flex-grow mb-3">
@@ -1749,7 +1903,7 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
                                             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 md:gap-3">
                                                 {slot.options.map(option => {
                                                     const isSelected = currentPackageItemInstanceConfig.some(sel => sel.productId === option.id);
-                                                    const maxQty = slot.max_quantity;
+                                                    const maxQty = slot.max_quantity; // Este ya es el max del override si existe
                                                     const maxReached = currentPackageItemInstanceConfig.length >= maxQty;
                                                     const isDisabled = !isSelected && maxReached;
                                                     const currentSelection = currentPackageItemInstanceConfig.find(sel => sel.productId === option.id);
@@ -1762,10 +1916,11 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
                                                     const isOutOfStock = !optionInventoryOk && !isSelected;
                                                     const slotOptCfgPkg = slot.allowedOptions?.find(ao => ao.modifier_product_id === option.id);
                                                     const priceAdjPkg = slotOptCfgPkg?.price_adjustment || 0;
-                                                    const displayPriceModPkg = option.price + priceAdjPkg + (currentSelection?.extraCost || 0);
+                                                    let displayPriceModPkg = option.price + priceAdjPkg + (currentSelection?.extraCost || 0);
+                                                    // No inflar precios de modificadores de paquete aquí
 
                                                     return (
-                                                    <Popover key={option.id} open={servingStylePopoverState?.modifierProductId === option.id && servingStylePopoverState?.modifierSlotId === slot.id && servingStylePopoverState?.packageItemContextId === item.id} onOpenChange={(open) => { if (!open) setServingStylePopoverState(null); }}>
+                                                    <Popover key={option.id} open={servingStylePopoverState?.modifierProductId === option.id && servingStylePopoverState?.modifierSlotId === slot.id && servingStylePopoverState?.packageItemContextId === item.id && servingStylePopoverState.orderItemUniqueId === null} onOpenChange={(open) => { if (!open) setServingStylePopoverState(null); }}>
                                                         <PopoverTrigger asChild>
                                                         <div
                                                             onDoubleClick={(e) => handleModifierDoubleClick(e, option.id, slot.id, 'package', item.id)}
@@ -1858,7 +2013,7 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
                 {isViewLoading ? (
                     <div className="flex justify-center items-center h-full"><Loader2 className="h-8 w-8 animate-spin text-muted-foreground" /></div>
                 ) : (
-                     <div className="h-full"> 
+                     <div className="h-full">
                         {renderContent()}
                      </div>
                 )}
@@ -1868,11 +2023,20 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
 
       <div className="lg:col-span-1 h-full">
          <Card className="h-full flex flex-col shadow-md">
-           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 pt-3 md:pt-4 border-b">
-               <div>
+           <CardHeader className="pb-2 pt-3 md:pt-4 border-b">
+               <div className="flex flex-row items-center justify-between space-y-0 ">
                  <CardTitle className="text-base md:text-lg">Resumen Pedido</CardTitle>
                  <CardDescription className="text-xs md:text-sm">{editingOrderId ? `Editando: #${originalOrderForEdit?.orderNumber}` : (currentOrder.id || 'Nuevo Pedido')}</CardDescription>
                </div>
+                 <RadioGroup
+                    value={currentOrderType}
+                    onValueChange={(value) => setCurrentOrderType(value as OrderType)}
+                    className="flex gap-2 pt-2"
+                  >
+                    <div className="flex items-center space-x-1"><RadioGroupItem value="pickup" id="type-pickup" className="h-3.5 w-3.5"/><Label htmlFor="type-pickup" className="text-xs">Recoger <Store className="inline h-3 w-3 ml-0.5"/></Label></div>
+                    <div className="flex items-center space-x-1"><RadioGroupItem value="delivery" id="type-delivery" className="h-3.5 w-3.5"/><Label htmlFor="type-delivery" className="text-xs">Delivery <Bike className="inline h-3 w-3 ml-0.5"/></Label></div>
+                    <div className="flex items-center space-x-1"><RadioGroupItem value="platform" id="type-platform" className="h-3.5 w-3.5"/><Label htmlFor="type-platform" className="text-xs">Plataforma <Truck className="inline h-3 w-3 ml-0.5"/></Label></div>
+                </RadioGroup>
            </CardHeader>
            <CardContent className="flex-grow flex flex-col overflow-hidden pt-3 md:pt-4 p-3 md:p-4">
              <div className="mb-3 md:mb-4">
@@ -1890,6 +2054,7 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
                  </div>
                )}
              </div>
+             {renderOrderTypeSpecificFields()}
              <Separator className="mb-3 md:mb-4" />
              <div className="flex-grow mb-3 md:mb-4 overflow-y-auto -mr-3 md:-mr-4 pr-3 md:pr-4" key={`order-summary-${currentOrder.items.length}`}>
                 {currentOrder.items.length === 0 ? (<p className="text-muted-foreground text-center py-8 text-sm md:text-base">El pedido está vacío.</p>) : (
@@ -1911,9 +2076,11 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
                             </div>
                              <Button variant="ghost" size="icon" className="h-5 w-5 text-destructive hover:text-destructive" onClick={() => handleRemoveItem(item.uniqueId)}><Trash2 className="h-3 w-3 md:h-4 md:w-4"/></Button>
                          </div>
-                         {item.applied_commission_rate && item.original_platform_price && (
+                         {item.applied_platform_inflation_rate && item.inflatedPricePerUnit && (
                              <div className="text-xs text-orange-600 ml-2 md:ml-4 mt-0.5">
-                                 Precio Plataforma: {formatCurrency(item.original_platform_price)} (Comisión: {(item.applied_commission_rate * 100).toFixed(0)}%)
+                                 Precio Plataforma: {formatCurrency(item.inflatedPricePerUnit)} (Aumento: {(item.applied_platform_inflation_rate * 100).toFixed(0)}%)
+                                 <br/>
+                                 <span className="text-muted-foreground text-xs">Precio Base Item (antes de mods): {formatCurrency(item.basePrice)}</span>
                              </div>
                          )}
                          {(item.selectedModifiers.length > 0 || (item.type === 'package' && item.packageItems && item.packageItems.some(pi => pi.selectedModifiers.length > 0))) && (
@@ -1949,7 +2116,7 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
                                                   {mod.servingStyle && mod.servingStyle !== 'Normal' && ` (${mod.servingStyle})`}
                                                   {(mod.priceModifier || 0) + (mod.extraCost || 0) !== 0 ? ` (${formatCurrency((mod.priceModifier || 0) + (mod.extraCost || 0))})` : ''}
                                                 </span>
-                                                <Button variant="ghost" size="icon" className="h-4 w-4 text-primary/70" onClick={() => handleOpenExtraCostDialog(item.uniqueId, mod.productId, mod.slotId)}><DollarSign className="h-3 w-3"/></Button>
+                                                 <Button variant="ghost" size="icon" className="h-4 w-4 text-primary/70" onClick={() => handleOpenExtraCostDialog(item.uniqueId, mod.productId, mod.slotId)}><DollarSign className="h-3 w-3"/></Button>
                                             </li>
                                         ))
                                     )}
