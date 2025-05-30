@@ -11,7 +11,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from '@/components/ui/button';
 import { PlusCircle, Edit, Trash2, Loader2, Save, X, MinusCircle, Settings, List } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogClose } from "@/components/ui/dialog";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger, AlertDialogFooter } from "@/components/ui/alert-dialog"; // Asegurar que AlertDialogFooter esté aquí
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger, AlertDialogFooter } from "@/components/ui/alert-dialog";
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -50,9 +50,14 @@ const productSchema = z.object({
     imageUrl: z.string().url("Debe ser una URL válida").optional().or(z.literal('')),
     inventory_item_id: z.string().nullable().optional(),
     inventory_consumed_per_unit: z.coerce.number().min(0, "Consumo debe ser positivo").optional().nullable(),
+    is_platform_item: z.boolean().default(false).optional(),
+    platform_commission_rate: z.coerce.number().min(0).max(1, "La comisión debe estar entre 0 y 1 (ej. 0.3 para 30%)").optional().nullable(),
 }).refine(data => !data.inventory_item_id || (data.inventory_item_id && data.inventory_consumed_per_unit !== undefined && data.inventory_consumed_per_unit !== null), {
     message: "El consumo por unidad es requerido si se vincula un ítem de inventario.",
     path: ["inventory_consumed_per_unit"],
+}).refine(data => !data.is_platform_item || (data.is_platform_item && data.platform_commission_rate !== undefined && data.platform_commission_rate !== null), {
+    message: "La tasa de comisión es requerida si es un ítem de plataforma.",
+    path: ["platform_commission_rate"],
 });
 type ProductFormValues = z.infer<typeof productSchema>;
 
@@ -117,6 +122,7 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
         defaultValues: {
             name: '', price: 0, categoryId: '', imageUrl: '',
             inventory_item_id: null, inventory_consumed_per_unit: 1,
+            is_platform_item: false, platform_commission_rate: 0,
         },
     });
 
@@ -162,11 +168,14 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
                 name: product.name, price: product.price, categoryId: product.categoryId,
                 imageUrl: product.imageUrl || '', inventory_item_id: product.inventory_item_id || null,
                 inventory_consumed_per_unit: product.inventory_consumed_per_unit ?? 1,
+                is_platform_item: product.is_platform_item ?? false,
+                platform_commission_rate: product.platform_commission_rate ?? 0,
             });
         } else {
              productForm.reset({
                 name: '', price: 0, categoryId: '', imageUrl: '',
                 inventory_item_id: null, inventory_consumed_per_unit: 1,
+                is_platform_item: false, platform_commission_rate: 0,
             });
         }
         setIsFormOpen(true);
@@ -184,34 +193,37 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
         setIsSubmitting(true);
         const dataToSave = {
             ...values,
-             imageUrl: values.imageUrl || null,
+            imageUrl: values.imageUrl || null,
             inventory_item_id: values.inventory_item_id || null,
-             inventory_consumed_per_unit: values.inventory_item_id ? (values.inventory_consumed_per_unit ?? 1) : null,
+            inventory_consumed_per_unit: values.inventory_item_id ? (values.inventory_consumed_per_unit ?? 1) : null,
+            platform_commission_rate: values.is_platform_item ? (values.platform_commission_rate ?? 0) : 0, // Asegurar que la comisión sea 0 si no es de plataforma
         };
         console.log("[ManageProducts] Guardando producto:", JSON.stringify(dataToSave, null, 2));
         try {
+            let productForSlotLoading: Product | null = null;
              if (editingProduct && editingProduct.id) {
                 await updateProductService(editingProduct.id, dataToSave as Partial<Omit<Product, 'id'>>);
                 toast({ title: "Éxito", description: "Producto actualizado." });
                 const updatedProductData = { ...editingProduct, ...dataToSave };
                 setEditingProduct(updatedProductData); // Actualizar estado local
-                // Refrescar slots si el tipo es 'producto'
-                const categoryOfProduct = productAssignableCategories.find(c => c.id === updatedProductData.categoryId);
-                if (categoryOfProduct?.type === 'producto') {
-                    await fetchSlotsForProduct(updatedProductData.id);
-                } else {
-                    setCurrentModifierSlots([]);
-                }
+                productForSlotLoading = updatedProductData;
              } else {
                 const newProduct = await addProductService(dataToSave as Omit<Product, 'id'>);
                 toast({ title: "Éxito", description: "Producto añadido. Ahora puedes añadir modificadores si es de tipo 'producto'." });
                 setEditingProduct(newProduct);
-                const newProductCategory = productAssignableCategories.find(c => c.id === newProduct.categoryId);
-                if (newProductCategory && newProductCategory.type === 'producto') {
-                    await fetchSlotsForProduct(newProduct.id); // Cargar slots para el nuevo producto
-                }
+                productForSlotLoading = newProduct;
              }
-            await onDataChange(); 
+            await onDataChange();
+
+            if (productForSlotLoading) {
+                const categoryOfProduct = productAssignableCategories.find(c => c.id === productForSlotLoading!.categoryId);
+                if (categoryOfProduct?.type === 'producto') {
+                    await fetchSlotsForProduct(productForSlotLoading.id);
+                } else {
+                    setCurrentModifierSlots([]);
+                }
+            }
+
         } catch (error) {
              const action = editingProduct ? 'actualizar' : 'añadir';
             console.error(`[ManageProducts] Error al ${action} producto:`, error);
@@ -419,12 +431,13 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
                                     <TableHead className="text-right">Precio</TableHead>
                                     <TableHead>Inventario Vinculado</TableHead>
                                     <TableHead className="text-right">Consumo</TableHead>
+                                    <TableHead>Plataforma</TableHead>
                                     <TableHead className="text-right">Acciones</TableHead>
                                 </TableRow>
                              </TableHeader>
                              <TableBody>
                                 {products.length === 0 ? (
-                                    <TableRow><TableCell colSpan={6} className="text-center h-24">No hay productos.</TableCell></TableRow>
+                                    <TableRow><TableCell colSpan={7} className="text-center h-24">No hay productos.</TableCell></TableRow>
                                 ) : (
                                     products.map(prod => {
                                          const category = categories.find(c => c.id === prod.categoryId);
@@ -441,6 +454,13 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
                                                 <TableCell className="text-right">{formatCurrency(prod.price)}</TableCell>
                                                 <TableCell>{invItem?.name || <span className="text-xs text-muted-foreground">N/A</span>}</TableCell>
                                                 <TableCell className="text-right">{invItem ? `${prod.inventory_consumed_per_unit ?? 1} ${invItem.unit}`: '-'}</TableCell>
+                                                <TableCell>
+                                                    {prod.is_platform_item ? (
+                                                        <Badge variant="outline" className="text-blue-600 border-blue-400">Sí ({((prod.platform_commission_rate ?? 0) * 100).toFixed(0)}%)</Badge>
+                                                    ) : (
+                                                        <span className="text-xs text-muted-foreground">No</span>
+                                                    )}
+                                                </TableCell>
                                                 <TableCell className="text-right">
                                                      <Button variant="ghost" size="icon" className="h-7 w-7 mr-1" onClick={() => handleOpenForm(prod)} title="Editar Producto">
                                                         <Edit className="h-4 w-4" />
@@ -478,14 +498,14 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
             </Card>
 
             <Dialog open={isFormOpen} onOpenChange={(open) => { if (!open) handleCloseForm() }}>
-                 <DialogContent className="sm:max-w-3xl max-h-[90vh] flex flex-col">
+                 <DialogContent className="sm:max-w-3xl max-h-[90vh] flex flex-col overflow-hidden">
                     <DialogHeader>
                         <DialogTitle>{editingProduct ? 'Editar Producto/Modificador' : 'Añadir Nuevo Producto/Modificador'}</DialogTitle>
                         <DialogDescription>
                              Define un producto vendible o una opción modificadora.
                         </DialogDescription>
                     </DialogHeader>
-                    <ScrollArea className="flex-grow">
+                    <ScrollArea className="flex-grow min-h-0">
                       <div className="space-y-6 p-1 pr-4">
                         <Form {...productForm}>
                             <form onSubmit={productForm.handleSubmit(handleFormSubmit)} className="space-y-4">
@@ -513,7 +533,7 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
                                 <FormField control={productForm.control} name="imageUrl" render={({ field }) => (
                                     <FormItem><FormLabel>URL de Imagen (Opcional)</FormLabel><FormControl><Input type="url" placeholder="https://..." {...field} value={field.value ?? ''} /></FormControl><FormMessage /></FormItem>
                                 )}/>
-                                <div className="grid grid-cols-2 gap-4">
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                     <FormField
                                     control={productForm.control}
                                     name="inventory_item_id"
@@ -553,6 +573,51 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
                                         )}/>
                                     )}
                                 </div>
+                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-center pt-2">
+                                     <FormField
+                                         control={productForm.control}
+                                         name="is_platform_item"
+                                         render={({ field }) => (
+                                             <FormItem className="flex flex-row items-center space-x-3 space-y-0 rounded-md border p-3 shadow-sm">
+                                                 <FormControl>
+                                                     <Checkbox
+                                                         checked={field.value}
+                                                         onCheckedChange={field.onChange}
+                                                     />
+                                                 </FormControl>
+                                                 <div className="space-y-1 leading-none">
+                                                     <FormLabel>¿Es para Plataforma de Entrega?</FormLabel>
+                                                 </div>
+                                             </FormItem>
+                                         )}
+                                     />
+                                     {productForm.watch('is_platform_item') && (
+                                         <FormField
+                                             control={productForm.control}
+                                             name="platform_commission_rate"
+                                             render={({ field }) => (
+                                                 <FormItem>
+                                                     <FormLabel>Tasa Comisión Plataforma (%)</FormLabel>
+                                                     <FormControl>
+                                                         <Input
+                                                             type="number"
+                                                             step="0.01"
+                                                             min="0"
+                                                             max="100"
+                                                             placeholder="Ej: 30 para 30%"
+                                                             value={field.value !== null && field.value !== undefined ? (field.value * 100).toString() : ''}
+                                                             onChange={(e) => {
+                                                                 const percentage = parseFloat(e.target.value);
+                                                                 field.onChange(isNaN(percentage) ? null : percentage / 100);
+                                                             }}
+                                                         />
+                                                     </FormControl>
+                                                     <FormMessage />
+                                                 </FormItem>
+                                             )}
+                                         />
+                                     )}
+                                 </div>
                                 <div className="flex justify-end">
                                     <Button type="submit" size="sm" disabled={isSubmitting || productAssignableCategories.length === 0}>
                                             {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4"/>}
@@ -627,7 +692,7 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
              </Dialog>
 
             <Dialog open={!!editingSlotOptions} onOpenChange={(open) => { if (!open) handleCloseEditSlotOptions(); }}>
-                <DialogContent className="sm:max-w-2xl max-h-[80vh] flex flex-col">
+                <DialogContent className="sm:max-w-2xl max-h-[80vh] flex flex-col overflow-hidden">
                     <DialogHeader>
                         <DialogTitle>Configurar Opciones para "{editingSlotOptions?.label}"</DialogTitle>
                         <DialogDescription>
@@ -641,8 +706,8 @@ const ManageProducts: React.FC<ManageProductsProps> = ({
                     ) : optionsForEditingSlot.length === 0 && editingSlotOptions ? (
                         <p className="text-muted-foreground text-center py-4">No hay productos modificadores en la categoría "{modifierCategories.find(c => c.id === editingSlotOptions?.linked_category_id)?.name}".</p>
                     ) : (
-                        <ScrollArea className="flex-grow mt-4 pr-4">
-                            <div className="space-y-3">
+                        <ScrollArea className="flex-grow min-h-0 mt-4">
+                            <div className="space-y-3 p-1 pr-4">
                                 {optionsForEditingSlot.map(optionProduct => {
                                     const currentSlotOptionConfig = editingSlotOptions?.allowedOptions?.find(allowed => allowed.modifier_product_id === optionProduct.id);
                                     const isAllowed = !!currentSlotOptionConfig;

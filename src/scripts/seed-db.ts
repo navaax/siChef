@@ -29,7 +29,7 @@ const inventoryItems: InventoryItem[] = [
 
 const products: Product[] = [
   // Alitas
-  { id: 'prod-alitas-6', name: 'Alitas 6pz', price: 95, categoryId: 'cat-alitas', imageUrl: 'https://i.pinimg.com/736x/82/2e/a7/822ea701f82eb9f0f9509b8458b08600.jpg', inventory_item_id: 'inv-alitas', inventory_consumed_per_unit: 6 },
+  { id: 'prod-alitas-6', name: 'Alitas 6pz', price: 95, categoryId: 'cat-alitas', imageUrl: 'https://i.pinimg.com/736x/82/2e/a7/822ea701f82eb9f0f9509b8458b08600.jpg', inventory_item_id: 'inv-alitas', inventory_consumed_per_unit: 6, is_platform_item: true, platform_commission_rate: 0.30 },
   { id: 'prod-alitas-12', name: 'Alitas 12pz', price: 180, categoryId: 'cat-alitas', imageUrl: 'https://picsum.photos/200/150?random=alitas12', inventory_item_id: 'inv-alitas', inventory_consumed_per_unit: 12 },
   { id: 'prod-alitas-18', name: 'Alitas 18pz', price: 260, categoryId: 'cat-alitas', imageUrl: 'https://picsum.photos/200/150?random=alitas18', inventory_item_id: 'inv-alitas', inventory_consumed_per_unit: 18 },
   // Costillas
@@ -206,11 +206,12 @@ async function seedDatabase() {
 
     // Insert Products
     console.log('Insertando productos...');
-    const productStmt = await db.prepare('INSERT INTO products (id, name, price, categoryId, imageUrl, inventory_item_id, inventory_consumed_per_unit) VALUES (?, ?, ?, ?, ?, ?, ?)');
+    const productStmt = await db.prepare('INSERT INTO products (id, name, price, categoryId, imageUrl, inventory_item_id, inventory_consumed_per_unit, is_platform_item, platform_commission_rate) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
     for (const product of products) {
       await productStmt.run(
         product.id, product.name, product.price, product.categoryId,
-        product.imageUrl, product.inventory_item_id, product.inventory_consumed_per_unit ?? null
+        product.imageUrl, product.inventory_item_id, product.inventory_consumed_per_unit ?? null,
+        product.is_platform_item ? 1 : 0, product.platform_commission_rate ?? 0
       );
     }
     await productStmt.finalize();

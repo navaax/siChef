@@ -25,6 +25,8 @@ export interface Product {
   imageUrl?: string;
   inventory_item_id?: string | null; // Opcional: ID del item de inventario vinculado
   inventory_consumed_per_unit?: number | null; // Opcional: cuánto inventario consume
+  is_platform_item?: boolean; // Para precios de plataforma
+  platform_commission_rate?: number; // Tasa de comisión de plataforma (ej. 0.30 para 30%)
 }
 
 export interface Package {
@@ -102,10 +104,11 @@ export interface OrderItem {
   id: string; // ID del producto o paquete base
   name: string;
   quantity: number;
-  basePrice: number; // Precio base del producto o paquete
-  selectedModifiers: SelectedModifierItem[]; // Modificadores seleccionados (para producto) o para items de paquete (agregados)
-  totalPrice: number; // Precio total del item (cantidad * (basePrice + suma de modificadores))
+  basePrice: number; // Precio base original del producto o paquete
+  totalPrice: number; // Precio total del item (cantidad * (precio_plataforma_si_aplica o basePrice + suma de modificadores))
   uniqueId: string; // ID único para la línea del pedido en la UI
+  applied_commission_rate?: number; // Tasa de comisión que se aplicó (si es de plataforma)
+  original_platform_price?: number; // Precio de plataforma individual si se aplicó
 
   packageItems?: {
     packageItemId: string; // ID del PackageItem (definición del paquete)
@@ -120,7 +123,6 @@ export interface CurrentOrder {
   id: string; // ID del pedido (puede ser temporal o de la BD)
   customerName: string;
   items: OrderItem[];
-  // subtotal y total ahora se calculan con useMemo en el componente
   paymentMethod: 'cash' | 'card';
   paidAmount?: number; // Para pagos en efectivo
   changeDue?: number; // Para pagos en efectivo
@@ -133,15 +135,21 @@ export interface SavedOrderItemComponent {
     slotLabel?: string; // Etiqueta del grupo al que pertenece (si es modificador) o "Contenido" (si es item de paquete)
     servingStyle?: string; // Estilo de servicio para el modificador
     extraCost?: number; // Costo extra aplicado al modificador
+    productId?: string; // ID del producto modificador
+    priceModifier?: number; // Precio base del modificador + ajuste del slot (NO incluye extraCost)
+    slotId?: string;
 }
 
 export interface SavedOrderItem {
   id: string; // ID del producto o paquete original
   name: string;
   quantity: number;
-  price: number; // Precio base unitario del producto o paquete
-  totalItemPrice: number; // Precio total de esta línea de pedido (cantidad * (precio + modificadores))
+  price: number; // Precio base unitario original del producto o paquete
+  totalItemPrice: number; // Precio total de esta línea de pedido (cantidad * (precio_plataforma o precio + modificadores))
   components: SavedOrderItemComponent[]; // Lista de modificadores o contenido del paquete con sus detalles
+  // Para trazabilidad de precios de plataforma
+  isPlatformItem?: boolean;
+  platformPricePerUnit?: number; // Precio unitario de plataforma que se cobró
 }
 
 export interface SavedOrder {
@@ -154,11 +162,12 @@ export interface SavedOrder {
   total: number;
   status: 'pending' | 'completed' | 'cancelled';
   createdAt: Date; // Fecha de creación
+  updatedAt?: Date; // Fecha de última modificación
   paidAmount?: number;
   changeGiven?: number;
   cancellationDetails?: { // Detalles de cancelación
     reason: string;
-    cancelledBy?: string; // Username del que canceló
+    cancelledBy: string; // Username del que canceló
     cancelledAt: string; // Timestamp ISO
     authorizedPin?: string; // PIN ingresado (para registro)
   };

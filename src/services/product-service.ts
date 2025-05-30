@@ -354,11 +354,13 @@ export async function addProduct(product: Omit<Product, 'id'>): Promise<Product>
   const db = await getDb();
   const newProduct = { ...product, id: randomUUID() };
   try {
-    const query = 'INSERT INTO products (id, name, price, categoryId, imageUrl, inventory_item_id, inventory_consumed_per_unit) VALUES (?, ?, ?, ?, ?, ?, ?)';
+    const query = 'INSERT INTO products (id, name, price, categoryId, imageUrl, inventory_item_id, inventory_consumed_per_unit, is_platform_item, platform_commission_rate) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)';
     const params = [
       newProduct.id, newProduct.name, newProduct.price, newProduct.categoryId,
       newProduct.imageUrl ?? null, newProduct.inventory_item_id ?? null,
-      newProduct.inventory_consumed_per_unit ?? null
+      newProduct.inventory_consumed_per_unit ?? null,
+      newProduct.is_platform_item ? 1 : 0, // Convertir boolean a integer para SQLite
+      newProduct.platform_commission_rate ?? 0
     ];
     console.log(`[addProduct] Query: ${query}, Params: ${JSON.stringify(params)}`);
     await db.run(query, ...params); // Usar spread operator para params
@@ -381,6 +383,8 @@ export async function updateProduct(id: string, updates: Partial<Omit<Product, '
      } else if (key === 'inventory_item_id' && (value === '' || value === null || value === '__NONE__')) {
         validUpdates[key as keyof Product] = null;
         validUpdates['inventory_consumed_per_unit'] = null; // Asegurar que se limpia el consumo
+     } else if (key === 'is_platform_item') {
+        validUpdates[key as keyof Product] = value ? 1 : 0; // Convertir boolean a integer
      } else if (value !== undefined) {
         validUpdates[key as keyof Product] = value as any;
      }
@@ -394,6 +398,11 @@ export async function updateProduct(id: string, updates: Partial<Omit<Product, '
    if (validUpdates.inventory_item_id === null) {
         validUpdates.inventory_consumed_per_unit = null;
    }
+   // Si is_platform_item es false, platform_commission_rate debe ser 0
+   if (validUpdates.is_platform_item === false || validUpdates.is_platform_item === 0) {
+       validUpdates.platform_commission_rate = 0;
+   }
+
 
    const fields = Object.keys(validUpdates);
    if (fields.length === 0) {
@@ -632,7 +641,7 @@ export async function addModifierSlotOption(option: Omit<ProductModifierSlotOpti
 
 
         const query = 'INSERT INTO product_modifier_slot_options (id, product_modifier_slot_id, modifier_product_id, is_default, price_adjustment) VALUES (?, ?, ?, ?, ?)';
-        const params = [newOption.id, newOption.product_modifier_slot_id, newOption.modifier_product_id, option.is_default ?? 0, option.price_adjustment ?? 0];
+        const params = [newOption.id, newOption.product_modifier_slot_id, newOption.modifier_product_id, option.is_default ? 1 : 0, option.price_adjustment ?? 0];
         console.log(`[addModifierSlotOption] Query: ${query}, Params: ${JSON.stringify(params)}`);
         await db.run(query, ...params); // Usar spread operator para params
         console.log(`[addModifierSlotOption] Opción ${newOption.modifier_product_id} añadida a slot ${newOption.product_modifier_slot_id}.`);

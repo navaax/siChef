@@ -42,7 +42,6 @@ import type {
     PackageItem,
     PackageItemModifierSlotOverride,
     OrderItem,
-    CurrentOrder,
     SelectedModifierItem,
     SavedOrder,
     SavedOrderItemComponent, // Asegúrate que este tipo esté importado
@@ -148,7 +147,19 @@ export default function CreateOrderPage() {
     });
 
   const subtotal = useMemo(() => {
-    return currentOrder.items.reduce((sum, item) => sum + item.totalPrice, 0);
+    return currentOrder.items.reduce((sum, item) => {
+        // Para el cálculo del subtotal, considera el precio ajustado por plataforma si aplica
+        const itemPrice = item.original_platform_price ?? item.basePrice;
+        let modifiersTotal = 0;
+        if (item.type === 'product') {
+            modifiersTotal = item.selectedModifiers.reduce((modSum, mod) => modSum + (mod.priceModifier || 0) + (mod.extraCost || 0), 0);
+        } else if (item.type === 'package' && item.packageItems) {
+            item.packageItems.forEach(pi => {
+                modifiersTotal += pi.selectedModifiers.reduce((modSum, mod) => modSum + (mod.priceModifier || 0) + (mod.extraCost || 0), 0);
+            });
+        }
+        return sum + (itemPrice + modifiersTotal) * item.quantity;
+    }, 0);
   }, [currentOrder.items]);
 
   const total = useMemo(() => subtotal, [subtotal]);
@@ -230,7 +241,7 @@ export default function CreateOrderPage() {
                  baseItemDetails = await getPackageById(savedItem.id);
                  itemType = baseItemDetails ? 'package' : 'product'; // Confirmar
             } else {
-                baseItemDetails = await getProductById(savedItem.id);
+                baseItemDetails = allProductsMap.get(savedItem.id) || await getProductById(savedItem.id); // Usar mapa primero
                 itemType = 'product';
             }
 
@@ -246,25 +257,25 @@ export default function CreateOrderPage() {
                 id: baseItemDetails.id,
                 name: baseItemDetails.name,
                 quantity: savedItem.quantity,
-                basePrice: baseItemDetails.price,
+                basePrice: baseItemDetails.price, // Precio base original
                 selectedModifiers: [],
-                totalPrice: savedItem.totalItemPrice,
+                totalPrice: savedItem.totalItemPrice, // Precio total como estaba guardado
                 uniqueId: uuidv4(), // Nuevo uniqueId para la UI
                 packageItems: [],
+                applied_commission_rate: savedItem.isPlatformItem ? (allProductsMap.get(savedItem.id)?.platform_commission_rate) : undefined,
+                original_platform_price: savedItem.isPlatformItem ? savedItem.platformPricePerUnit : undefined,
             };
 
             if (itemType === 'product') {
                 reconstructedOrderItem.selectedModifiers = (savedItem.components || [])
-                    .filter(comp => comp.slotId) // Asegurarse que el componente es un modificador con slotId
+                    .filter(comp => comp.slotId && comp.productId) // Asegurarse que el componente es un modificador con slotId y productId
                     .map(comp => {
-                        if (!comp.productId || !comp.slotId) return null;
-                        const modifierProduct = allProductsMap.get(comp.productId); // Obtener precio base del modificador si es necesario
-
+                        const modifierProduct = allProductsMap.get(comp.productId!); 
                         return {
-                            productId: comp.productId,
+                            productId: comp.productId!,
                             name: comp.name,
                             priceModifier: comp.priceModifier || 0, // Este es el precio guardado del modificador
-                            slotId: comp.slotId,
+                            slotId: comp.slotId!,
                             servingStyle: comp.servingStyle || 'Normal',
                             extraCost: comp.extraCost || 0,
                         };
@@ -275,12 +286,6 @@ export default function CreateOrderPage() {
 
                 reconstructedOrderItem.packageItems = currentPackageItemsDef.map(pkgItemDef => {
                     const savedSubItemModifiers: SelectedModifierItem[] = [];
-                    // Lógica mejorada para encontrar modificadores de sub-ítems.
-                    // Un componente se considera modificador de un sub-ítem si:
-                    // 1. No tiene slotLabel 'Contenido' (esos son los sub-ítems mismos)
-                    // 2. Su productId está en allProductsMap
-                    // 3. Su slotId está presente
-                    // 4. (Heurística) Su nombre está relacionado con el nombre del sub-ítem (esto es lo más débil)
                      (savedItem.components || []).forEach(comp => {
                         if (comp.slotLabel !== 'Contenido' && comp.productId && comp.slotId && comp.name.includes(pkgItemDef.product_name || '')) {
                             savedSubItemModifiers.push({
@@ -325,7 +330,7 @@ export default function CreateOrderPage() {
         setIsLoading(prev => ({ ...prev, page: false }));
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [router, toast, allProductsMap]);
+  }, [router, toast, allProductsMap]); // packagesData removido temporalmente de dependencias si causa bucles.
 
 
   useEffect(() => {
@@ -333,34 +338,33 @@ export default function CreateOrderPage() {
     console.log(`[CreateOrderPage] useEffect for editOrderId. Query param: ${orderIdFromQuery}, current editingOrderId: ${editingOrderId}`);
 
     if (orderIdFromQuery) {
-      if (editingOrderId === orderIdFromQuery && !isLoading.page) { // Si ya estamos editando este y no estamos cargando
+      if (editingOrderId === orderIdFromQuery && !isLoading.page) { 
         console.log(`[CreateOrderPage] Ya se está editando el pedido ${orderIdFromQuery} o carga finalizada. No se recarga.`);
-      } else if (!isLoading.page && (!editingOrderId || editingOrderId !== orderIdFromQuery)) { // Si no estamos cargando y es un nuevo ID o no hay ID de edición
+      } else if (!isLoading.page && (!editingOrderId || editingOrderId !== orderIdFromQuery)) { 
         console.log(`[CreateOrderPage] Llamando a loadOrderForEditing para ${orderIdFromQuery}`);
         loadOrderForEditing(orderIdFromQuery);
       }
-    } else { // No hay orderIdFromQuery en la URL
-      if (editingOrderId) { // Si estábamos en modo edición, limpiar para un nuevo pedido
+    } else { 
+      if (editingOrderId) { 
         console.log("[CreateOrderPage] No hay editOrderId en URL, pero estábamos en modo edición. Reseteando para un pedido nuevo.");
         setEditingOrderId(null);
         setOriginalOrderForEdit(null);
         clearOrder();
       }
-      // Si no estábamos en modo edición, y no hay orderIdFromQuery, es un nuevo pedido.
-      // Los datos iniciales se cargarán a través del otro useEffect.
+      if (!isLoading.page && categoriesData.length === 0) { // Cargar datos solo si no están cargados y no estamos editando
+          fetchInitialData();
+      }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams, editingOrderId, loadOrderForEditing]); // isLoading.page fue removido para evitar bucles si loadOrderForEditing falla y resetea la URL
+  }, [searchParams, editingOrderId, loadOrderForEditing]); 
 
 
   useEffect(() => {
-    // Cargar datos iniciales solo si NO estamos en modo de edición.
-    // La carga de datos para un pedido en edición la maneja `loadOrderForEditing`.
-    if (!editingOrderId) {
+    if (!editingOrderId && !isLoading.page && categoriesData.length === 0 && allProductsMap.size === 0) {
       fetchInitialData();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editingOrderId]); // Depender solo de editingOrderId. fetchInitialData es un callback estable.
+  }, [editingOrderId, isLoading.page]); 
 
 
   const fetchProductsAndPackages = useCallback(async (categoryId: string) => {
@@ -392,7 +396,7 @@ export default function CreateOrderPage() {
              const optionsPromises = slotsDefinition.map(async (slotDef) => {
                  let options: Product[] = [];
                  if (slotDef.allowedOptions && slotDef.allowedOptions.length > 0) {
-                     const optionDetailsPromises = slotDef.allowedOptions.map(opt => getProductById(opt.modifier_product_id));
+                     const optionDetailsPromises = slotDef.allowedOptions.map(opt => allProductsMap.get(opt.modifier_product_id) || getProductById(opt.modifier_product_id));
                      options = (await Promise.all(optionDetailsPromises)).filter(p => p !== null) as Product[];
                  } else {
                      options = await getModifiersByCategory(slotDef.linked_category_id);
@@ -409,7 +413,7 @@ export default function CreateOrderPage() {
         setIsLoading(prev => ({ ...prev, modifiers: false }));
     }
     return preparedSlots;
-  }, [toast]);
+  }, [toast, allProductsMap]);
 
    const fetchPackageDetails = useCallback(async (packageId: string) => {
         setIsLoading(prev => ({ ...prev, packageDetails: true }));
@@ -486,12 +490,11 @@ export default function CreateOrderPage() {
     if (slots.length > 0) {
         setSelectedProduct(product);
         setCurrentModifierSlots(slots);
-        setCurrentProductConfigQuantity(1); // Iniciar con cantidad 1
-        setModifierConfigurations([[]]); // Una configuración vacía para la primera instancia
+        setCurrentProductConfigQuantity(1); 
+        setModifierConfigurations([[]]); 
         setCurrentInstanceIndexForConfiguration(0);
         setView('modifiers');
     } else {
-        // Si no tiene modificadores, abrir directamente el diálogo de cantidad
         setItemPendingQuantity({ data: product, type: 'product' });
         setPendingQuantityInput("1");
         setIsQuantityDialogOpen(true);
@@ -526,16 +529,14 @@ export default function CreateOrderPage() {
                 return;
             }
         }
-        // Como este producto no tiene modificadores (porque no entramos a la vista de modificadores),
-        // se añade directamente la cantidad total.
         addProductToOrder(product, [], product.price, confirmedQuantity);
         toast({ title: `${product.name} (x${confirmedQuantity}) añadido` });
         resetAndGoToCategories();
     } else if (itemType === 'package') {
-        const pkg = itemData as Package; // Asegurar que es de tipo Package
-        setCurrentProductConfigQuantity(confirmedQuantity); // Establecer cantidad para configuración del paquete
-        setSelectedPackage(pkg); // Guardar el paquete completo
-        await fetchPackageDetails(pkg.id); // Cargar detalles y mostrar vista de configuración del paquete
+        const pkg = itemData as Package; 
+        setCurrentProductConfigQuantity(confirmedQuantity); 
+        setSelectedPackage(pkg); 
+        await fetchPackageDetails(pkg.id); 
     }
 
     setIsQuantityDialogOpen(false);
@@ -594,7 +595,6 @@ export default function CreateOrderPage() {
                     });
                 } else {
                     // No mostrar toast aquí para evitar interferir con doble clic
-                    // toast({ title: "Límite Alcanzado", description: `Solo puedes seleccionar hasta ${targetSlotDefinition.max_quantity} en "${targetSlotDefinition.label}".`, variant: "default" });
                     return prevConfigs;
                 }
             }
@@ -644,7 +644,6 @@ export default function CreateOrderPage() {
                                 });
                             } else {
                                 // No mostrar toast aquí
-                                // toast({ title: "Límite Alcanzado", description: `Solo puedes seleccionar hasta ${maxQty} en "${slot.label}".`, variant: "default" });
                                 return slot;
                             }
                         }
@@ -931,8 +930,6 @@ const handleIncrementConfigQuantity = () => {
 const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     let newQuantity = parseInt(e.target.value, 10);
     if (isNaN(newQuantity) || newQuantity < 1) {
-        // No cambiar, o resetear a 1 si se quiere forzar un valor válido
-        // Por ahora, simplemente no actualizamos si es inválido
         return;
     }
 
@@ -943,7 +940,7 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
 
         if (!invItem || invItem.current_stock < consumedTotal) {
             toast({ title: "Sin Stock Suficiente", description: `Solo hay ${maxPossible} unidades de ${selectedProduct.name} disponibles.`, variant: "destructive" });
-            newQuantity = maxPossible > 0 ? maxPossible : 1; // Ajustar a lo máximo posible o 1
+            newQuantity = maxPossible > 0 ? maxPossible : 1; 
         }
     }
 
@@ -987,8 +984,17 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
         instanceConfig.forEach(mod => {
             modifierPriceTotalForInstance += (mod.priceModifier || 0) + (mod.extraCost || 0);
         });
-        const pricePerUnitForInstance = selectedProduct.price + modifierPriceTotalForInstance;
-        addProductToOrder(selectedProduct, instanceConfig, pricePerUnitForInstance, 1); // Añadir 1 instancia a la vez
+        let pricePerUnitForInstance = selectedProduct.price + modifierPriceTotalForInstance;
+        let appliedCommissionRate: number | undefined = undefined;
+        let originalPlatformPrice: number | undefined = undefined;
+
+        if (selectedProduct.is_platform_item && selectedProduct.platform_commission_rate) {
+            originalPlatformPrice = pricePerUnitForInstance / (1 - selectedProduct.platform_commission_rate);
+            appliedCommissionRate = selectedProduct.platform_commission_rate;
+            pricePerUnitForInstance = originalPlatformPrice; // El precio que se muestra y se usa para el total es el de plataforma
+        }
+
+        addProductToOrder(selectedProduct, instanceConfig, pricePerUnitForInstance, 1, appliedCommissionRate, originalPlatformPrice);
     });
 
     toast({
@@ -1081,12 +1087,17 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
                     selectedModifiers: selectedModsForItem
                 };
             });
+            
+            // Los paquetes como tal no tienen is_platform_item directamente en su definición
+            // Si se quisiera aplicar una comisión a paquetes, se necesitaría una lógica adicional
+            // o tratar el paquete como un producto con su propia configuración de plataforma.
+            // Por ahora, los paquetes se añaden con su precio base.
 
             const newOrderItem: OrderItem = {
                 type: 'package', id: packageDef.id, name: packageDef.name, quantity: 1,
-                basePrice: packageDef.price,
+                basePrice: packageDef.price, // Precio base del paquete
                 selectedModifiers: [],
-                totalPrice: finalPackagePrice,
+                totalPrice: finalPackagePrice, // Precio del paquete + modificadores de sus items
                 uniqueId: uuidv4(),
                 packageItems: packageItemsWithModifiers
             };
@@ -1096,13 +1107,22 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
         resetAndGoToCategories();
    };
 
-  const addProductToOrder = (product: Product, modifiers: SelectedModifierItem[], pricePerUnit: number, quantity: number) => {
+  const addProductToOrder = (
+    product: Product, 
+    modifiers: SelectedModifierItem[], 
+    pricePerUnit: number, 
+    quantity: number,
+    appliedCommissionRate?: number,
+    originalPlatformPrice?: number
+  ) => {
     const newOrderItem: OrderItem = {
       type: 'product', id: product.id, name: product.name, quantity: quantity,
-      basePrice: product.price,
+      basePrice: product.price, // Precio base original del producto
       selectedModifiers: modifiers,
-      totalPrice: pricePerUnit * quantity,
+      totalPrice: pricePerUnit * quantity, // Este ya es el precio de plataforma si aplica, o el precio normal + modificadores
       uniqueId: uuidv4(),
+      applied_commission_rate: appliedCommissionRate,
+      original_platform_price: originalPlatformPrice,
     };
     setCurrentOrder(prev => ({ ...prev, items: [...prev.items, newOrderItem] }));
   };
@@ -1113,11 +1133,14 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
       let updatedItems = prev.items.map(item => {
         if (item.uniqueId === uniqueId) {
           const newQuantity = Math.max(0, item.quantity + delta);
-           let pricePerUnitConsideringModifiers = item.basePrice;
+           let pricePerUnitConsideringModifiers = item.original_platform_price ?? item.basePrice;
            if (item.quantity > 0) {
+                // Si ya hay cantidad, el totalPrice guardado ya incluye todo.
+                // Para obtener el precio unitario correcto:
                 pricePerUnitConsideringModifiers = item.totalPrice / item.quantity;
-           } else if (newQuantity > 0) {
-                pricePerUnitConsideringModifiers = item.basePrice;
+           } else if (newQuantity > 0) { // Si la cantidad era 0 y ahora es > 0
+                // Recalcular precio unitario como si fuera nuevo
+                pricePerUnitConsideringModifiers = item.original_platform_price ?? item.basePrice;
                 if(item.type === 'product') {
                     item.selectedModifiers.forEach(mod => {
                         pricePerUnitConsideringModifiers += (mod.priceModifier || 0) + (mod.extraCost || 0);
@@ -1127,9 +1150,6 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
                         pi.selectedModifiers.forEach(mod => {
                              pricePerUnitConsideringModifiers += (mod.priceModifier || 0) + (mod.extraCost || 0);
                         });
-                    });
-                     item.selectedModifiers.forEach(mod => {
-                        pricePerUnitConsideringModifiers += (mod.priceModifier || 0) + (mod.extraCost || 0);
                     });
                 }
            }
@@ -1222,7 +1242,7 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
         }
         const pausedOrder: PausedOrder = {
             ...currentOrder,
-            subtotal: subtotal, // Añadir subtotal y total al objeto pausado
+            subtotal: subtotal, 
             total: total,
             pausedId: uuidv4(),
             pausedAt: new Date().toISOString(),
@@ -1258,9 +1278,11 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
              items: order.items?.map((item: any) => ({
                 id: item.id || 'unknown', name: item.name || 'Unknown Item',
                 quantity: typeof item.quantity === 'number' ? item.quantity : 0,
-                price: typeof item.price === 'number' ? item.price : 0,
+                price: typeof item.price === 'number' ? item.price : 0, // Precio base original
                 totalItemPrice: typeof item.totalItemPrice === 'number' ? item.totalItemPrice : 0,
                 components: Array.isArray(item.components) ? item.components.map((c:any) => ({ ...c, productId: c.productId, slotId: c.slotId, priceModifier: c.priceModifier })) : [],
+                isPlatformItem: typeof item.isPlatformItem === 'boolean' ? item.isPlatformItem : false,
+                platformPricePerUnit: typeof item.platformPricePerUnit === 'number' ? item.platformPricePerUnit : undefined,
              })) || [],
              subtotal: typeof order.subtotal === 'number' ? order.subtotal : 0,
              total: typeof order.total === 'number' ? order.total : 0,
@@ -1312,11 +1334,8 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
             } else if (orderItem.type === 'package' && orderItem.packageItems) {
                 for (const pkgItem of orderItem.packageItems) {
                     const pkgItemDef = allProductsMap.get(pkgItem.productId);
-                    // Asumiendo que la definición del paquete está en selectedPackageDetail (si se está creando/editando)
-                    // o que se puede inferir de alguna manera si se está cargando un pedido guardado.
-                    // Esta parte puede necesitar más robustez si selectedPackageDetail no está disponible al finalizar un pedido editado.
                     const pkgItemDefinitionFromPackage = selectedPackageDetail?.packageItems.find(piDef => piDef.id === pkgItem.packageItemId);
-                    const itemQtyInPackage = pkgItemDefinitionFromPackage?.quantity || 1; // Default a 1 si no se encuentra
+                    const itemQtyInPackage = pkgItemDefinitionFromPackage?.quantity || 1; 
 
                     if (pkgItemDef?.inventory_item_id && pkgItemDef.inventory_consumed_per_unit) {
                         currentInventoryAdjustments[pkgItemDef.inventory_item_id] = (currentInventoryAdjustments[pkgItemDef.inventory_item_id] || 0) - (pkgItemDef.inventory_consumed_per_unit * itemQtyInPackage * orderItem.quantity);
@@ -1342,7 +1361,6 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
         });
         if (editingOrderId && originalOrderForEdit) {
              const originalAdjustmentsForMap: Record<string, number> = {};
-             // Recalcular los ajustes originales para el mapa local
              for (const savedItem of originalOrderForEdit.items) { /* ... lógica similar a la reposición ... */ }
              Object.entries(originalAdjustmentsForMap).forEach(([itemId, originalChange]) => {
                 const currentInvItem = newInvMap.get(itemId);
@@ -1381,22 +1399,24 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
             }
             return {
               id: item.id, name: item.name, quantity: item.quantity,
-              price: item.basePrice,
-              totalItemPrice: item.totalPrice,
+              price: item.basePrice, // Precio base original
+              totalItemPrice: item.totalPrice, // Precio total de la línea (ya incluye precios de plataforma)
               components: components,
+              isPlatformItem: !!item.applied_commission_rate,
+              platformPricePerUnit: item.original_platform_price,
             };
         }),
         paymentMethod: currentOrder.paymentMethod,
         subtotal: subtotal,
         total: total,
-        status: 'pending',
+        status: 'pending', // Todos los pedidos nuevos o editados comienzan como pendientes
         paidAmount: currentOrder.paidAmount, changeGiven: currentOrder.changeDue,
     };
 
     let finalizedOrder: SavedOrder;
     let updatedOrders: SavedOrder[];
 
-    if (editingOrderId && originalOrderForEdit) { // Asegurar que originalOrderForEdit existe
+    if (editingOrderId && originalOrderForEdit) { 
         finalizedOrder = {
             ...originalOrderForEdit,
             ...newOrderData,
@@ -1436,7 +1456,7 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
     if (modifierConfigurations.length <= 1 || currentInstanceIndexForConfiguration < 0) return;
 
     const currentConfig = modifierConfigurations[currentInstanceIndexForConfiguration];
-    const newConfigs = modifierConfigurations.map(() => [...currentConfig]); // Deep copy
+    const newConfigs = modifierConfigurations.map(() => [...currentConfig]); 
     setModifierConfigurations(newConfigs);
     toast({title: "Configuración Aplicada", description: "Modificadores de esta instancia aplicados a todas."});
   };
@@ -1445,19 +1465,19 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
     isLoading.page ||
     (view === 'categories' && isLoading.categories) ||
     (view === 'products' && (isLoading.products || isLoading.packages)) ||
-    (view === 'modifiers' && isLoading.modifiers) || // Ya no depende de isLoading.servingStyles aquí
-    (view === 'package-details' && isLoading.packageDetails); // Ya no depende de isLoading.servingStyles aquí
+    (view === 'modifiers' && isLoading.modifiers) ||
+    (view === 'package-details' && isLoading.packageDetails);
 
 
   const renderBackButton = () => {
     let buttonText = '';
-    let onClickAction = handleBack; // Acción por defecto
+    let onClickAction = handleBack; 
 
     if (view === 'products' && selectedCategory) {
         buttonText = `Volver a Categorías`;
-    } else if (view === 'modifiers' && selectedCategory) {
+    } else if (view === 'modifiers' && selectedProduct && selectedCategory) {
         buttonText = `Volver a ${selectedCategory.name}`;
-    } else if (view === 'package-details' && selectedCategory) {
+    } else if (view === 'package-details' && selectedPackage && selectedCategory) {
         buttonText = `Volver a ${selectedCategory.name}`;
     }
 
@@ -1470,8 +1490,7 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
         );
     }
      return editingOrderId && originalOrderForEdit ?
-      <CardDescription className="text-xs md:text-sm">Editando Pedido #{originalOrderForEdit.orderNumber}. Modifica y luego actualiza.</CardDescription> :
-      <CardDescription className="text-xs md:text-sm">Selecciona categorías, productos, paquetes y modificadores.</CardDescription>;
+      <CardDescription className="text-xs md:text-sm">Editando Pedido #{originalOrderForEdit.orderNumber}. Modifica y luego actualiza.</CardDescription> : null;
   };
 
 
@@ -1529,19 +1548,26 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
                  <>
                      <h3 className="text-md md:text-lg font-medium mb-2 md:mb-3 border-b pb-1">Productos Individuales</h3>
                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 md:gap-4">
-                      {productsData.map(prod => (
-                        <Card key={prod.id} onClick={() => handleProductClick(prod)} className="cursor-pointer hover:shadow-md transition-shadow group overflow-hidden">
-                            <div className="relative w-full h-24 md:h-32 bg-secondary">
-                              {prod.imageUrl ? (
-                                <Image src={prod.imageUrl} alt={prod.name} layout="fill" objectFit="cover" className="group-hover:scale-105 transition-transform duration-300" data-ai-hint="menu item food"/>
-                               ) : ( <div className="absolute inset-0 flex items-center justify-center text-muted-foreground"><ShoppingBag className="h-8 w-8"/></div> )}
-                             </div>
-                          <CardHeader className="p-2 md:p-3">
-                            <CardTitle className="text-xs md:text-sm">{prod.name}</CardTitle>
-                            <CardDescription className="text-xs">{formatCurrency(prod.price)}</CardDescription>
-                          </CardHeader>
-                        </Card>
-                      ))}
+                      {productsData.map(prod => {
+                        let displayPrice = prod.price;
+                        if (prod.is_platform_item && prod.platform_commission_rate) {
+                           displayPrice = prod.price / (1 - prod.platform_commission_rate);
+                        }
+                        return (
+                            <Card key={prod.id} onClick={() => handleProductClick(prod)} className="cursor-pointer hover:shadow-md transition-shadow group overflow-hidden">
+                                <div className="relative w-full h-24 md:h-32 bg-secondary">
+                                  {prod.imageUrl ? (
+                                    <Image src={prod.imageUrl} alt={prod.name} layout="fill" objectFit="cover" className="group-hover:scale-105 transition-transform duration-300" data-ai-hint="menu item food"/>
+                                   ) : ( <div className="absolute inset-0 flex items-center justify-center text-muted-foreground"><ShoppingBag className="h-8 w-8"/></div> )}
+                                   {prod.is_platform_item && <Badge variant="outline" className="absolute top-1 left-1 text-xs px-1 py-0 bg-background/80 border-orange-500 text-orange-600">Plataforma</Badge>}
+                                 </div>
+                              <CardHeader className="p-2 md:p-3">
+                                <CardTitle className="text-xs md:text-sm">{prod.name}</CardTitle>
+                                <CardDescription className="text-xs">{formatCurrency(displayPrice)}</CardDescription>
+                              </CardHeader>
+                            </Card>
+                        );
+                      })}
                     </div>
                  </>
              )}
@@ -1555,6 +1581,10 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
          if (!selectedProduct) return <p className="text-center text-muted-foreground py-10">Error: No hay producto seleccionado.</p>;
 
          const currentInstanceConfig = modifierConfigurations[currentInstanceIndexForConfiguration] || [];
+         let displayPriceForSelectedProduct = selectedProduct.price;
+         if (selectedProduct.is_platform_item && selectedProduct.platform_commission_rate) {
+             displayPriceForSelectedProduct = selectedProduct.price / (1 - selectedProduct.platform_commission_rate);
+         }
 
         return (
           <div className="flex flex-col h-full">
@@ -1562,7 +1592,10 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
                 <div className="flex justify-between items-center mb-3 p-2 border rounded-md bg-muted/30">
                     <div>
                         <h2 className="text-lg md:text-xl font-semibold">{selectedProduct.name}</h2>
-                        <p className="text-sm text-muted-foreground">{formatCurrency(selectedProduct.price)}</p>
+                        <p className="text-sm text-muted-foreground">
+                           {formatCurrency(displayPriceForSelectedProduct)}
+                           {selectedProduct.is_platform_item && <Badge variant="outline" className="ml-2 text-xs border-orange-500 text-orange-600">Plataforma</Badge>}
+                        </p>
                     </div>
                     <div className="flex items-center gap-2">
                         <Button variant="outline" size="icon" onClick={handleDecrementConfigQuantity} disabled={currentProductConfigQuantity <= 1}>
@@ -1584,7 +1617,7 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
                 {currentProductConfigQuantity > 1 && (
                     <div className="flex items-center justify-between gap-2 mb-3 p-2 border rounded-md bg-muted/30">
                         <Button variant="outline" size="sm" onClick={() => setCurrentInstanceIndexForConfiguration(prev => Math.max(0, prev - 1))} disabled={currentInstanceIndexForConfiguration === 0}>Anterior</Button>
-                        <span className="text-sm text-muted-foreground whitespace-nowrap">Instancia {currentInstanceIndexForConfiguration + 1} de {currentProductConfigQuantity}</span>
+                        <span className="text-sm text-muted-foreground whitespace-nowrap">Configurando {selectedProduct.name} (Instancia {currentInstanceIndexForConfiguration + 1} de {currentProductConfigQuantity})</span>
                         <Button variant="outline" size="sm" onClick={() => setCurrentInstanceIndexForConfiguration(prev => Math.min(currentProductConfigQuantity - 1, prev + 1))} disabled={currentInstanceIndexForConfiguration === currentProductConfigQuantity - 1}>Siguiente</Button>
                     </div>
                 )}
@@ -1825,7 +1858,7 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
                 {isViewLoading ? (
                     <div className="flex justify-center items-center h-full"><Loader2 className="h-8 w-8 animate-spin text-muted-foreground" /></div>
                 ) : (
-                     <div className="h-full"> {/* Contenedor para que ScrollArea funcione bien si el contenido es menos que el alto */}
+                     <div className="h-full"> 
                         {renderContent()}
                      </div>
                 )}
@@ -1840,7 +1873,6 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
                  <CardTitle className="text-base md:text-lg">Resumen Pedido</CardTitle>
                  <CardDescription className="text-xs md:text-sm">{editingOrderId ? `Editando: #${originalOrderForEdit?.orderNumber}` : (currentOrder.id || 'Nuevo Pedido')}</CardDescription>
                </div>
-                 {/* Se movió el botón Limpiar al header izquierdo */}
            </CardHeader>
            <CardContent className="flex-grow flex flex-col overflow-hidden pt-3 md:pt-4 p-3 md:p-4">
              <div className="mb-3 md:mb-4">
@@ -1879,6 +1911,11 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
                             </div>
                              <Button variant="ghost" size="icon" className="h-5 w-5 text-destructive hover:text-destructive" onClick={() => handleRemoveItem(item.uniqueId)}><Trash2 className="h-3 w-3 md:h-4 md:w-4"/></Button>
                          </div>
+                         {item.applied_commission_rate && item.original_platform_price && (
+                             <div className="text-xs text-orange-600 ml-2 md:ml-4 mt-0.5">
+                                 Precio Plataforma: {formatCurrency(item.original_platform_price)} (Comisión: {(item.applied_commission_rate * 100).toFixed(0)}%)
+                             </div>
+                         )}
                          {(item.selectedModifiers.length > 0 || (item.type === 'package' && item.packageItems && item.packageItems.some(pi => pi.selectedModifiers.length > 0))) && (
                              <div className="text-xs text-muted-foreground ml-2 md:ml-4 mt-1 space-y-0.5">
                                 {item.type === 'product' && <span className='font-medium text-foreground'>Modificadores:</span>}

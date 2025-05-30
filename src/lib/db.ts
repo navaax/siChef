@@ -25,30 +25,42 @@ export async function getDb(): Promise<Database> {
   }
 
   isInitializing = true;
+  console.log(`[DB] Iniciando nueva instancia y conexión a la base de datos en: ${dbPath}`);
   initializationPromise = (async () => {
     try {
       console.log(`[DB] Intentando abrir base de datos en: ${dbPath}`);
       const verboseSqlite3 = sqlite3.verbose();
-      const newDb = await open({
+      const newDbInstance = await open({
         filename: dbPath,
         driver: verboseSqlite3.Database
       });
       console.log("[DB] Base de datos abierta exitosamente. Inicializando esquema...");
-      await initializeDb(newDb);
-      db = newDb;
+      await initializeDb(newDbInstance); // Pasar la nueva instancia
+      db = newDbInstance; // Asignar a la variable global SOLO después de una inicialización exitosa
       console.log("[DB] Conexión de base de datos establecida e inicializada.");
       return db;
     } catch (error) {
-      db = null;
+      db = null; // Asegurarse de que db sea null si falla la inicialización
       console.error("[DB] Falló al abrir o inicializar la base de datos:", error);
-      throw error;
-    } finally {
+      initializationPromise = null; // Limpiar la promesa en caso de error para permitir reintentos
       isInitializing = false;
-      initializationPromise = null;
+      throw error; // Re-lanzar el error para que el llamador sepa que falló
+    } finally {
+      // No limpiar isInitializing aquí si la promesa se resuelve correctamente,
+      // porque queremos que las llamadas subsiguientes obtengan la instancia 'db' establecida.
+      // Solo limpiar en caso de error para permitir reintentos.
+      // Si tiene éxito, isInitializing se gestiona por el hecho de que 'db' ya no será null.
     }
   })();
-
-  return initializationPromise;
+  return initializationPromise.finally(() => {
+    // Este finally se ejecuta después de que la promesa se resuelva o rechace.
+    // Si la promesa se rechazó, isInitializing ya se puso a false.
+    // Si se resolvió, db está establecido, y las futuras llamadas a getDb() devolverán db directamente.
+    // Para el caso exitoso, podríamos poner isInitializing = false aquí.
+    if (db) {
+        isInitializing = false;
+    }
+  });
 }
 
 
@@ -82,6 +94,8 @@ async function initializeDb(dbInstance: Database): Promise<void> {
             imageUrl TEXT,
             inventory_item_id TEXT,
             inventory_consumed_per_unit REAL DEFAULT 1,
+            is_platform_item INTEGER DEFAULT 0,      -- Nuevo campo para precios de plataforma
+            platform_commission_rate REAL DEFAULT 0, -- Nuevo campo para tasa de comisión
             FOREIGN KEY (categoryId) REFERENCES categories(id) ON DELETE CASCADE,
             FOREIGN KEY (inventory_item_id) REFERENCES inventory_items(id) ON DELETE SET NULL
             );
@@ -252,6 +266,8 @@ async function initializeDb(dbInstance: Database): Promise<void> {
             { table: 'categories', column: 'type', definition: "TEXT NOT NULL CHECK(type IN ('producto', 'modificador', 'paquete')) DEFAULT 'producto'" },
             { table: 'products', column: 'inventory_item_id', definition: "TEXT" },
             { table: 'products', column: 'inventory_consumed_per_unit', definition: "REAL DEFAULT 1" },
+            { table: 'products', column: 'is_platform_item', definition: "INTEGER DEFAULT 0" },
+            { table: 'products', column: 'platform_commission_rate', definition: "REAL DEFAULT 0" },
             { table: 'product_modifier_slot_options', column: 'is_default', definition: "BOOLEAN DEFAULT 0" },
             { table: 'product_modifier_slot_options', column: 'price_adjustment', definition: "REAL DEFAULT 0" },
         ];
