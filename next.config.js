@@ -1,6 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  output: 'export', // ✅ Necesario para que funcione con Capacitor
+  // output: 'export', // ✅ Necesario para que funcione con Capacitor - Commented out for dev server
   typescript: {
     ignoreBuildErrors: true,
   },
