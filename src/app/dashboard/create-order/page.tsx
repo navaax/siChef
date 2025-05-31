@@ -357,16 +357,17 @@ export default function CreateOrderPage() {
     } finally {
         setIsLoading(prev => ({ ...prev, page: false }));
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router, toast, allProductsMap, categoriesData]);
 
 
   // Efecto 1: Cargar datos principales una vez al montar
   useEffect(() => {
     console.log("[CreateOrderPage] Mount useEffect: Llamando a fetchInitialData.");
-    fetchInitialData();
+    if (!isLoading.page && !hasLoadedCoreData) { // Solo llamar si no está cargando Y no tiene datos
+        fetchInitialData();
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fetchInitialData]); // Depender de fetchInitialData (que tiene useCallback con deps estables)
+  }, []); // Depender de fetchInitialData (que tiene useCallback con deps estables)
 
   // Efecto 2: Manejar cambios de ruta (editar pedido vs. nuevo pedido)
   useEffect(() => {
@@ -381,10 +382,9 @@ export default function CreateOrderPage() {
         } else {
           console.log(`[CreateOrderPage] Edición: Ya se está editando ${orderIdFromQuery} o datos base ya cargados para este ID.`);
         }
-      } else if (!isLoading.page) {
-          // Si los datos base no están y no se están cargando, el efecto de montaje debería manejarlos.
-          // No hacer nada aquí para evitar múltiples llamadas a fetchInitialData.
-          console.warn(`[CreateOrderPage] Edición: Intentando editar ${orderIdFromQuery} pero los datos principales (hasLoadedCoreData=false) aún no están listos y no se están cargando (isLoading.page=false). El efecto de montaje debería haber llamado a fetchInitialData.`);
+      } else if (!isLoading.page && !hasLoadedCoreData) { // Si los datos no están Y no se están cargando
+          console.warn(`[CreateOrderPage] Edición: ${orderIdFromQuery}, datos no listos. El efecto de montaje debería cargar datos.`);
+          // El efecto de montaje se encargará de llamar a fetchInitialData
       }
     } else { // MODO NUEVO PEDIDO (no hay orderIdFromQuery)
       if (editingOrderId) { // Si antes se estaba editando
@@ -393,9 +393,10 @@ export default function CreateOrderPage() {
         setOriginalOrderForEdit(null);
         clearOrder(); // clearOrder llama a resetAndGoToCategories
       }
-      // Si estamos en nuevo pedido y los datos base no están cargados (hasLoadedCoreData=false) Y no se están cargando (isLoading.page=false),
-      // el efecto de montaje (#1) debería haber llamado a fetchInitialData.
-      // Si hasLoadedCoreData es true, no es necesario hacer nada aquí para un nuevo pedido.
+      if (!isLoading.page && !hasLoadedCoreData) { // Si los datos no están Y no se están cargando
+          console.warn(`[CreateOrderPage] Nuevo Pedido: datos no listos. El efecto de montaje debería cargar datos.`);
+          // El efecto de montaje se encargará de llamar a fetchInitialData
+      }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams, editingOrderId, hasLoadedCoreData, loadOrderForEditing]);
@@ -1566,13 +1567,15 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
         <>
           <div className="mb-2">
             <Label htmlFor="platformSelect" className="mb-1 block text-xs md:text-sm">Plataforma</Label>
-            <ShadSelect value={selectedPlatformId || ''} onValueChange={setSelectedPlatformId}>
+            <ShadSelect value={selectedPlatformId || undefined} onValueChange={setSelectedPlatformId}>
               <ShadSelectTrigger id="platformSelect" className="h-9 text-sm">
                 <ShadSelectValue placeholder="Selecciona plataforma" />
               </ShadSelectTrigger>
               <ShadSelectContent>
-                {configuredPlatforms.length === 0 && <ShadSelectItem value="" disabled>No hay plataformas configuradas</ShadSelectItem>}
-                {configuredPlatforms.map(p => <ShadSelectItem key={p.id} value={p.id}>{p.name}</ShadSelectItem>)}
+                {configuredPlatforms.length === 0 && <ShadSelectItem value="__NO_PLATFORMS__" disabled>No hay plataformas configuradas</ShadSelectItem>}
+                {configuredPlatforms
+                  .filter(p => p.id && p.id.trim() !== "") // Filtro para evitar IDs vacíos
+                  .map(p => <ShadSelectItem key={p.id} value={p.id}>{p.name}</ShadSelectItem>)}
               </ShadSelectContent>
             </ShadSelect>
           </div>
@@ -2206,3 +2209,4 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
     </div>
   );
 }
+
