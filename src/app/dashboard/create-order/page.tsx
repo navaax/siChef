@@ -1,8 +1,9 @@
+
 // src/app/dashboard/create-order/page.tsx
 "use client";
 
 import * as React from 'react';
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useSearchParams, useRouter, usePathname } from 'next/navigation';
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -52,8 +53,8 @@ import type {
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogClose } from "@/components/ui/dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Textarea } from '@/components/ui/textarea'; // Importar Textarea
-import { Select as ShadSelect, SelectContent as ShadSelectContent, SelectItem as ShadSelectItem, SelectTrigger as ShadSelectTrigger, SelectValue as ShadSelectValue } from "@/components/ui/select"; // Alias para ShadCN Select
+import { Textarea } from '@/components/ui/textarea';
+import { Select as ShadSelect, SelectContent as ShadSelectContent, SelectItem as ShadSelectItem, SelectTrigger as ShadSelectTrigger, SelectValue as ShadSelectValue } from "@/components/ui/select";
 
 // --- Estado del Componente ---
 type View = 'categories' | 'products' | 'modifiers' | 'package-details';
@@ -160,17 +161,58 @@ export default function CreateOrderPage() {
                 modifiersTotal += (pi.selectedModifiers || []).reduce((modSum, mod) => modSum + (mod.priceModifier || 0) + (mod.extraCost || 0), 0);
             });
         }
-        // El precio inflado ya se aplica en original_platform_price o en la creación del item.
-        // Aquí solo sumamos el precio base (o de plataforma) + modificadores.
         return sum + (itemEffectivePrice + modifiersTotal) * item.quantity;
     }, 0);
   }, [currentOrder.items]);
 
   const total = useMemo(() => subtotal, [subtotal]);
 
+  // --- Helper & Core Logic Callbacks (Order of definition matters for dependencies) ---
+
+  const resetProductSelection = useCallback(() => {
+    setSelectedProduct(null);
+    setCurrentModifierSlots([]);
+    setModifierConfigurations([[]]);
+    setCurrentInstanceIndexForConfiguration(0);
+    setCurrentProductConfigQuantity(1);
+  }, []);
+
+  const resetPackageSelection = useCallback(() => {
+    setSelectedPackage(null);
+    setSelectedPackageDetail(null);
+    setCurrentProductConfigQuantity(1);
+  }, []);
+
+  const resetAndGoToCategories = useCallback(() => {
+    setView('categories');
+    setSelectedCategory(null);
+    resetProductSelection();
+    resetPackageSelection();
+    setProductsData([]);
+    setPackagesData([]);
+  }, [resetProductSelection, resetPackageSelection]);
+
+
+  const clearOrder = useCallback(() => {
+    const currentOrderTypePersisted = currentOrderType;
+    setCurrentOrder({ id: '', customerName: 'Guest', items: [], paymentMethod: 'card', orderType: currentOrderTypePersisted });
+    setCustomerName(''); setIsRegisteringCustomer(false); setPaidAmountInput('');
+    setDeliveryAddress(''); setDeliveryPhone('');
+    setSelectedPlatformId(null); setPlatformOrderId('');
+
+    setEditingOrderId(null); setOriginalOrderForEdit(null);
+
+    const newParams = new URLSearchParams(searchParams.toString());
+    newParams.delete('editOrderId');
+    router.replace(`${pathname}?${newParams.toString()}`, { scroll: false });
+
+    toast({ title: "Pedido Limpiado", variant: "destructive" });
+    resetAndGoToCategories();
+  }, [currentOrderType, resetAndGoToCategories, router, pathname, searchParams, toast]);
+
 
   const fetchInitialData = useCallback(async () => {
-    console.log("[CreateOrderPage] fetchInitialData: Iniciando carga de datos principales (SIMPLIFIED).");
+    console.log("[CreateOrderPage] fetchInitialData: Iniciando carga de datos principales.");
     setIsLoading(prev => ({ ...prev, page: true, categories: true, inventory: true, products: true, packages: true }));
 
     try {
@@ -193,37 +235,41 @@ export default function CreateOrderPage() {
       setAllProductsMap(prodMap);
       console.log(`[CreateOrderPage] fetchInitialData: ${fetchedAllProducts.length} productos/modificadores cargados.`);
 
-      // Temporarily simplified platform config loading
-      const storedPlatforms = localStorage.getItem('siChefSettings_configuredPlatforms');
-      if (storedPlatforms) {
-        try {
-            setConfiguredPlatforms(JSON.parse(storedPlatforms));
-        } catch (e) {
-            console.error("Error parsing stored platforms:", e);
-            toast({ title: "Error Configuración", description: "No se pudo cargar la configuración de plataformas.", variant: "destructive" });
-        }
+      console.log("[CreateOrderPage] fetchInitialData: Cargando configuración de plataformas desde localStorage...");
+      try {
+          const storedPlatforms = localStorage.getItem('siChefSettings_configuredPlatforms');
+          if (storedPlatforms) {
+              setConfiguredPlatforms(JSON.parse(storedPlatforms));
+              console.log("[CreateOrderPage] fetchInitialData: Configuración de plataformas cargada.");
+          } else {
+              console.log("[CreateOrderPage] fetchInitialData: No se encontró configuración de plataformas en localStorage.");
+              setConfiguredPlatforms([]);
+          }
+      } catch (e) {
+          console.error("[CreateOrderPage] fetchInitialData: Error parseando storedPlatforms:", e);
+          toast({ title: "Error Configuración", description: "No se pudo cargar la configuración de plataformas.", variant: "destructive" });
+          setConfiguredPlatforms([]);
       }
-      
-      const storedIncrease = localStorage.getItem('siChefSettings_platformPriceIncrease');
+
       let increasePercent = 0;
+      const storedIncrease = localStorage.getItem('siChefSettings_platformPriceIncrease');
       if (storedIncrease) {
-        const parsed = parseFloat(storedIncrease);
-        if (!isNaN(parsed)) {
-            increasePercent = parsed / 100; // Convert percentage from storage (e.g., 15) to decimal (0.15)
-        } else {
-            console.warn("Stored platformPriceIncrease is not a valid number:", storedIncrease);
-        }
+          const parsed = parseFloat(storedIncrease);
+          if (!isNaN(parsed)) {
+              increasePercent = parsed / 100;
+          } else {
+              console.warn("[CreateOrderPage] fetchInitialData: Stored platformPriceIncrease no es un número válido:", storedIncrease);
+          }
       }
       setGlobalPlatformPriceIncreasePercent(increasePercent);
-      console.log(`[CreateOrderPage] fetchInitialData: Global platform price increase set to ${increasePercent * 100}%`);
-
+      console.log(`[CreateOrderPage] fetchInitialData: Aumento de precio global para plataformas establecido en ${increasePercent * 100}%`);
 
       setHasLoadedCoreData(true);
-      console.log(`[CreateOrderPage] fetchInitialData: Éxito (SIMPLIFIED).`);
+      console.log(`[CreateOrderPage] fetchInitialData: Carga de datos principales completada exitosamente.`);
 
     } catch (error) {
-      console.error("[CreateOrderPage] fetchInitialData: Error cargando datos (SIMPLIFIED):", error);
-      toast({ title: "Error al Cargar Datos Iniciales", description: `Fallo al cargar datos iniciales. ${error instanceof Error ? error.message : ''}`, variant: "destructive" });
+      console.error("[CreateOrderPage] fetchInitialData: Error cargando datos principales:", error);
+      toast({ title: "Error al Cargar Datos Iniciales", description: `Fallo al cargar datos esenciales. ${error instanceof Error ? error.message : ''}`, variant: "destructive" });
       setHasLoadedCoreData(false);
     } finally {
       setIsLoading(prev => ({
@@ -234,7 +280,7 @@ export default function CreateOrderPage() {
           products: false,
           packages: false,
       }));
-      console.log("[CreateOrderPage] fetchInitialData: Carga finalizada (SIMPLIFIED).");
+      console.log("[CreateOrderPage] fetchInitialData: Carga finalizada (bloque finally).");
     }
   }, [toast]);
 
@@ -263,9 +309,8 @@ export default function CreateOrderPage() {
         setCurrentOrderType(orderToEdit.order_type || 'pickup');
         setDeliveryAddress(orderToEdit.delivery_address || '');
         setDeliveryPhone(orderToEdit.delivery_phone || '');
-        setSelectedPlatformId(orderToEdit.platform_name || null); // Asegurarse que sea string o null
+        setSelectedPlatformId(orderToEdit.platform_name || null);
         setPlatformOrderId(orderToEdit.platform_order_id || '');
-
 
         const reconstructedOrderItems: OrderItem[] = [];
         for (const savedItem of orderToEdit.items) {
@@ -274,15 +319,10 @@ export default function CreateOrderPage() {
 
             const productMatch = allProductsMap.get(savedItem.id);
             if (productMatch) {
-                // const categoryOfProduct = categoriesData.find(c => c.id === productMatch.categoryId);
-                // if (categoryOfProduct?.type === 'paquete') { // This check is likely problematic, packages have their own table
-                //     console.warn(`[loadOrderForEditing] Producto ${savedItem.name} tiene categoría tipo 'paquete', tratando como producto.`);
-                // }
                 baseItemDetails = productMatch;
                 itemType = 'product';
             } else {
-                // Attempt to load as a package if not found in allProductsMap (which contains products and modifiers)
-                const packageData = await getPackageById(savedItem.id); // This should be fetched if it's a package
+                const packageData = await getPackageById(savedItem.id);
                 if (packageData) {
                     baseItemDetails = packageData;
                     itemType = 'package';
@@ -293,9 +333,7 @@ export default function CreateOrderPage() {
                 }
             }
 
-
             if (!baseItemDetails) {
-                // This case should ideally be caught above if it's neither a known product nor a loadable package
                 continue;
             }
 
@@ -304,26 +342,21 @@ export default function CreateOrderPage() {
                 id: baseItemDetails.id,
                 name: baseItemDetails.name,
                 quantity: savedItem.quantity,
-                // original_price_before_inflation is the price with modifiers but before any platform markup.
-                // basePrice is the raw price of the product/package without modifiers.
-                basePrice: itemType === 'package' ? (baseItemDetails as Package).price : (baseItemDetails as Product).price, // Precio base del producto/paquete
-                original_platform_price: savedItem.platformPricePerUnit, // Precio ya inflado para plataforma, si aplica
+                basePrice: itemType === 'package' ? (baseItemDetails as Package).price : (baseItemDetails as Product).price,
+                original_platform_price: savedItem.platformPricePerUnit,
                 selectedModifiers: [],
                 totalPrice: savedItem.totalItemPrice,
                 uniqueId: uuidv4(),
                 packageItems: [],
-                // applied_commission_rate: savedItem.isPlatformItem ? ( (savedItem.platformPricePerUnit / (savedItem.original_price_before_inflation ?? baseItemDetails.price)) -1 ) : undefined,
-                // applied_commission_rate: savedItem.isPlatformItem && savedItem.original_price_before_inflation ? ((savedItem.platformPricePerUnit / savedItem.original_price_before_inflation) - 1) : undefined,
                 applied_commission_rate: savedItem.isPlatformItem && savedItem.original_price_before_inflation && savedItem.original_price_before_inflation > 0
                                             ? ((savedItem.platformPricePerUnit ?? 0) / savedItem.original_price_before_inflation) - 1
                                             : undefined,
-
                 original_price_before_inflation: savedItem.original_price_before_inflation,
             };
 
             if (itemType === 'product') {
                 reconstructedOrderItem.selectedModifiers = (savedItem.components || [])
-                    .filter(comp => comp.slotId && comp.productId) // Modifiers must have slotId and productId
+                    .filter(comp => comp.slotId && comp.productId)
                     .map(comp => {
                         return {
                             productId: comp.productId!,
@@ -334,20 +367,17 @@ export default function CreateOrderPage() {
                             extraCost: comp.extraCost || 0,
                         };
                     }).filter(mod => mod !== null) as SelectedModifierItem[];
-            } else if (itemType === 'package' && baseItemDetails) { // It's a package
+            } else if (itemType === 'package' && baseItemDetails) {
                 const packageDef = baseItemDetails as Package;
                 const currentPackageItemsDef = await getItemsForPackage(packageDef.id);
 
                 reconstructedOrderItem.packageItems = currentPackageItemsDef.map(pkgItemDef => {
                     const savedSubItemModifiers: SelectedModifierItem[] = [];
                      (savedItem.components || []).forEach(comp => {
-                         // Identificar modificadores para este sub-item del paquete
-                         // Esto asume que el nombre del componente del modificador incluye el nombre del producto del paquete
-                         // Y que 'Contenido' se usa para el item base del paquete, no para modificadores
                          if (comp.slotLabel !== 'Contenido' && comp.productId && comp.slotId && comp.name.includes(pkgItemDef.product_name || 'NON_MATCHABLE_NAME')) {
                             savedSubItemModifiers.push({
                                 productId: comp.productId,
-                                name: comp.name, // El nombre ya viene con el producto base, ej "Salsa BBQ (Alitas 6pz)"
+                                name: comp.name,
                                 priceModifier: comp.priceModifier || 0,
                                 slotId: comp.slotId,
                                 servingStyle: comp.servingStyle || 'Normal',
@@ -381,7 +411,6 @@ export default function CreateOrderPage() {
 
         toast({ title: "Modo Edición", description: `Cargado pedido #${orderToEdit.orderNumber} para editar.` });
         console.log("[CreateOrderPage] Estado del pedido reconstruido:", reconstructedOrderItems);
-        // setHasLoadedCoreData(true); // No resetear hasLoadedCoreData aquí, ya debería estar true
 
     } catch (error) {
         console.error("[CreateOrderPage] Error cargando pedido para editar:", error);
@@ -390,10 +419,10 @@ export default function CreateOrderPage() {
     } finally {
         setIsLoading(prev => ({ ...prev, page: false }));
     }
-  }, [router, toast, allProductsMap, categoriesData]); // Removed categoriesData from deps as it's part of allProductsMap conceptually for this use case or fetched earlier
+  }, [router, toast, allProductsMap]);
 
 
-  // Efecto 1: Cargar datos principales una vez al montar
+  // --- useEffect Hooks ---
   useEffect(() => {
     console.log("[CreateOrderPage] Mount useEffect: isLoading.page:", isLoading.page, "hasLoadedCoreData:", hasLoadedCoreData);
     if (!isLoading.page && !hasLoadedCoreData) {
@@ -401,9 +430,8 @@ export default function CreateOrderPage() {
         fetchInitialData();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // fetchInitialData is stable
+  }, []);
 
-  // Efecto 2: Manejar cambios de ruta (editar pedido vs. nuevo pedido)
   useEffect(() => {
     const orderIdFromQuery = searchParams.get('editOrderId');
     console.log(`[CreateOrderPage] Route Change useEffect. Query: ${orderIdFromQuery}, CurrentEditingID: ${editingOrderId}, HasCoreData: ${hasLoadedCoreData}, isLoading.page: ${isLoading.page}`);
@@ -414,10 +442,8 @@ export default function CreateOrderPage() {
           console.log(`[CreateOrderPage] Edición: Datos principales cargados. Llamando a loadOrderForEditing para ${orderIdFromQuery}.`);
           loadOrderForEditing(orderIdFromQuery);
         }
-      } else if (!isLoading.page) { // Datos no cargados Y no se está cargando
+      } else if (!isLoading.page) {
           console.warn(`[CreateOrderPage] Edición: ${orderIdFromQuery}, datos no listos. El efecto de montaje debería cargar datos o reintentar.`);
-          // El efecto de montaje ya se ejecutó. Si falló, hasLoadedCoreData sería false.
-          // Podríamos reintentar fetchInitialData si es necesario aquí, pero es mejor asegurar que el primer intento funcione.
       }
     } else { // MODO NUEVO PEDIDO
       if (editingOrderId) {
@@ -426,7 +452,6 @@ export default function CreateOrderPage() {
         setOriginalOrderForEdit(null);
         clearOrder();
       }
-      // Si los datos principales no se cargaron en el montaje (y no se está editando), se mostrará el loader.
     }
   }, [searchParams, editingOrderId, hasLoadedCoreData, loadOrderForEditing, clearOrder]);
 
@@ -460,23 +485,19 @@ export default function CreateOrderPage() {
              const optionsPromises = slotsDefinition.map(async (slotDef) => {
                  let options: Product[] = [];
                  if (slotDef.allowedOptions && slotDef.allowedOptions.length > 0) {
-                     // Priorizar las opciones explícitamente permitidas en el slot
                      const optionDetailsPromises = slotDef.allowedOptions.map(opt => {
-                        // Obtener detalles completos del producto modificador
                         const modifierProduct = allProductsMap.get(opt.modifier_product_id);
                         if (modifierProduct) {
                             return {
-                                ...modifierProduct, // Detalles base del producto
-                                // Aplicar ajustes de precio específicos del slot si existen
+                                ...modifierProduct,
                                 price: (modifierProduct.price ?? 0) + (opt.price_adjustment ?? 0),
-                                is_default_option_in_slot: opt.is_default, // Guardar si es default para este slot
+                                is_default_option_in_slot: opt.is_default,
                             };
                         }
-                        return null; // Si el producto modificador no se encuentra en el mapa
+                        return null;
                      });
                      options = (await Promise.all(optionDetailsPromises)).filter(p => p !== null) as Product[];
                  } else {
-                     // Si no hay opciones explícitas, cargar todos los modificadores de la categoría vinculada
                      options = await getModifiersByCategory(slotDef.linked_category_id);
                  }
                  return { ...slotDef, options: options, selectedOptions: [] };
@@ -491,7 +512,7 @@ export default function CreateOrderPage() {
         setIsLoading(prev => ({ ...prev, modifiers: false }));
     }
     return preparedSlots;
-  }, [toast, allProductsMap]); // allProductsMap es crucial aquí
+  }, [toast, allProductsMap]);
 
    const fetchPackageDetails = useCallback(async (packageId: string) => {
         setIsLoading(prev => ({ ...prev, packageDetails: true }));
@@ -509,10 +530,10 @@ export default function CreateOrderPage() {
                     const override = overrides.find(o => o.product_modifier_slot_id === slot.id);
                     return override ? {
                         ...slot,
-                        min_quantity: override.min_quantity, // Usar min/max del override
+                        min_quantity: override.min_quantity,
                         max_quantity: override.max_quantity,
-                        selectedOptions: [] // Iniciar selecciones vacías
-                     } : { ...slot, selectedOptions: [] }; // Iniciar selecciones vacías
+                        selectedOptions: []
+                     } : { ...slot, selectedOptions: [] };
                 });
                 return { packageItemId: item.id, slots: finalSlots };
             });
@@ -534,20 +555,6 @@ export default function CreateOrderPage() {
         }
    }, [toast, fetchAndPrepareModifierSlots]);
 
-  const resetAndGoToCategories = useCallback(() => {
-    setView('categories');
-    setSelectedCategory(null);
-    setSelectedProduct(null);
-    setCurrentModifierSlots([]);
-    setModifierConfigurations([]);
-    setCurrentInstanceIndexForConfiguration(0);
-    setCurrentProductConfigQuantity(1);
-    setSelectedPackage(null);
-    setSelectedPackageDetail(null);
-    setProductsData([]);
-    setPackagesData([]);
-  }, []);
-
   const handleCategoryClick = (category: Category) => {
     setSelectedCategory(category);
     fetchProductsAndPackages(category.id);
@@ -568,7 +575,7 @@ export default function CreateOrderPage() {
         setSelectedProduct(product);
         setCurrentModifierSlots(slots);
         setCurrentProductConfigQuantity(1);
-        setModifierConfigurations([[]]); // Resetear para una nueva configuración
+        setModifierConfigurations([[]]);
         setCurrentInstanceIndexForConfiguration(0);
         setView('modifiers');
     } else {
@@ -579,7 +586,6 @@ export default function CreateOrderPage() {
   };
 
   const handlePackageClick = (pkg: Package) => {
-    // Paquetes siempre van a configuración de cantidad primero, luego detalles.
     setItemPendingQuantity({ data: pkg, type: 'package' });
     setPendingQuantityInput("1");
     setIsQuantityDialogOpen(true);
@@ -598,9 +604,9 @@ export default function CreateOrderPage() {
     const itemType = itemPendingQuantity.type;
 
     let basePrice = itemData.price;
-    let finalPriceForOrder = basePrice; // Precio unitario base del item
+    let finalPriceForOrder = basePrice;
     let appliedInflationRate: number | undefined = undefined;
-    let originalPriceBeforeInflation: number | undefined = undefined; // Precio con mods pero ANTES de inflar para plataforma
+    let originalPriceBeforeInflation: number | undefined = undefined;
 
 
     if (itemType === 'product') {
@@ -613,9 +619,7 @@ export default function CreateOrderPage() {
                 return;
             }
         }
-        // Para productos sin modificadores, el precio base es el precio del producto.
-        // Si es de plataforma, el precio que se usará en addProductToOrder considerará la inflación.
-        originalPriceBeforeInflation = product.price; // Precio del producto antes de cualquier inflación.
+        originalPriceBeforeInflation = product.price;
 
         let priceToUseForInflatedCalc = originalPriceBeforeInflation;
 
@@ -628,18 +632,18 @@ export default function CreateOrderPage() {
 
         addProductToOrder(
             product, [], product.price, confirmedQuantity,
-            currentOrderType === 'platform' ? finalPriceForOrder : undefined, // original_platform_price
+            currentOrderType === 'platform' ? finalPriceForOrder : undefined,
             appliedInflationRate,
-            originalPriceBeforeInflation // original_price_before_inflation (sin mods, en este caso)
+            originalPriceBeforeInflation
         );
         toast({ title: `${product.name} (x${confirmedQuantity}) añadido` });
         resetAndGoToCategories();
 
     } else if (itemType === 'package') {
         const pkg = itemData as Package;
-        setCurrentProductConfigQuantity(confirmedQuantity); // Guardar la cantidad deseada de PAQUETES
+        setCurrentProductConfigQuantity(confirmedQuantity);
         setSelectedPackage(pkg);
-        await fetchPackageDetails(pkg.id); // Esto abrirá la vista de detalles del paquete
+        await fetchPackageDetails(pkg.id);
     }
 
     setIsQuantityDialogOpen(false);
@@ -651,11 +655,9 @@ export default function CreateOrderPage() {
     slotId: string,
     optionProductId: string,
     optionName: string,
-    // optionBasePrice es el precio del PRODUCTO MODIFICADOR (ej. $5 del aderezo)
-    // Y ya debe incluir el price_adjustment del slot_option si fue configurado
-    optionEffectivePriceInSlot: number, // Precio ya ajustado para este slot (base + adjustment del slot)
+    optionEffectivePriceInSlot: number,
     context: 'product' | 'package',
-    packageItemUniqueId?: string // ID del package_item_definition (de la tabla package_items)
+    packageItemUniqueId?: string
   ) => {
     if (context === 'product' && view === 'modifiers') {
         setModifierConfigurations(prevConfigs => {
@@ -670,13 +672,7 @@ export default function CreateOrderPage() {
             const currentSelectionsInSlot = newSelectionsForInstance.filter(opt => opt.slotId === slotId);
 
             const modifierProductDefinition = targetSlotDefinition.options.find(opt => opt.id === optionProductId);
-            if (!modifierProductDefinition) return prevConfigs; // Modificador no encontrado en las opciones del slot
-
-            // El optionEffectivePriceInSlot ya viene calculado desde fetchAndPrepareModifierSlots
-            // que considera p.price + slotOption.price_adjustment
-            // const slotOptionConfig = targetSlotDefinition.allowedOptions?.find(ao => ao.modifier_product_id === optionProductId);
-            // const priceAdjustment = slotOptionConfig?.price_adjustment || 0;
-            // const effectiveModifierPriceForSelected = optionBasePrice + priceAdjustment;
+            if (!modifierProductDefinition) return prevConfigs;
 
 
             if (modifierProductDefinition.inventory_item_id) {
@@ -695,10 +691,10 @@ export default function CreateOrderPage() {
                     newSelectionsForInstance.push({
                         productId: optionProductId,
                         name: optionName,
-                        priceModifier: optionEffectivePriceInSlot, // Este es el precio que se SUMARÁ al producto principal
+                        priceModifier: optionEffectivePriceInSlot,
                         slotId: slotId,
-                        servingStyle: 'Normal', // Default
-                        extraCost: 0, // Default
+                        servingStyle: 'Normal',
+                        extraCost: 0,
                     });
                 } else {
                     toast({ title: "Límite Alcanzado", description: `Máximo ${targetSlotDefinition.max_quantity} para "${targetSlotDefinition.label}".`, variant: "default" });
@@ -712,23 +708,17 @@ export default function CreateOrderPage() {
         setSelectedPackageDetail(prevDetail => {
             if (!prevDetail) return null;
             const updatedItemSlots = { ...prevDetail.itemSlots };
-            if(updatedItemSlots[packageItemUniqueId]) { // packageItemUniqueId es el ID del package_item de la BD
+            if(updatedItemSlots[packageItemUniqueId]) {
                 const targetSlotsForPackageItem = updatedItemSlots[packageItemUniqueId];
-                updatedItemSlots[packageItemUniqueId] = targetSlotsForPackageItem.map(slot => { // slot es un ModifierSlotState
-                     if (slot.id === slotId) { // slot.id es el product_modifier_slot_id
+                updatedItemSlots[packageItemUniqueId] = targetSlotsForPackageItem.map(slot => {
+                     if (slot.id === slotId) {
                         const isSelected = slot.selectedOptions.some(opt => opt.productId === optionProductId);
                         let newSelections = [...slot.selectedOptions];
-                        const minQty = slot.min_quantity; // min_quantity y max_quantity ya vienen del override si existe
+                        const minQty = slot.min_quantity;
                         const maxQty = slot.max_quantity;
 
-                        const modifierProductDef = slot.options.find(opt => opt.id === optionProductId); // slot.options son los Products modificadores
+                        const modifierProductDef = slot.options.find(opt => opt.id === optionProductId);
                         if (!modifierProductDef) return slot;
-
-                        // optionEffectivePriceInSlot ya debe venir con el price_adjustment del allowedOption del slot base.
-                        // No hay otro price_adjustment a nivel de override de paquete en la estructura actual.
-                        // const slotOptCfg = slot.allowedOptions?.find(ao => ao.modifier_product_id === optionProductId);
-                        // const priceAdj = slotOptCfg?.price_adjustment || 0;
-                        // const effectiveModPriceForSelected = optionBasePrice + priceAdj;
 
                         if (modifierProductDef.inventory_item_id) {
                              const invItem = inventoryMap.get(modifierProductDef.inventory_item_id);
@@ -746,7 +736,7 @@ export default function CreateOrderPage() {
                                 newSelections.push({
                                     productId: optionProductId,
                                     name: optionName,
-                                    priceModifier: optionEffectivePriceInSlot, // Precio que se suma al paquete
+                                    priceModifier: optionEffectivePriceInSlot,
                                     slotId: slotId,
                                     servingStyle: 'Normal',
                                     extraCost: 0,
@@ -772,7 +762,7 @@ const handleModifierDoubleClick = async (
     modifierProductId: string,
     slotId: string,
     context: 'product' | 'package',
-    packageItemContextId?: string // ID del package_item de la BD
+    packageItemContextId?: string
 ) => {
     event.preventDefault();
     console.log(`[CreateOrderPage] Doble clic en modificador: ProdID=${modifierProductId}, SlotID=${slotId}, Context=${context}, PkgItemID=${packageItemContextId}`);
@@ -809,7 +799,7 @@ const handleModifierDoubleClick = async (
     try {
         const styles = await getServingStylesForCategory(linkedCategoryIdForStyles);
         setServingStylePopoverState({
-            orderItemUniqueId: null, // Esto se usa para editar un item YA EN EL PEDIDO, no en configuración
+            orderItemUniqueId: null,
             modifierProductId: modifierProductId,
             modifierSlotId: slotId,
             packageItemContextId: context === 'package' ? packageItemContextId : null,
@@ -828,7 +818,7 @@ const handleSaveServingStyle = (styleLabel: string) => {
     if (!servingStylePopoverState) return;
     const { modifierProductId, modifierSlotId, packageItemContextId, orderItemUniqueId } = servingStylePopoverState;
 
-    if (orderItemUniqueId) { // Editando un item YA en el pedido
+    if (orderItemUniqueId) {
          setCurrentOrder(prevOrder => ({
             ...prevOrder,
             items: prevOrder.items.map(item => {
@@ -836,9 +826,8 @@ const handleSaveServingStyle = (styleLabel: string) => {
                     let updatedSelectedModifiers = [...(item.selectedModifiers || [])];
                     let updatedPackageItems = item.packageItems ? [...item.packageItems] : undefined;
 
-                    if (packageItemContextId && updatedPackageItems) { // Modificador de un sub-item de paquete
+                    if (packageItemContextId && updatedPackageItems) {
                         updatedPackageItems = updatedPackageItems.map(pkgItem => {
-                            // packageItemContextId es el ID del package_item (definición), no el uniqueID de la orden
                             if (pkgItem.packageItemId === packageItemContextId) {
                                 return {
                                     ...pkgItem,
@@ -851,7 +840,7 @@ const handleSaveServingStyle = (styleLabel: string) => {
                             }
                             return pkgItem;
                         });
-                    } else { // Modificador de un producto simple
+                    } else {
                         updatedSelectedModifiers = updatedSelectedModifiers.map(mod =>
                             mod.productId === modifierProductId && mod.slotId === modifierSlotId
                                 ? { ...mod, servingStyle: styleLabel }
@@ -863,8 +852,8 @@ const handleSaveServingStyle = (styleLabel: string) => {
                 return item;
             })
         }));
-    } else { // Configurando un producto/paquete ANTES de añadirlo al pedido
-        if (view === 'modifiers' && !packageItemContextId) { // Configurando un producto simple
+    } else {
+        if (view === 'modifiers' && !packageItemContextId) {
             setModifierConfigurations(prevConfigs => {
                 const newConfigs = [...prevConfigs];
                 const currentInstanceConfig = newConfigs[currentInstanceIndexForConfiguration] || [];
@@ -873,14 +862,13 @@ const handleSaveServingStyle = (styleLabel: string) => {
                 );
                 return newConfigs;
             });
-        } else if (view === 'package-details' && selectedPackageDetail && packageItemContextId) { // Configurando un sub-item de paquete
+        } else if (view === 'package-details' && selectedPackageDetail && packageItemContextId) {
              setSelectedPackageDetail(prevDetail => {
                 if (!prevDetail) return null;
                 const updatedItemSlots = { ...prevDetail.itemSlots };
-                // packageItemContextId es el ID de la definición del package_item
                 if (updatedItemSlots[packageItemContextId]) {
                     updatedItemSlots[packageItemContextId] = updatedItemSlots[packageItemContextId].map(slot => {
-                         if (slot.id === modifierSlotId) { // slot.id es el product_modifier_slot_id
+                         if (slot.id === modifierSlotId) {
                             return {
                                 ...slot,
                                 selectedOptions: slot.selectedOptions.map(opt =>
@@ -903,7 +891,7 @@ const handleOpenExtraCostDialog = (
     orderItemUniqueId: string,
     modifierProductId: string,
     modifierSlotId: string,
-    packageItemContextId?: string // ID del package_item de la BD
+    packageItemContextId?: string
 ) => {
     const orderItem = currentOrder.items.find(item => item.uniqueId === orderItemUniqueId);
     if (!orderItem) return;
@@ -921,7 +909,7 @@ const handleOpenExtraCostDialog = (
         modifierProductId,
         modifierSlotId,
         packageItemContextId,
-        anchorElement: null, // No se usa anchor para diálogo
+        anchorElement: null,
         currentExtraCost: targetModifier?.extraCost || 0,
     });
     setExtraCostInput(String(targetModifier?.extraCost || 0));
@@ -944,13 +932,10 @@ const handleSaveExtraCost = () => {
             if (item.uniqueId === orderItemUniqueId) {
                 let updatedSelectedModifiers = [...(item.selectedModifiers || [])];
                 let updatedPackageItems = item.packageItems ? [...item.packageItems] : undefined;
-
-                // El precio base del item ya incluye la inflación si es de plataforma.
-                // Solo necesitamos recalcular el efecto de este nuevo extraCost en el totalPrice.
                 let oldModifierExtraCost = 0;
                 let newModifierExtraCost = cost;
 
-                if (packageItemContextId && updatedPackageItems) { // Modificador de un sub-item de paquete
+                if (packageItemContextId && updatedPackageItems) {
                     updatedPackageItems = updatedPackageItems.map(pkgItem => {
                         if (pkgItem.packageItemId === packageItemContextId) {
                             return {
@@ -966,7 +951,7 @@ const handleSaveExtraCost = () => {
                         }
                         return pkgItem;
                     });
-                } else { // Modificador de un producto simple
+                } else {
                     updatedSelectedModifiers = updatedSelectedModifiers.map(mod => {
                         if (mod.productId === modifierProductId && mod.slotId === modifierSlotId) {
                              oldModifierExtraCost = mod.extraCost || 0;
@@ -975,8 +960,6 @@ const handleSaveExtraCost = () => {
                         return mod;
                     });
                 }
-                // Ajustar el totalPrice del item general: quitar el viejo extraCost, sumar el nuevo.
-                // Se multiplica por item.quantity porque el totalPrice es por la línea completa.
                 const extraCostDifference = (newModifierExtraCost - oldModifierExtraCost) * item.quantity;
                 const newTotalPrice = item.totalPrice + extraCostDifference;
 
@@ -994,7 +977,7 @@ const handleDecrementConfigQuantity = () => {
     if (currentProductConfigQuantity > 1) {
         const newQuantity = currentProductConfigQuantity - 1;
         setCurrentProductConfigQuantity(newQuantity);
-        if (view === 'modifiers') { // Solo para productos simples, paquetes tienen su propia config de cantidad
+        if (view === 'modifiers') {
             setModifierConfigurations(prev => prev.slice(0, newQuantity));
             if (currentInstanceIndexForConfiguration >= newQuantity) {
                 setCurrentInstanceIndexForConfiguration(newQuantity - 1);
@@ -1015,12 +998,11 @@ const handleIncrementConfigQuantity = () => {
             canIncrement = false;
         }
     }
-    // Para paquetes, el stock de los items internos se valida al añadir al pedido.
 
     if (canIncrement) {
         setCurrentProductConfigQuantity(newQuantity);
-        if (view === 'modifiers') { // Solo para productos simples
-            setModifierConfigurations(prev => [...prev, []]); // Añadir config vacía para la nueva instancia
+        if (view === 'modifiers') {
+            setModifierConfigurations(prev => [...prev, []]);
         }
     }
 };
@@ -1028,22 +1010,10 @@ const handleIncrementConfigQuantity = () => {
 const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     let newQuantity = parseInt(e.target.value, 10);
     if (isNaN(newQuantity) || newQuantity < 1) {
-        // Si es inválido, podríamos resetear al valor actual o a 1.
-        // Por ahora, si el input está vacío o es inválido, no actualizamos.
-        // O, si el usuario borra el input, podríamos setear a 1 o al valor anterior.
-        // Si se borra, e.target.value es "", parseInt("") es NaN.
-        // Si se ingresa "0", newQuantity es 0.
-        // Si se ingresa un valor negativo, newQuantity es negativo.
-        // Por simplicidad, si es inválido, no hacemos nada o volvemos a 1.
         if (e.target.value === "") {
-            // No hacer nada, permitir que el usuario siga escribiendo o lo deje vacío para luego validar.
-            // O podríamos forzar un 1:
-            // setCurrentProductConfigQuantity(1);
-            // if (view === 'modifiers') setModifierConfigurations([[]]);
-            // if (currentInstanceIndexForConfiguration >= 1) setCurrentInstanceIndexForConfiguration(0);
             return;
         }
-        if (newQuantity < 1) newQuantity = 1; // Forzar mínimo de 1 si es menor
+        if (newQuantity < 1) newQuantity = 1;
     }
 
 
@@ -1052,19 +1022,19 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
         const consumedTotal = (selectedProduct.inventory_consumed_per_unit ?? 0) * newQuantity;
         const maxPossible = invItem?.current_stock && selectedProduct.inventory_consumed_per_unit && selectedProduct.inventory_consumed_per_unit > 0
                             ? Math.floor(invItem.current_stock / selectedProduct.inventory_consumed_per_unit)
-                            : (invItem?.current_stock === 0 ? 0 : Infinity); // Si no consume, es infinito, si stock es 0, es 0.
+                            : (invItem?.current_stock === 0 ? 0 : Infinity);
 
         if (newQuantity > maxPossible && maxPossible > 0) {
             toast({ title: "Sin Stock Suficiente", description: `Solo hay ${maxPossible} unidades de ${selectedProduct.name} disponibles.`, variant: "destructive" });
             newQuantity = maxPossible;
         } else if (maxPossible === 0) {
              toast({ title: "Sin Stock", description: `No hay unidades de ${selectedProduct.name} disponibles.`, variant: "destructive" });
-             newQuantity = 1; // O el valor que tenía antes
+             newQuantity = 1;
         }
     }
 
     setCurrentProductConfigQuantity(newQuantity);
-    if (view === 'modifiers') { // Solo para productos simples
+    if (view === 'modifiers') {
         setModifierConfigurations(prev => {
             const currentLength = prev.length;
             if (newQuantity > currentLength) {
@@ -1086,13 +1056,13 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
 
     let allInstancesValid = true;
     for (let i = 0; i < currentProductConfigQuantity; i++) {
-        const currentInstanceConfig = modifierConfigurations[i] || []; // Asegurar que exista config
+        const currentInstanceConfig = modifierConfigurations[i] || [];
         for (const slot of currentModifierSlots) {
             const selectedForSlot = currentInstanceConfig.filter(mod => mod.slotId === slot.id);
             if (selectedForSlot.length < slot.min_quantity) {
                 toast({ title: `Selección Incompleta (Instancia ${i + 1})`, description: `Debes seleccionar al menos ${slot.min_quantity} en "${slot.label}".`, variant: "destructive" });
                 allInstancesValid = false;
-                setCurrentInstanceIndexForConfiguration(i); // Ir a la instancia con error
+                setCurrentInstanceIndexForConfiguration(i);
                 break;
             }
         }
@@ -1103,7 +1073,7 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
 
     modifierConfigurations.forEach((instanceConfig) => {
         let sumOfModifiersPriceForInstance = 0;
-        instanceConfig.forEach(mod => { // mod.priceModifier ya es el precio EFECTIVO del modificador para ese slot
+        instanceConfig.forEach(mod => {
             sumOfModifiersPriceForInstance += (mod.priceModifier || 0) + (mod.extraCost || 0);
         });
 
@@ -1119,11 +1089,11 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
         addProductToOrder(
             selectedProduct,
             instanceConfig,
-            selectedProduct.price, // Precio base del producto principal
-            1, // Añadir una instancia a la vez
-            currentOrderType === 'platform' ? finalPriceForOrder : undefined, // original_platform_price
+            selectedProduct.price,
+            1,
+            currentOrderType === 'platform' ? finalPriceForOrder : undefined,
             appliedInflationRate,
-            originalPriceBeforeInflation // precio con modificadores, antes de inflar para plataforma
+            originalPriceBeforeInflation
         );
     });
 
@@ -1138,25 +1108,23 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
         if (!selectedPackageDetail) return;
         const { packageDef, packageItems, itemSlots } = selectedPackageDetail;
         let inventoryOk = true;
-        const tempInventoryChanges: Record<string, number> = {}; // Para rastrear consumo de inventario DENTRO de este paquete
+        const tempInventoryChanges: Record<string, number> = {};
 
 
-        for (const itemDef of packageItems) { // itemDef es un PackageItem de la BD
-            const productDetails = allProductsMap.get(itemDef.product_id); // Detalles del producto base del item de paquete
+        for (const itemDef of packageItems) {
+            const productDetails = allProductsMap.get(itemDef.product_id);
             if (!productDetails) {
                 toast({ title: "Error", description: `Definición de producto para ${itemDef.product_name || 'desconocido'} no encontrada.`, variant: "destructive" });
                 inventoryOk = false; break;
             }
 
-            // Verificar stock del producto base del item de paquete
             if (productDetails.inventory_item_id) {
                 const invItem = inventoryMap.get(productDetails.inventory_item_id);
-                // Consumo = (consumo_unitario_del_producto_base * cantidad_del_item_en_paquete) * cantidad_de_paquetes_a_añadir
                 const consumed = (productDetails.inventory_consumed_per_unit ?? 0) * itemDef.quantity * currentProductConfigQuantity;
                 const currentStock = invItem?.current_stock ?? 0;
                 const alreadyConsumedInThisPackage = tempInventoryChanges[productDetails.inventory_item_id] || 0;
 
-                if (currentStock - alreadyConsumedInThisPackage < consumed) { // Comparamos con stock disponible después de otros items
+                if (currentStock - alreadyConsumedInThisPackage < consumed) {
                     toast({ title: "Sin Stock", description: `No hay suficiente ${invItem?.name || 'inventario'} para ${itemDef.product_name} en paquete.`, variant: "destructive" });
                     inventoryOk = false; break;
                 } else if (consumed > 0) {
@@ -1164,18 +1132,16 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
                 }
             }
 
-            // Verificar stock de los modificadores seleccionados para este item de paquete
-            const slotsConfiguredForItem = itemSlots[itemDef.id] || []; // ModifierSlotState[]
+            const slotsConfiguredForItem = itemSlots[itemDef.id] || [];
             for (const slot of slotsConfiguredForItem) {
                 if (slot.selectedOptions.length < slot.min_quantity) {
                      toast({ title: "Selección Incompleta", description: `Para "${itemDef.product_name}", debes seleccionar al menos ${slot.min_quantity} ${slot.label.toLowerCase()}.`, variant: "destructive" });
                     inventoryOk = false; break;
                 }
-                 for (const modOption of slot.selectedOptions) { // modOption es un SelectedModifierItem
+                 for (const modOption of slot.selectedOptions) {
                      const modProductDetails = allProductsMap.get(modOption.productId);
                      if (modProductDetails?.inventory_item_id) {
                         const invItem = inventoryMap.get(modProductDetails.inventory_item_id);
-                        // Consumo = (consumo_unitario_del_modificador) * cantidad_de_paquetes_a_añadir
                         const consumed = (modProductDetails.inventory_consumed_per_unit ?? 0) * currentProductConfigQuantity;
                          const currentStock = invItem?.current_stock ?? 0;
                          const alreadyConsumedInThisPackage = tempInventoryChanges[modProductDetails.inventory_item_id] || 0;
@@ -1194,17 +1160,15 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
 
         if (!inventoryOk) return;
 
-        // Si el inventario está OK, añadir los paquetes al pedido
-        for (let i = 0; i < currentProductConfigQuantity; i++) { // Añadir cada paquete individualmente
-            let packagePriceWithModifiers = packageDef.price; // Precio base del paquete
+        for (let i = 0; i < currentProductConfigQuantity; i++) {
+            let packagePriceWithModifiers = packageDef.price;
             const packageItemsForOrder: OrderItem['packageItems'] = packageItems.map(itemDef => {
                 const selectedModsForThisSubItem = (itemSlots[itemDef.id] || []).flatMap(slot => slot.selectedOptions);
-                selectedModsForThisSubItem.forEach(mod => { // mod es SelectedModifierItem
-                    // mod.priceModifier ya es el precio efectivo del modificador para ese slot
+                selectedModsForThisSubItem.forEach(mod => {
                     packagePriceWithModifiers += (mod.priceModifier || 0) + (mod.extraCost || 0);
                 });
                 return {
-                    packageItemId: itemDef.id, // ID de la definición del item en el paquete
+                    packageItemId: itemDef.id,
                     productId: itemDef.product_id,
                     productName: itemDef.product_name || 'Producto Desconocido',
                     selectedModifiers: selectedModsForThisSubItem
@@ -1221,15 +1185,15 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
             }
 
             const newOrderItem: OrderItem = {
-                type: 'package', id: packageDef.id, name: packageDef.name, quantity: 1, // Cada paquete se añade como cantidad 1
-                basePrice: packageDef.price, // Precio base original del paquete (sin modificadores ni inflación)
-                original_platform_price: currentOrderType === 'platform' ? finalPriceForOrder : undefined, // Precio ya inflado si es de plataforma
-                totalPrice: finalPriceForOrder, // Precio total de esta línea (1 paquete)
+                type: 'package', id: packageDef.id, name: packageDef.name, quantity: 1,
+                basePrice: packageDef.price,
+                original_platform_price: currentOrderType === 'platform' ? finalPriceForOrder : undefined,
+                totalPrice: finalPriceForOrder,
                 applied_commission_rate: appliedInflationRate,
-                selectedModifiers: [], // Paquetes no tienen modificadores directos en esta estructura; se aplican a sus items
+                selectedModifiers: [],
                 uniqueId: uuidv4(),
                 packageItems: packageItemsForOrder,
-                original_price_before_inflation: originalPriceBeforeInflation, // Precio del paquete con sus modificadores, antes de inflar para plataforma
+                original_price_before_inflation: originalPriceBeforeInflation,
             };
             setCurrentOrder(prev => ({ ...prev, items: [...prev.items, newOrderItem] }));
         }
@@ -1240,23 +1204,21 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
   const addProductToOrder = (
     product: Product,
     modifiers: SelectedModifierItem[],
-    baseItemPrice: number, // Precio base del producto principal (sin modificadores)
+    baseItemPrice: number,
     quantity: number,
-    inflatedPricePerUnit?: number, // Precio unitario ya inflado para plataforma (incluye modificadores)
+    inflatedPricePerUnit?: number,
     appliedInflationRate?: number,
-    originalPriceBeforeInflationWithMods?: number // Precio del producto CON modificadores pero ANTES de inflar para plataforma
+    originalPriceBeforeInflationWithMods?: number
   ) => {
 
     let finalPricePerUnit = inflatedPricePerUnit ?? originalPriceBeforeInflationWithMods ?? baseItemPrice;
-    // Si originalPriceBeforeInflationWithMods no se pasó (ej. producto sin mods), y no es de plataforma,
-    // y SÍ tiene modificadores, debemos calcularlo aquí.
     if (originalPriceBeforeInflationWithMods === undefined && modifiers.length > 0) {
         let sumOfModifiersPrice = 0;
         modifiers.forEach(mod => {
             sumOfModifiersPrice += (mod.priceModifier || 0) + (mod.extraCost || 0);
         });
         originalPriceBeforeInflationWithMods = baseItemPrice + sumOfModifiersPrice;
-        if (!inflatedPricePerUnit) { // Si no era de plataforma, finalPricePerUnit es este
+        if (!inflatedPricePerUnit) {
             finalPricePerUnit = originalPriceBeforeInflationWithMods;
         }
     }
@@ -1264,13 +1226,13 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
 
     const newOrderItem: OrderItem = {
       type: 'product', id: product.id, name: product.name, quantity: quantity,
-      basePrice: baseItemPrice, // Precio original del producto SIN modificadores ni inflaciones
-      original_platform_price: inflatedPricePerUnit, // Precio unitario ya inflado si es de plataforma (incluye modificadores)
+      basePrice: baseItemPrice,
+      original_platform_price: inflatedPricePerUnit,
       selectedModifiers: modifiers,
-      totalPrice: finalPricePerUnit * quantity, // Precio total de la línea
+      totalPrice: finalPricePerUnit * quantity,
       uniqueId: uuidv4(),
       applied_commission_rate: appliedInflationRate,
-      original_price_before_inflation: originalPriceBeforeInflationWithMods, // Precio con mods, antes de inflar para plataforma
+      original_price_before_inflation: originalPriceBeforeInflationWithMods,
     };
     setCurrentOrder(prev => ({ ...prev, items: [...prev.items, newOrderItem] }));
   };
@@ -1281,19 +1243,17 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
       let updatedItems = prev.items.map(item => {
         if (item.uniqueId === uniqueId) {
           const newQuantity = Math.max(0, item.quantity + delta);
-          // El precio unitario que se usará para recalcular es el precio ya inflado (si aplica) + modificadores.
-          // Este precio se puede derivar de item.totalPrice / item.quantity si quantity > 0.
           let unitPriceForRecalc = 0;
           if (item.quantity > 0) {
             unitPriceForRecalc = item.totalPrice / item.quantity;
-          } else { // Si la cantidad era 0, recalcular desde base/plataforma + mods
+          } else {
             let baseOrPlatformPrice = item.original_platform_price ?? item.basePrice;
              if (item.type === 'product') {
                 baseOrPlatformPrice = item.original_platform_price ?? (item.original_price_before_inflation ?? item.basePrice);
              } else if (item.type === 'package') {
                 baseOrPlatformPrice = item.original_platform_price ?? (item.original_price_before_inflation ?? item.basePrice);
              }
-             unitPriceForRecalc = baseOrPlatformPrice; // Modificadores ya estarían en original_price_before_inflation o original_platform_price
+             unitPriceForRecalc = baseOrPlatformPrice;
           }
 
           return { ...item, quantity: newQuantity, totalPrice: unitPriceForRecalc * newQuantity };
@@ -1310,38 +1270,6 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
      toast({ title: `Item eliminado del pedido`, variant: 'destructive' })
   };
 
-  const clearOrder = useCallback(() => {
-    const currentOrderTypePersisted = currentOrderType; // Mantener el tipo de orden actual
-    setCurrentOrder({ id: '', customerName: 'Guest', items: [], paymentMethod: 'card', orderType: currentOrderTypePersisted });
-    setCustomerName(''); setIsRegisteringCustomer(false); setPaidAmountInput('');
-    setDeliveryAddress(''); setDeliveryPhone('');
-    setSelectedPlatformId(null); setPlatformOrderId(''); // Resetear campos de plataforma
-
-    resetProductSelection(); resetPackageSelection();
-    setEditingOrderId(null); setOriginalOrderForEdit(null);
-    // Limpiar query params de edición
-    const newParams = new URLSearchParams(searchParams.toString());
-    newParams.delete('editOrderId');
-    router.replace(`${pathname}?${newParams.toString()}`, { scroll: false });
-
-    toast({ title: "Pedido Limpiado", variant: "destructive" });
-    resetAndGoToCategories(); // Volver a la vista de categorías
-  }, [currentOrderType, resetAndGoToCategories, router, pathname, searchParams]);
-
-
-  const resetProductSelection = () => {
-    setSelectedProduct(null);
-    setCurrentModifierSlots([]);
-    setModifierConfigurations([[]]);
-    setCurrentInstanceIndexForConfiguration(0);
-    setCurrentProductConfigQuantity(1);
-  }
-  const resetPackageSelection = () => {
-    setSelectedPackage(null);
-    setSelectedPackageDetail(null);
-    setCurrentProductConfigQuantity(1); // Esta cantidad es para el paquete en sí
-  }
-
   const handleBack = () => {
     if (view === 'modifiers') { resetProductSelection(); setView('products'); }
     else if (view === 'package-details') { resetPackageSelection(); setView('products'); }
@@ -1355,7 +1283,7 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
       setCurrentOrder(prev => ({ ...prev, paidAmount: paid, changeDue: change >= 0 ? change : undefined }));
     } else {
       setCurrentOrder(prev => ({ ...prev, paidAmount: undefined, changeDue: undefined }));
-      setPaidAmountInput(''); // Limpiar input si no es efectivo
+      setPaidAmountInput('');
     }
   }, [paidAmountInput, total, currentOrder.paymentMethod]);
 
@@ -1391,13 +1319,11 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
             return;
         }
         const pausedOrder: PausedOrder = {
-            ...currentOrder, // Incluye items, customerName, paymentMethod, orderType
-            subtotal: subtotal, // Añadir subtotal y total calculados
+            ...currentOrder,
+            subtotal: subtotal,
             total: total,
             pausedId: uuidv4(),
             pausedAt: new Date().toISOString(),
-            // Campos específicos del tipo de orden que ya están en currentOrder (y se copian con ...currentOrder)
-            // platformName, platformOrderId, deliveryAddress, deliveryPhone
         };
         try {
             const existingPausedOrdersString = localStorage.getItem('siChefPausedOrders');
@@ -1405,7 +1331,7 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
             existingPausedOrders.push(pausedOrder);
             localStorage.setItem('siChefPausedOrders', JSON.stringify(existingPausedOrders));
             toast({ title: "Pedido Pausado", description: `El pedido para ${currentOrder.customerName} ha sido guardado.` });
-            clearOrder(); // Limpiar el pedido actual después de pausar
+            clearOrder();
         } catch (error) {
             console.error("Error pausando pedido:", error);
             toast({ title: "Error al Pausar", description: "No se pudo pausar el pedido.", variant: "destructive" });
@@ -1420,7 +1346,7 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
     if (currentOrder.paymentMethod === 'cash' && (currentOrder.paidAmount === undefined || currentOrder.paidAmount < total)) {
        toast({ title: "Pago Incompleto", description: "La cantidad pagada en efectivo es menor que el total.", variant: 'destructive' }); return;
     }
-     if (currentOrderType === 'platform' && (!selectedPlatformId || !platformOrderId)) { // selectedPlatformId es el ID/Nombre de la plataforma
+     if (currentOrderType === 'platform' && (!selectedPlatformId || !platformOrderId)) {
         toast({ title: "Datos de Plataforma Incompletos", description: "Por favor selecciona la plataforma y el ID del pedido.", variant: 'destructive' }); return;
     }
      if (currentOrderType === 'delivery' && !deliveryAddress) {
@@ -1436,14 +1362,14 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
              items: order.items?.map((item: any) => ({
                 id: item.id || 'unknown', name: item.name || 'Unknown Item',
                 quantity: typeof item.quantity === 'number' ? item.quantity : 0,
-                price: typeof item.price === 'number' ? item.price : 0, // Precio base unitario original del producto/paquete
+                price: typeof item.price === 'number' ? item.price : 0,
                 totalItemPrice: typeof item.totalItemPrice === 'number' ? item.totalItemPrice : 0,
                 components: Array.isArray(item.components) ? item.components.map((c:any) => ({
                     ...c, productId: c.productId, slotId: c.slotId, priceModifier: c.priceModifier
                 })) : [],
-                isPlatformItem: typeof item.isPlatformItem === 'boolean' ? item.isPlatformItem : false, // Verdadero si se usó precio de plataforma
-                platformPricePerUnit: typeof item.platformPricePerUnit === 'number' ? item.platformPricePerUnit : undefined, // Precio unitario con inflación, si aplicó
-                original_price_before_inflation: typeof item.original_price_before_inflation === 'number' ? item.original_price_before_inflation : undefined, // Precio con mods, antes de inflar
+                isPlatformItem: typeof item.isPlatformItem === 'boolean' ? item.isPlatformItem : false,
+                platformPricePerUnit: typeof item.platformPricePerUnit === 'number' ? item.platformPricePerUnit : undefined,
+                original_price_before_inflation: typeof item.original_price_before_inflation === 'number' ? item.original_price_before_inflation : undefined,
              })) || [],
              subtotal: typeof order.subtotal === 'number' ? order.subtotal : 0,
              total: typeof order.total === 'number' ? order.total : 0,
@@ -1454,7 +1380,7 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
              platform_order_id: order.platform_order_id,
              delivery_address: order.delivery_address,
              delivery_phone: order.delivery_phone,
-             client_id: order.client_id, // Asumiendo que este campo puede existir
+             client_id: order.client_id,
          }));
      } catch (e) { console.error("Error parseando pedidos existentes", e); }
 
@@ -1465,12 +1391,12 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
             console.log("[CreateOrderPage] Reponiendo inventario del pedido original:", originalOrderForEdit.id);
             const originalInventoryAdjustments: Record<string, number> = {};
             for (const savedItem of originalOrderForEdit.items) {
-                const itemDef = allProductsMap.get(savedItem.id); // Usar allProductsMap para detalles
+                const itemDef = allProductsMap.get(savedItem.id);
                 if (itemDef?.inventory_item_id && itemDef.inventory_consumed_per_unit) {
                     originalInventoryAdjustments[itemDef.inventory_item_id] = (originalInventoryAdjustments[itemDef.inventory_item_id] || 0) + (itemDef.inventory_consumed_per_unit * savedItem.quantity);
                 }
                 for (const comp of savedItem.components) {
-                    if (comp.productId && comp.slotLabel !== 'Contenido') { // Asumimos que 'Contenido' no es un modificador que consume stock
+                    if (comp.productId && comp.slotLabel !== 'Contenido') {
                         const modDef = allProductsMap.get(comp.productId);
                         if (modDef?.inventory_item_id && modDef.inventory_consumed_per_unit) {
                             originalInventoryAdjustments[modDef.inventory_item_id] = (originalInventoryAdjustments[modDef.inventory_item_id] || 0) + (modDef.inventory_consumed_per_unit * savedItem.quantity);
@@ -1479,7 +1405,7 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
                 }
             }
             for (const [itemId, change] of Object.entries(originalInventoryAdjustments)) {
-                if (change !== 0) await adjustInventoryStock(itemId, change); // Reponer es sumar
+                if (change !== 0) await adjustInventoryStock(itemId, change);
             }
             console.log("[CreateOrderPage] Inventario del pedido original repuesto.");
         }
@@ -1512,31 +1438,23 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
                     for (const modifier of pkgItem.selectedModifiers) {
                         const modDef = allProductsMap.get(modifier.productId);
                         if (modDef?.inventory_item_id && modDef.inventory_consumed_per_unit) {
-                             currentInventoryAdjustments[modDef.inventory_item_id] = (currentInventoryAdjustments[modDef.inventory_item_id] || 0) - (modDef.inventory_consumed_per_unit * orderItem.quantity); // Multiplicar por la cantidad del paquete principal
+                             currentInventoryAdjustments[modDef.inventory_item_id] = (currentInventoryAdjustments[modDef.inventory_item_id] || 0) - (modDef.inventory_consumed_per_unit * orderItem.quantity);
                         }
                     }
                 }
             }
         }
         for (const [itemId, change] of Object.entries(currentInventoryAdjustments)) {
-             if (change !== 0) await adjustInventoryStock(itemId, change); // Consumir es restar
+             if (change !== 0) await adjustInventoryStock(itemId, change);
         }
         console.log("[CreateOrderPage] Inventario del pedido actual consumido.");
 
-        // Actualizar el mapa de inventario local para reflejar los cambios
         const newInvMap = new Map(inventoryMap);
-        if (editingOrderId && originalOrderForEdit) { // Aplicar reposición a newInvMap
-             // Esto se manejó en el bucle de arriba, pero volvemos a obtener el estado de la BD
-             // Lo ideal sería que adjustInventoryStock devolviera el nuevo stock o refetchear
-        }
         Object.entries(currentInventoryAdjustments).forEach(([itemId, change]) => {
             const currentInvItem = newInvMap.get(itemId);
             if (currentInvItem) newInvMap.set(itemId, { ...currentInvItem, current_stock: currentInvItem.current_stock + change });
         });
-        // Para reflejar la reposición, necesitaríamos sumar los valores de originalInventoryAdjustments
-        // Esto se complica si el mismo item está en ambos. Es mejor re-leer el inventario o que adjustInventoryStock sea más informativo.
-        // Por ahora, newInvMap solo refleja el consumo del pedido actual. Para una UI 100% precisa post-edición, un re-fetch de inventario sería ideal.
-        setInventoryMap(newInvMap); // Actualizar estado local
+        setInventoryMap(newInvMap);
 
 
      } catch (error) {
@@ -1549,12 +1467,11 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
 
 
      const newOrderData = {
-        customerName: currentOrder.customerName, // customerName del estado del pedido
+        customerName: currentOrder.customerName,
         items: currentOrder.items.map(item => {
             let components: SavedOrderItemComponent[] = [];
             if (item.type === 'package' && item.packageItems) {
                 item.packageItems.forEach(pkgItem => {
-                    // El "componente" base del paquete
                     components.push({ name: `${pkgItem.productName}`, slotLabel: 'Contenido', productId: pkgItem.productId });
                     if (pkgItem.selectedModifiers.length > 0) {
                          pkgItem.selectedModifiers.forEach(mod => {
@@ -1570,25 +1487,24 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
             }
             return {
               id: item.id, name: item.name, quantity: item.quantity,
-              price: item.basePrice, // Precio base unitario original del producto/paquete
-              totalItemPrice: item.totalPrice, // Precio total de la línea (ya incluye inflación y modificadores)
+              price: item.basePrice,
+              totalItemPrice: item.totalPrice,
               components: components,
-              isPlatformItem: currentOrderType === 'platform', // Determinar si fue de plataforma
-              platformPricePerUnit: item.original_platform_price, // Precio unitario inflado para plataforma, si aplica
-              original_price_before_inflation: item.original_price_before_inflation, // Precio con mods, ANTES de inflar para plataforma
+              isPlatformItem: currentOrderType === 'platform',
+              platformPricePerUnit: item.original_platform_price,
+              original_price_before_inflation: item.original_price_before_inflation,
             };
         }),
         paymentMethod: currentOrder.paymentMethod,
-        subtotal: subtotal, // Usar subtotal y total calculados
+        subtotal: subtotal,
         total: total,
-        status: 'pending', // Los pedidos finalizados aquí se marcan como pendientes
+        status: 'pending',
         paidAmount: currentOrder.paidAmount, changeGiven: currentOrder.changeDue,
-        order_type: currentOrderType, // Guardar el tipo de pedido
-        platform_name: currentOrderType === 'platform' ? selectedPlatformId : undefined, // Nombre/ID de la plataforma
+        order_type: currentOrderType,
+        platform_name: currentOrderType === 'platform' ? selectedPlatformId : undefined,
         platform_order_id: currentOrderType === 'platform' ? platformOrderId : undefined,
         delivery_address: currentOrderType === 'delivery' ? deliveryAddress : undefined,
         delivery_phone: currentOrderType === 'delivery' ? deliveryPhone : undefined,
-        // client_id: currentOrder.clientId, // Si se implementa selección de cliente desde BD
     };
 
     let finalizedOrder: SavedOrder;
@@ -1596,9 +1512,9 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
 
     if (editingOrderId && originalOrderForEdit) {
         finalizedOrder = {
-            ...originalOrderForEdit, // Mantener ID original, orderNumber, createdAt
-            ...newOrderData, // Aplicar nuevos datos
-            updatedAt: new Date(), // Actualizar fecha de modificación
+            ...originalOrderForEdit,
+            ...newOrderData,
+            updatedAt: new Date(),
         };
         updatedOrders = existingOrders.map(o => o.id === editingOrderId ? finalizedOrder : o);
         toast({ title: "Pedido Actualizado", description: `${finalizedOrder.orderNumber ? `#${finalizedOrder.orderNumber}`: finalizedOrder.id} actualizado.` });
@@ -1610,7 +1526,6 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
             id: newOrderId,
             orderNumber: newOrderNumber,
             createdAt: new Date(),
-            // updatedAt no se establece al crear
         };
         updatedOrders = [...existingOrders, finalizedOrder];
         toast({ title: "Pedido Finalizado", description: `${finalizedOrder.id} creado y guardado.` });
@@ -1620,20 +1535,19 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
 
     const printReceiptsEnabled = localStorage.getItem('siChefSettings_printReceipts') === 'true';
     if (printReceiptsEnabled) {
-        const receiptHtml = await generateTicketData(finalizedOrder); // Usar finalizedOrder para el ticket
+        const receiptHtml = await generateTicketData(finalizedOrder);
         await handleActualPrint(receiptHtml);
     } else {
          toast({ title: "Impresión Omitida", description: "La impresión de recibos está desactivada en la configuración." });
     }
 
-    clearOrder(); // Limpiar el estado para un nuevo pedido
+    clearOrder();
   };
 
   const handleApplyCurrentModifiersToAllInstances = () => {
     if (modifierConfigurations.length <= 1 || currentInstanceIndexForConfiguration < 0) return;
 
     const currentConfig = modifierConfigurations[currentInstanceIndexForConfiguration];
-    // Crear nuevas copias de la configuración actual para todas las instancias
     const newConfigs = modifierConfigurations.map(() => [...currentConfig.map(mod => ({...mod}))]);
     setModifierConfigurations(newConfigs);
     toast({title: "Configuración Aplicada", description: "Modificadores de esta instancia aplicados a todas."});
@@ -1886,7 +1800,7 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
 
              <ScrollArea className="flex-grow mb-3">
                 <div className="space-y-4 md:space-y-6 pr-2">
-                    {currentModifierSlots.map(slot => { // slot es ModifierSlotState
+                    {currentModifierSlots.map(slot => {
                         const selectedForSlotInCurrentInstance = currentInstanceConfig.filter(sel => sel.slotId === slot.id);
                         return (
                             <div key={slot.id}>
@@ -1896,7 +1810,7 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
                                 )}
                                 {slot.options.length === 0 && <p className="text-sm text-muted-foreground">No hay opciones para "{slot.label}".</p>}
                                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 md:gap-3">
-                                    {slot.options.map(option => { // option es un Product (modificador)
+                                    {slot.options.map(option => {
                                         const isSelectedInCurrentInstance = selectedForSlotInCurrentInstance.some(sel => sel.productId === option.id);
                                         const maxReachedForSlotInCurrentInstance = selectedForSlotInCurrentInstance.length >= slot.max_quantity;
                                         const isDisabled = !isSelectedInCurrentInstance && maxReachedForSlotInCurrentInstance;
@@ -1910,9 +1824,6 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
                                             optionInventoryOk = !!invItem && invItem.current_stock >= (option.inventory_consumed_per_unit ?? 0);
                                         }
                                         const isOutOfStock = !optionInventoryOk && !isSelectedInCurrentInstance;
-
-                                        // option.price ya incluye el price_adjustment si se obtuvo de slot.allowedOptions
-                                        // y fue procesado en fetchAndPrepareModifierSlots
                                         let displayPriceForModifier = option.price + (currentSelectionDetails?.extraCost || 0);
 
 
@@ -1930,7 +1841,6 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
                                                     {isOutOfStock && <Badge variant="destructive" className="absolute -top-1.5 -right-1.5 text-xs px-1 py-0">Stock</Badge>}
                                                     <span className="text-xs md:text-sm block leading-tight">{option.name} {currentSelectionDetails?.servingStyle && currentSelectionDetails.servingStyle !== 'Normal' && `(${currentSelectionDetails.servingStyle})`}</span>
                                                     {displayPriceForModifier > 0 && <span className="block text-xs text-muted-foreground mt-0.5">{formatCurrency(displayPriceForModifier)}</span>}
-                                                    {/* Mostrar gratis si el precio base del modificador era >0 pero el ajuste lo hizo 0 o negativo */}
                                                     {displayPriceForModifier <= 0 && option.price > 0 && <span className="block text-xs text-muted-foreground mt-0.5">{formatCurrency(0)}</span>}
 
                                                 </Card>
@@ -1999,21 +1909,20 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
              </div>
              <ScrollArea className="flex-grow mb-3">
                 <div className="space-y-4 md:space-y-6 pr-2">
-                    {packageItems.map(item => ( // item es PackageItem de la BD
+                    {packageItems.map(item => (
                         <Card key={item.id} className="p-3 md:p-4">
                             <CardTitle className="text-md md:text-lg mb-2 md:mb-3">{item.product_name} <span className="text-sm md:text-base font-normal text-muted-foreground">(x{item.quantity})</span></CardTitle>
                             <div className="space-y-3 md:space-y-4 pl-2 md:pl-4 border-l-2 border-muted ml-1">
-                                {/* itemSlots[item.id] son los ModifierSlotState para este item de paquete */}
                                 {(itemSlots[item.id] || []).length === 0 && <p className="text-sm text-muted-foreground">No hay opciones configurables.</p>}
-                                {(itemSlots[item.id] || []).map(slot => { // slot es ModifierSlotState
-                                    const currentPackageItemInstanceConfig = slot.selectedOptions || []; // Son SelectedModifierItem
+                                {(itemSlots[item.id] || []).map(slot => {
+                                    const currentPackageItemInstanceConfig = slot.selectedOptions || [];
                                     return (
-                                        <div key={slot.id}> {/* slot.id es el product_modifier_slot_id */}
+                                        <div key={slot.id}>
                                             <h4 className="text-sm md:text-md font-medium mb-1 md:mb-2">{slot.label} <span className="text-xs md:text-sm text-muted-foreground">(Min: {slot.min_quantity}, Max: {slot.max_quantity})</span></h4>
                                             {currentPackageItemInstanceConfig.length > 0 && ( <div className="mb-1 text-xs text-muted-foreground">Seleccionados: {currentPackageItemInstanceConfig.length} / {slot.max_quantity}</div> )}
                                             {slot.options.length === 0 && <p className="text-sm text-muted-foreground">No hay opciones para "{slot.label}".</p>}
                                             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 md:gap-3">
-                                                {slot.options.map(option => { // option es un Product (modificador)
+                                                {slot.options.map(option => {
                                                     const isSelected = currentPackageItemInstanceConfig.some(sel => sel.productId === option.id);
                                                     const maxQty = slot.max_quantity;
                                                     const maxReached = currentPackageItemInstanceConfig.length >= maxQty;
@@ -2026,7 +1935,6 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
                                                         optionInventoryOk = !!invItem && invItem.current_stock >= (option.inventory_consumed_per_unit ?? 0);
                                                     }
                                                     const isOutOfStock = !optionInventoryOk && !isSelected;
-                                                    // option.price ya incluye el ajuste si viene de allowedOptions
                                                     let displayPriceModPkg = option.price + (currentSelection?.extraCost || 0);
 
                                                     return (
@@ -2336,4 +2244,3 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
     </div>
   );
 }
-
