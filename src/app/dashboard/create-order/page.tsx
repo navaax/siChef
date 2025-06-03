@@ -114,7 +114,6 @@ export default function CreateOrderPage() {
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
   const [showNewClientFieldsForDelivery, setShowNewClientFieldsForDelivery] = useState(false);
   const [newCustomerNameForDelivery, setNewCustomerNameForDelivery] = useState('');
-  // deliveryAddress y deliveryPhone se usan tanto para clientes existentes como nuevos
   const [deliveryAddress, setDeliveryAddress] = useState('');
   const [deliveryPhone, setDeliveryPhone] = useState('');
 
@@ -149,7 +148,7 @@ export default function CreateOrderPage() {
   const [currentInstanceIndexForConfiguration, setCurrentInstanceIndexForConfiguration] = useState(0);
 
   const [isLoading, setIsLoading] = useState({
-        page: false,
+        page: true, // Iniciar como true para la carga inicial
         categories: true,
         products: false,
         packages: false,
@@ -222,13 +221,15 @@ export default function CreateOrderPage() {
   }, [currentOrderType, resetAndGoToCategories, router, pathname, searchParams, toast]);
 
   const fetchInitialData = useCallback(async () => {
-    console.log("[CreateOrderPage] fetchInitialData: Called. Current isLoading.page:", isLoading.page);
-    if (isLoading.page && hasLoadedCoreData) {
-        console.log("[CreateOrderPage] fetchInitialData: Already loading or core data present, exiting to prevent re-fetch.");
+    console.log("[CreateOrderPage] fetchInitialData: Called. isLoading.page:", isLoading.page, "hasLoadedCoreData:", hasLoadedCoreData);
+    if (isLoading.page && hasLoadedCoreData) { // Si ya está cargando Y ya tiene datos, evita re-fetch.
+        console.log("[CreateOrderPage] fetchInitialData: Ya cargando y con datos o ya cargó datos. Saliendo.");
         return;
     }
-    setIsLoading(prev => ({ ...prev, page: true, categories: true, inventory: true, products: true, packages: true }));
-    setHasLoadedCoreData(false);
+    // Solo marcar como cargando si no tiene datos.
+    if (!hasLoadedCoreData) {
+        setIsLoading(prev => ({ ...prev, page: true, categories: true, inventory: true, products: true, packages: true }));
+    }
 
     try {
       console.log("[CreateOrderPage] fetchInitialData: 1. Attempting to getCategories...");
@@ -280,40 +281,41 @@ export default function CreateOrderPage() {
       if (storedIncrease) {
           const parsed = parseFloat(storedIncrease);
           if (!isNaN(parsed) && parsed > 0) {
-              increasePercent = parsed / 100;
+              increasePercent = parsed / 100; // Convertir a decimal para cálculos
               console.log(`[CreateOrderPage] fetchInitialData: 9. Platform price increase LOADED: ${parsed}%`);
           } else {
               console.warn("[CreateOrderPage] fetchInitialData: 9. Stored platformPriceIncrease is invalid or not positive:", storedIncrease, "Using default 15%.");
-              increasePercent = 0.15; // Default 15%
+              increasePercent = 0.15;
               localStorage.setItem('siChefSettings_platformPriceIncrease', '15');
           }
       } else {
           console.log("[CreateOrderPage] fetchInitialData: 9. No platform price increase found in localStorage. Using default 15%.");
-          increasePercent = 0.15; // Default 15%
+          increasePercent = 0.15;
           localStorage.setItem('siChefSettings_platformPriceIncrease', '15');
       }
       setGlobalPlatformPriceIncreasePercent(increasePercent);
 
-      setHasLoadedCoreData(true);
+      setHasLoadedCoreData(true); // Marcar que los datos principales se cargaron
       console.log("[CreateOrderPage] fetchInitialData: 10. Core data loading SUCCESS. hasLoadedCoreData set to true.");
 
     } catch (error) {
       console.error("[CreateOrderPage] fetchInitialData: CRITICAL ERROR during core data loading:", error);
       toast({ title: "Error al Cargar Datos Iniciales", description: `Fallo al cargar datos esenciales. ${error instanceof Error ? error.message : ''}`, variant: "destructive" });
-      setHasLoadedCoreData(false);
+      setHasLoadedCoreData(false); // Marcar que la carga falló
     } finally {
       console.log("[CreateOrderPage] fetchInitialData: Entering FINALLY block.");
       setIsLoading(prev => ({
           ...prev,
-          page: false,
+          page: false, // Siempre desactivar 'page' al finalizar, sea éxito o error
           categories: false,
           inventory: false,
-          products: false,
+          products: false, // También desactivar estos para que no se queden en true
           packages: false,
       }));
       console.log("[CreateOrderPage] fetchInitialData: FINALLY block executed. All isLoading flags set to false.");
     }
-  }, [toast]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [toast]); // Solo toast como dependencia, ya que los demás son estables o se manejan internamente
 
   const loadOrderForEditing = useCallback(async (orderId: string) => {
     console.log(`[CreateOrderPage] loadOrderForEditing llamado para: ${orderId}`);
@@ -347,14 +349,12 @@ export default function CreateOrderPage() {
 
         // Cliente
         if (orderToEdit.client_id) {
-            // Aquí idealmente se buscaría el cliente por ID si fuera necesario mostrar más que el nombre
-            // Pero para la UI de create-order, solo necesitamos el nombre y el ID para el pedido
             const clientNameFromOrder = orderToEdit.customerName || 'Cliente';
             setSelectedClient({ id: orderToEdit.client_id, name: clientNameFromOrder, created_at: '', updated_at:'' }); // Dummy Client object
-            setCustomerPhoneInput(orderToEdit.delivery_phone || ''); // Asumimos que delivery_phone podría ser el del cliente
+            setCustomerPhoneInput(orderToEdit.delivery_phone || '');
         } else {
             setSelectedClient(null);
-            setCustomerPhoneInput(orderToEdit.delivery_phone || ''); // Aún puede haber un teléfono de contacto
+            setCustomerPhoneInput(orderToEdit.delivery_phone || '');
         }
 
 
@@ -455,38 +455,40 @@ export default function CreateOrderPage() {
     }
   }, [router, toast, allProductsMap, configuredPlatforms]);
 
-
   // --- useEffect Hooks ---
   useEffect(() => {
     console.log("[CreateOrderPage] Mount useEffect: isLoading.page:", isLoading.page, "hasLoadedCoreData:", hasLoadedCoreData);
-    if (!hasLoadedCoreData) { // Solo llamar si los datos NO están cargados
-        console.log("[CreateOrderPage] Mount useEffect: Calling fetchInitialData.");
+    if (!isLoading.page) { // Solo llamar si no está cargando la página
         fetchInitialData();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Runs once on mount
+  }, []); // Runs once on mount (fetchInitialData ahora tiene guarda interna)
 
   useEffect(() => {
     const orderIdFromQuery = searchParams.get('editOrderId');
     console.log(`[CreateOrderPage] Route Change useEffect. Query: ${orderIdFromQuery}, CurrentEditingID: ${editingOrderId}, HasCoreData: ${hasLoadedCoreData}, isLoading.page: ${isLoading.page}`);
 
     if (orderIdFromQuery) {
-      if (hasLoadedCoreData) {
+      if (hasLoadedCoreData) { // Solo cargar si los datos principales ya están
         if (!editingOrderId || editingOrderId !== orderIdFromQuery) {
           console.log(`[CreateOrderPage] Edición: Datos principales cargados. Llamando a loadOrderForEditing para ${orderIdFromQuery}.`);
           loadOrderForEditing(orderIdFromQuery);
         }
-      } else if (!isLoading.page) {
-          console.warn(`[CreateOrderPage] Edición: Solicitado ${orderIdFromQuery}, pero los datos principales aún no están cargados y no se está cargando la página. Esto podría ser un problema si fetchInitialData no se dispara.`);
-          if (!hasLoadedCoreData) fetchInitialData(); // Forzar recarga si no tiene datos y no está cargando
+      } else if (!isLoading.page) { // Si no tiene datos Y no está cargando, intentar cargar datos principales.
+          console.warn(`[CreateOrderPage] Edición: Solicitado ${orderIdFromQuery}, pero los datos principales aún no están cargados y no se está cargando la página. Intentando fetchInitialData.`);
+          fetchInitialData();
       }
     } else {
-      if (editingOrderId) { // Si estaba editando y ya no hay ID en query
+      if (editingOrderId) { // Si estaba editando y ya no hay ID en query (cambio a nuevo pedido)
         console.log("[CreateOrderPage] Cambiando de Edición a Nuevo pedido. Reseteando.");
-        clearOrder(); // clearOrder maneja el reseteo completo
+        clearOrder();
       }
+      // Si no hay orderIdFromQuery y hasLoadedCoreData es false, y no está cargando,
+      // fetchInitialData ya se habrá intentado en el useEffect de montaje.
+      // Si los datos principales no se cargaron en el montaje (y no se está editando), se mostrará el loader.
     }
-  }, [searchParams, editingOrderId, hasLoadedCoreData, loadOrderForEditing, fetchInitialData, clearOrder]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, editingOrderId, hasLoadedCoreData, loadOrderForEditing, clearOrder]);
 
 
   const fetchProductsAndPackages = useCallback(async (categoryId: string) => {
@@ -1075,10 +1077,23 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
     if (currentOrder.items.length === 0) { toast({ title: "Pedido Vacío", variant: 'destructive' }); return; }
     if (currentOrder.paymentMethod === 'cash' && (currentOrder.paidAmount === undefined || currentOrder.paidAmount < total)) { toast({ title: "Pago Incompleto", variant: 'destructive' }); return; }
     if (currentOrderType === 'platform' && (!selectedPlatformId || !platformOrderId)) { toast({ title: "Datos de Plataforma Incompletos", variant: 'destructive' }); return; }
-    if (currentOrderType === 'delivery' && !deliveryAddress) { toast({ title: "Datos de Entrega Incompletos", variant: 'destructive' }); return; }
+    if (currentOrderType === 'delivery' && !deliveryAddress && (!selectedClient || !selectedClient.address)) {
+        toast({ title: "Dirección de Entrega Requerida", description: "Por favor, proporciona una dirección para el pedido de entrega.", variant: 'destructive' });
+        return;
+    }
+
 
     let customerToSave = currentOrder.customerName;
     let clientIdToSave = selectedClient?.id || null;
+    let finalDeliveryAddress = deliveryAddress; // Dirección actual del input
+    let finalDeliveryPhone = deliveryPhone; // Teléfono actual del input
+
+    if (selectedClient) {
+        customerToSave = selectedClient.name; // Asegurar que el nombre es del cliente seleccionado
+        finalDeliveryAddress = deliveryAddress || selectedClient.address || ''; // Usar input o la del cliente
+        finalDeliveryPhone = deliveryPhone || selectedClient.phone || ''; // Usar input o el del cliente
+    }
+
 
     // Lógica para registrar nuevo cliente si es necesario (delivery)
     if (showNewClientFieldsForDelivery && currentOrderType === 'delivery' && newCustomerNameForDelivery.trim() && customerPhoneInput.trim()) {
@@ -1088,18 +1103,20 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
                 name: newCustomerNameForDelivery,
                 phone: customerPhoneInput,
                 address: deliveryAddress, // Dirección del pedido actual
-                email: null, // No se pide email en este flujo rápido
+                email: null, 
                 notes: `Registrado desde pedido de delivery el ${formatDateFn(new Date(), 'Pp')}`
             });
             customerToSave = newClient.name;
             clientIdToSave = newClient.id;
-            setSelectedClient(newClient); // Actualizar el cliente seleccionado
+            setSelectedClient(newClient); 
+            finalDeliveryAddress = deliveryAddress; // Usar la dirección ingresada para el nuevo cliente
+            finalDeliveryPhone = customerPhoneInput; // Usar el teléfono ingresado para el nuevo cliente
             toast({ title: "Cliente Registrado", description: `${newClient.name} añadido a la cartera.` });
         } catch (error) {
             console.error("Error registrando nuevo cliente:", error);
             toast({ title: "Error al Registrar Cliente", description: error instanceof Error ? error.message : "No se pudo guardar el nuevo cliente.", variant: "destructive" });
             setIsLoading(prev => ({ ...prev, page: false }));
-            return; // No continuar con el pedido si el registro del cliente falla
+            return; 
         } finally {
             setIsLoading(prev => ({ ...prev, page: false }));
         }
@@ -1152,8 +1169,8 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
      if (inventoryAdjustmentFailed) return;
 
      const newOrderData = {
-        customerName: customerToSave, // Usar el nombre de cliente actualizado
-        client_id: clientIdToSave,   // Usar el ID del cliente (nuevo o existente)
+        customerName: customerToSave,
+        client_id: clientIdToSave,
         items: currentOrder.items.map(item => {
             let components: SavedOrderItemComponent[] = [];
             if (item.type === 'package' && item.packageItems) { item.packageItems.forEach(pkgItem => { components.push({ name: `${pkgItem.productName}`, slotLabel: 'Contenido', productId: pkgItem.productId }); if (pkgItem.selectedModifiers.length > 0) pkgItem.selectedModifiers.forEach(mod => components.push({ name: mod.name, slotId: mod.slotId, productId: mod.productId, priceModifier: mod.priceModifier, servingStyle: mod.servingStyle, extraCost: mod.extraCost })); });
@@ -1164,8 +1181,8 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
         paidAmount: currentOrder.paidAmount, changeGiven: currentOrder.changeDue, order_type: currentOrderType,
         platform_name: currentOrderType === 'platform' ? configuredPlatforms.find(p => p.id === selectedPlatformId)?.name : undefined,
         platform_order_id: currentOrderType === 'platform' ? platformOrderId : undefined,
-        delivery_address: currentOrderType === 'delivery' ? deliveryAddress : undefined,
-        delivery_phone: currentOrderType === 'delivery' ? deliveryPhone : undefined,
+        delivery_address: currentOrderType === 'delivery' ? finalDeliveryAddress : undefined,
+        delivery_phone: currentOrderType === 'delivery' ? finalDeliveryPhone : undefined,
     };
 
     let finalizedOrder: SavedOrder; let updatedOrders: SavedOrder[];
@@ -1184,6 +1201,21 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
     if (printReceiptsEnabled) { const receiptHtml = await generateTicketData(finalizedOrder); await handleActualPrint(receiptHtml); }
     else { toast({ title: "Impresión Omitida", description: "La impresión está desactivada." }); }
     clearOrder();
+  };
+
+
+  const handleActualPrint = async (htmlContent: string) => {
+    setIsLoading(prev => ({ ...prev, printing: true }));
+    try {
+        await printTicket(htmlContent, `Pedido #${currentOrder.id.substring(0,8)}`);
+        toast({ title: "Impresión Iniciada", description: "Comando de impresión enviado." });
+    } catch (error) {
+        console.error("Error en impresión:", error);
+        const message = error instanceof PrinterError ? error.message : (error instanceof Error ? error.message : "Error desconocido al imprimir.");
+        toast({ variant: "destructive", title: "Error de Impresión", description: message });
+    } finally {
+        setIsLoading(prev => ({ ...prev, printing: false }));
+    }
   };
 
   const handleApplyCurrentModifiersToAllInstances = () => {
@@ -1250,9 +1282,9 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
   const handleCustomerPhoneChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const searchTerm = e.target.value;
     setCustomerPhoneInput(searchTerm);
-    setSelectedClient(null); // Limpiar cliente seleccionado si se modifica el teléfono
+    setSelectedClient(null); 
     setCurrentOrder(prev => ({ ...prev, customerName: 'Cliente General', clientId: null }));
-    setShowNewClientFieldsForDelivery(false); // Ocultar campos de nuevo cliente
+    setShowNewClientFieldsForDelivery(false); 
 
     if (searchTerm.length >= 3) {
       setIsSearchingClients(true);
@@ -1277,8 +1309,8 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
     setSelectedClient(client);
     setCurrentOrder(prev => ({ ...prev, customerName: client.name, clientId: client.id }));
     setCustomerPhoneInput(client.phone || '');
-    setDeliveryAddress(client.address || ''); // Pre-llenar dirección si es para delivery
-    setDeliveryPhone(client.phone || '');    // Pre-llenar teléfono de entrega
+    setDeliveryAddress(client.address || ''); 
+    setDeliveryPhone(client.phone || '');   
     setSearchResults([]);
     setShowNewClientFieldsForDelivery(false);
     setNewCustomerNameForDelivery('');
@@ -1291,7 +1323,6 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
     setSearchResults([]);
     setShowNewClientFieldsForDelivery(false);
     setNewCustomerNameForDelivery('');
-    // No limpiar deliveryAddress/Phone aquí, ya que podrían ser para un cliente nuevo
   };
 
 
@@ -1412,7 +1443,22 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
          <Card className="h-full flex flex-col shadow-md">
             <CardHeader className="pb-2 md:pb-4">
                  <div className="flex justify-between items-center"> <CardTitle className="text-lg md:text-xl"> {editingOrderId ? `Editando Pedido #${originalOrderForEdit?.orderNumber || editingOrderId.substring(0,8)}` : "Crear Pedido"} </CardTitle>
-                    <div className="flex items-center gap-2"> {currentOrder.items.length > 0 && <Button variant="outline" size="sm" onClick={handlePauseOrder} title="Pausar pedido"><PauseCircle className="mr-1 md:mr-2 h-4 w-4" /> Pausar</Button>} <AlertDialog> <AlertDialogTrigger asChild> <Button variant="outline" size="sm" className="text-xs h-8 md:h-9" disabled={currentOrder.items.length === 0 && !editingOrderId}><RotateCcw className="mr-1 md:mr-2 h-3 w-3 md:h-4 md:w-4" /> Limpiar</Button> </AlertDialogTrigger> <AlertDialogContent> <AlertDialogHeader><AlertDialogTitle>¿Limpiar pedido?</AlertDialogTitle><AlertDialogDescription>Esta acción no se puede deshacer.</AlertDialogDescription></AlertDialogHeader> <AlertDialogFooter><AlertDialogCancel>Cancelar</AlertDialogCancel><AlertDialogAction onClick={clearOrder} className={cn(buttonVariants({ variant: "destructive" }))}>Limpiar</AlertDialogAction></AlertDialogFooter> </AlertDialogContent> </AlertDialog> </div>
+                    <div className="flex items-center gap-2"> {currentOrder.items.length > 0 && <Button variant="outline" size="sm" onClick={handlePauseOrder} title="Pausar pedido"><PauseCircle className="mr-1 md:mr-2 h-4 w-4" /> Pausar</Button>}
+                     <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                            <Button variant="outline" size="sm" className="text-xs h-8 md:h-9" disabled={currentOrder.items.length === 0 && !editingOrderId}>
+                                {/* Wrap button content in a span */}
+                                <span className="flex items-center">
+                                    <RotateCcw className="mr-1 md:mr-2 h-3 w-3 md:h-4 md:w-4" /> Limpiar
+                                </span>
+                            </Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                            <AlertDialogHeader><AlertDialogTitle>¿Limpiar pedido?</AlertDialogTitle><AlertDialogDescription>Esta acción no se puede deshacer.</AlertDialogDescription></AlertDialogHeader>
+                            <AlertDialogFooter><AlertDialogCancel>Cancelar</AlertDialogCancel><AlertDialogAction onClick={clearOrder} className={cn(buttonVariants({ variant: "destructive" }))}>Limpiar</AlertDialogAction></AlertDialogFooter>
+                        </AlertDialogContent>
+                     </AlertDialog>
+                    </div>
                 </div> {renderBackButton()}
             </CardHeader>
             <CardContent className="flex-grow overflow-hidden p-3 md:p-4">
@@ -1432,7 +1478,6 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
                 </RadioGroup>
            </CardHeader>
            <CardContent className="flex-grow flex flex-col overflow-hidden pt-3 md:pt-4 p-3 md:p-4">
-             {/* Sección Cliente */}
             <div className="mb-3 md:mb-4">
                 <Label htmlFor="customerPhoneInput" className="mb-1 block text-xs md:text-sm">Cliente (Teléfono)</Label>
                 <div className="flex items-center gap-2">
@@ -1465,8 +1510,8 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
                 {selectedClient && <p className="text-sm font-medium mt-1">Seleccionado: {selectedClient.name}</p>}
                 {currentOrderType === 'delivery' && showNewClientFieldsForDelivery && !selectedClient && (
                     <div className="mt-3 space-y-2 border-t pt-3">
-                        <Label htmlFor="newCustomerName" className="text-xs">Nombre Nuevo Cliente (Entrega)</Label>
-                        <Input id="newCustomerName" value={newCustomerNameForDelivery} onChange={(e) => setNewCustomerNameForDelivery(e.target.value)} placeholder="Nombre del nuevo cliente" className="h-9 text-sm" />
+                        <Label htmlFor="newCustomerNameForDelivery" className="text-xs">Nombre Nuevo Cliente (Entrega)</Label>
+                        <Input id="newCustomerNameForDelivery" value={newCustomerNameForDelivery} onChange={(e) => setNewCustomerNameForDelivery(e.target.value)} placeholder="Nombre del nuevo cliente" className="h-9 text-sm" />
                     </div>
                 )}
             </div>
@@ -1518,3 +1563,4 @@ const handleConfigQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>)
     </div>
   );
 }
+
