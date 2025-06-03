@@ -88,7 +88,6 @@ export async function addClient(clientData: Omit<Client, 'id' | 'created_at' | '
 export async function updateClient(id: string, updates: Partial<Omit<Client, 'id' | 'created_at' | 'updated_at'>>): Promise<void> {
   const db = await getDb();
   
-  // Asegurar que updated_at se actualice
   const updatesWithTimestamp = { ...updates, updated_at: new Date().toISOString() };
 
   const fields = Object.keys(updatesWithTimestamp).map(key => `${key} = ?`).join(', ');
@@ -127,5 +126,25 @@ export async function deleteClient(id: string): Promise<void> {
   } catch (error) {
     console.error(`[deleteClient] Error eliminando cliente ${id}:`, error);
     throw new Error(`Falló al eliminar cliente. Error original: ${error instanceof Error ? error.message : error}`);
+  }
+}
+
+/**
+ * Busca clientes por número de teléfono.
+ * @param phoneQuery La cadena de búsqueda para el teléfono.
+ * @returns Una promesa que resuelve a un array de objetos Client que coinciden.
+ */
+export async function searchClientsByPhone(phoneQuery: string): Promise<Client[]> {
+  const db = await getDb();
+  try {
+    const query = "SELECT * FROM clients WHERE phone LIKE ? ORDER BY name ASC";
+    const searchTerm = `%${phoneQuery}%`;
+    console.log(`[searchClientsByPhone] Query: ${query}, Params: [${searchTerm}]`);
+    const clients = await db.all<Client[]>(query, searchTerm);
+    console.log(`[searchClientsByPhone] Encontrados ${clients.length} clientes para query "${phoneQuery}".`);
+    return clients;
+  } catch (error) {
+    console.error(`[searchClientsByPhone] Error buscando clientes por teléfono "${phoneQuery}":`, error);
+    throw new Error(`Falló la búsqueda de clientes por teléfono. Error original: ${error instanceof Error ? error.message : error}`);
   }
 }
