@@ -1,3 +1,4 @@
+'use client';
 // src/lib/escpos-generator.ts
 
 import type { SavedOrder } from '@/types/product-types';
