@@ -148,7 +148,7 @@ export default function CreateOrderPage() {
   const [currentInstanceIndexForConfiguration, setCurrentInstanceIndexForConfiguration] = useState(0);
 
   const [isLoading, setIsLoading] = useState({
-        page: true, // Iniciar como true para la carga inicial
+        page: false, // Iniciar como true para la carga inicial
         categories: true,
         products: false,
         packages: false,

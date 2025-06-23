@@ -1,5 +1,7 @@
 
 // src/services/pdf-generator.ts
+'use client';
+
 import type { CashSessionDetail } from "@/types/cash-register-types"; // Importar si se usan detalles
 import { jsPDF } from "jspdf";
 import autoTable from 'jspdf-autotable'; // Necesita npm install jspdf jspdf-autotable
@@ -279,4 +281,3 @@ export async function generateSalesReport(reportData: SalesReport): Promise<Uint
    console.log(`[generateSalesReport] PDF output type: ${typeof pdfOutput}, length: ${pdfOutput ? (pdfOutput as ArrayBuffer).byteLength : 'N/A'}`);
    return pdfOutput as Uint8Array;
 }
-
