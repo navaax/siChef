@@ -1,3 +1,4 @@
+
 // src/app/dashboard/layout.tsx
 'use client';
 
@@ -83,8 +84,10 @@ const BottomNavBar: React.FC<BottomNavBarProps> = ({ navItems, moreNavItems, pat
               variant="ghost"
               className="flex flex-col items-center justify-center p-2 h-full text-muted-foreground hover:text-primary"
             >
-              <MoreHorizontal className="h-6 w-6" />
-              <span className="text-xs mt-0.5">Más</span>
+              <span className="flex flex-col items-center justify-center">
+                <MoreHorizontal className="h-6 w-6" />
+                <span className="text-xs mt-0.5">Más</span>
+              </span>
             </Button>
           </PopoverTrigger>
           <PopoverContent className="w-56 mb-2" side="top" align="end">
@@ -110,7 +113,9 @@ const BottomNavBar: React.FC<BottomNavBarProps> = ({ navItems, moreNavItems, pat
               ))}
               <AlertDialogTrigger asChild>
                 <Button variant="ghost" size="sm" className="w-full justify-start text-destructive hover:text-destructive hover:bg-destructive/10 font-normal gap-2">
-                  <LogOut className="h-4 w-4" /> Cerrar sesión
+                  <span className="flex items-center gap-2">
+                    <LogOut className="h-4 w-4" /> Cerrar sesión
+                  </span>
                 </Button>
               </AlertDialogTrigger>
             </div>
@@ -237,8 +242,10 @@ export default function DashboardLayout({
                   <TooltipTrigger asChild>
                     <AlertDialogTrigger asChild>
                       <Button variant="ghost" size="icon" className="h-9 w-9 rounded-lg text-muted-foreground hover:text-foreground md:h-8 md:w-8">
-                        <LogOut className="h-5 w-5" />
-                        <span className="sr-only">Cerrar sesión</span>
+                        <span>
+                          <LogOut className="h-5 w-5" />
+                          <span className="sr-only">Cerrar sesión</span>
+                        </span>
                       </Button>
                     </AlertDialogTrigger>
                   </TooltipTrigger>
