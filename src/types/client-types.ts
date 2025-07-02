@@ -10,3 +10,20 @@ export interface Client {
   created_at: string; // ISO Date string
   updated_at: string; // ISO Date string
 }
+
+export interface address{
+  id: string;
+  adressName: string;
+  lat: number;
+  long: number;
+  references: string;
+  client_id: string;
+  created_at: string; // ISO Date string
+  updated_at: string; // ISO Date string
+}
+
+export interface ClientWithAddresses extends Client {
+  addresses: address[];
+}
+
+
